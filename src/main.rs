@@ -1,6 +1,7 @@
 //! Точка входа приложения JSON Viewer.
 //!
 //! Инициализирует [`eframe`] окно и запускает [`json_viewer::app::JsonViewerApp`].
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use eframe::NativeOptions;
 
