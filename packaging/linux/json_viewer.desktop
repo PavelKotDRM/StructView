@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=JSON Viewer
+Comment=Fast, cross-platform desktop JSON viewer
+Exec=json_viewer %f
+Terminal=false
+Categories=Development;Utility;TextEditor;
+MimeType=application/json;text/json;
+StartupNotify=true
+StartupWMClass=json_viewer

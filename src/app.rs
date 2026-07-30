@@ -126,6 +126,20 @@ impl JsonViewerApp {
         app
     }
 
+    /// Создать приложение и сразу загрузить файл, переданный через командную строку.
+    ///
+    /// # Arguments
+    ///
+    /// * `cc` — контекст создания `eframe`.
+    /// * `path` — путь к JSON-файлу; `None` — стартовать с пустым состоянием.
+    pub fn new_with_file(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
+        let mut app = Self::new(cc);
+        if let Some(path) = path {
+            app.load_file(path);
+        }
+        app
+    }
+
     /// Применить текущую тему оформления к контексту egui.
     fn apply_theme(&self, ctx: &egui::Context) {
         if self.dark_mode {
