@@ -2,6 +2,7 @@
 
 use egui::{Color32, RichText, Ui};
 
+use crate::build_info;
 use crate::clipboard::copy_to_clipboard;
 use crate::parser::set_expanded_all;
 
@@ -69,10 +70,26 @@ impl JsonViewerApp {
         });
 
         ui.menu_button("Помощь", |ui| {
-            ui.label(concat!("JSON Viewer v", env!("CARGO_PKG_VERSION")));
-            ui.label("Написан на Rust + egui");
+            ui.label(format!("JSON Viewer {}", build_info::VERSION));
             ui.separator();
-            ui.label("Drag & Drop файла поддерживается");
+            egui::Grid::new("about_build_info")
+                .num_columns(2)
+                .spacing([12.0, 2.0])
+                .show(ui, |ui| {
+                    for (name, value) in [
+                        ("Время сборки", build_info::BUILD_TIMESTAMP),
+                        ("Целевая платформа", build_info::TARGET_TRIPLE),
+                        ("Платформа сборки", build_info::HOST_TRIPLE),
+                        ("Уровень оптимизации", build_info::OPT_LEVEL),
+                        ("Отладочная сборка", build_info::DEBUG),
+                        ("Компилятор rustc", build_info::RUSTC_SEMVER),
+                        ("Канал rustc", build_info::RUSTC_CHANNEL),
+                    ] {
+                        ui.label(name);
+                        ui.label(RichText::new(value).monospace());
+                        ui.end_row();
+                    }
+                });
         });
     }
 
