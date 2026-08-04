@@ -1,78 +1,8 @@
-//! # Модуль парсинга JSON
-//!
-//! Содержит структуры и функции для разбора JSON-файлов в дерево узлов,
-//! пригодное для отображения в древовидном представлении [`egui`].
-//!
-//! ## Основные типы
-//! - [`JsonNode`] — узел дерева, хранящий тип, ключ, значение и дочерние узлы.
-//! - [`ParseError`] — ошибка парсинга с указанием строки и позиции.
-//! - [`parse_json`] — функция преобразования строки в [`JsonNode`].
+//! Построение [`JsonNode`]-дерева из текста JSON.
 
 use serde_json::Value;
 
-/// Тип значения JSON-узла.
-///
-/// Используется для цветовой маркировки узлов дерева.
-#[derive(Debug, Clone, PartialEq)]
-pub enum JsonValueType {
-    /// Объект `{…}`
-    Object,
-    /// Массив `[…]`
-    Array,
-    /// Строковое значение
-    String,
-    /// Числовое значение
-    Number,
-    /// Логическое значение (`true` / `false`)
-    Bool,
-    /// Значение `null`
-    Null,
-}
-
-/// Узел JSON-дерева.
-///
-/// Каждый узел представляет один элемент JSON: объект, массив, строку,
-/// число, булево или null. Объекты и массивы содержат дочерние узлы.
-#[derive(Debug, Clone)]
-pub struct JsonNode {
-    /// Ключ (имя поля) или индекс элемента массива. `None` для корневого узла.
-    pub key: Option<String>,
-    /// Тип значения этого узла.
-    pub value_type: JsonValueType,
-    /// Текстовое представление значения для конечных узлов (строки, числа, bool, null).
-    /// Для объектов и массивов содержит количество дочерних элементов в формате `{N}` / `[N]`.
-    pub display_value: String,
-    /// Дочерние узлы (для объектов и массивов).
-    pub children: Vec<JsonNode>,
-    /// Состояние раскрытия узла в дереве.
-    pub expanded: bool,
-    /// Абсолютный путь к узлу (например, `store.book[2].author`).
-    pub path: String,
-}
-
-/// Ошибка разбора JSON.
-///
-/// Содержит человекочитаемое описание, а также (если доступно) строку и столбец
-/// в исходном тексте, где обнаружена ошибка.
-#[derive(Debug, Clone)]
-pub struct ParseError {
-    /// Описание ошибки.
-    pub message: String,
-    /// Номер строки (1-based), если известен.
-    pub line: Option<usize>,
-    /// Номер столбца (1-based), если известен.
-    pub column: Option<usize>,
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match (self.line, self.column) {
-            (Some(l), Some(c)) => write!(f, "{} (строка {}, позиция {})", self.message, l, c),
-            (Some(l), None) => write!(f, "{} (строка {})", self.message, l),
-            _ => write!(f, "{}", self.message),
-        }
-    }
-}
+use super::node::{JsonNode, JsonValueType, ParseError};
 
 /// Разобрать строку с JSON-содержимым в дерево [`JsonNode`].
 ///
@@ -150,38 +80,27 @@ fn build_node(key: Option<String>, value: &Value, parent_path: String) -> JsonNo
                 path,
             }
         }
-        Value::String(s) => JsonNode {
-            key,
-            value_type: JsonValueType::String,
-            display_value: format!("\"{}\"", s),
-            children: vec![],
-            expanded: false,
-            path,
-        },
-        Value::Number(n) => JsonNode {
-            key,
-            value_type: JsonValueType::Number,
-            display_value: n.to_string(),
-            children: vec![],
-            expanded: false,
-            path,
-        },
-        Value::Bool(b) => JsonNode {
-            key,
-            value_type: JsonValueType::Bool,
-            display_value: b.to_string(),
-            children: vec![],
-            expanded: false,
-            path,
-        },
-        Value::Null => JsonNode {
-            key,
-            value_type: JsonValueType::Null,
-            display_value: "null".to_string(),
-            children: vec![],
-            expanded: false,
-            path,
-        },
+        Value::String(s) => leaf(key, JsonValueType::String, format!("\"{}\"", s), path),
+        Value::Number(n) => leaf(key, JsonValueType::Number, n.to_string(), path),
+        Value::Bool(b) => leaf(key, JsonValueType::Bool, b.to_string(), path),
+        Value::Null => leaf(key, JsonValueType::Null, "null".to_string(), path),
+    }
+}
+
+/// Создать листовой (бездетный) узел дерева.
+fn leaf(
+    key: Option<String>,
+    value_type: JsonValueType,
+    display_value: String,
+    path: String,
+) -> JsonNode {
+    JsonNode {
+        key,
+        value_type,
+        display_value,
+        children: vec![],
+        expanded: false,
+        path,
     }
 }
 
@@ -241,18 +160,5 @@ pub fn plural_ru<'a>(n: usize, one: &'a str, few: &'a str, many: &'a str) -> &'a
         few
     } else {
         many
-    }
-}
-
-/// Установить состояние `expanded` рекурсивно для всего дерева.
-///
-/// # Arguments
-///
-/// * `node` — корневой узел поддерева.
-/// * `expanded` — `true` — развернуть, `false` — свернуть.
-pub fn set_expanded_all(node: &mut JsonNode, expanded: bool) {
-    node.expanded = expanded;
-    for child in &mut node.children {
-        set_expanded_all(child, expanded);
     }
 }

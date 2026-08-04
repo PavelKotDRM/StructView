@@ -18,15 +18,27 @@
 //! | Модуль | Назначение |
 //! |--------|-----------|
 //! | [`app`] | Главное состояние приложения, реализация [`eframe::App`], вся логика UI |
+//! | [`build_info`] | Сведения о сборке (время, платформа, компилятор) |
 //! | [`cli`] | Разбор аргументов командной строки и headless-команды |
 //! | [`console`] | Подключение к консоли родительского процесса (Windows) |
 //! | [`parser`] | Парсинг JSON-строки в дерево [`parser::JsonNode`]; обнаружение ошибок |
 //! | [`search`] | Полнотекстовый поиск по узлам дерева, навигация Next/Prev |
 //! | [`clipboard`] | Копирование текста в системный буфер обмена через `arboard` |
+//!
+//! ## Структура исходников
+//!
+//! ```text
+//! src/
+//!   app/      state.rs · panels.rs · tree.rs · edit.rs · theme.rs
+//!   cli/      args.rs · exec.rs · source.rs
+//!   parser/   node.rs · build.rs
+//!   search.rs · clipboard.rs · console.rs · build_info.rs
+//! ```
 
 #![deny(warnings)]
 
 pub mod app;
+pub mod build_info;
 pub mod cli;
 pub mod clipboard;
 pub mod console;
