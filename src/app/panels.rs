@@ -253,7 +253,7 @@ impl JsonViewerApp {
             i.raw
                 .dropped_files
                 .first()
-                .and_then(|file| file.path.clone())
+                .and_then(|file| Some(file.path().to_path_buf().clone()))
         });
         if let Some(path) = dropped_path {
             self.load_file(path);
