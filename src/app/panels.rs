@@ -1,4 +1,4 @@
-//! Отрисовка панелей главного окна: меню и поиск, статус-бар, дерево JSON.
+//! Отрисовка панелей главного окна: меню и поиск, статус-бар, дерево данных.
 
 use egui::{Color32, RichText, Ui};
 
@@ -130,7 +130,24 @@ impl JsonViewerApp {
         let enter_pressed =
             search_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-        if query_changed || enter_pressed {
+        let mut options_changed = false;
+        ui.menu_button("Параметры", |ui| {
+            options_changed |= ui
+                .checkbox(&mut self.search.options.search_keys, "Искать в ключах")
+                .changed();
+            options_changed |= ui
+                .checkbox(&mut self.search.options.search_values, "Искать в значениях")
+                .changed();
+            ui.separator();
+            options_changed |= ui
+                .checkbox(&mut self.search.options.case_sensitive, "Учитывать регистр")
+                .changed();
+            options_changed |= ui
+                .checkbox(&mut self.search.options.exact_match, "Точное совпадение")
+                .changed();
+        });
+
+        if query_changed || enter_pressed || options_changed {
             let query = self.search_query_buf.clone();
             if let Some(root) = &self.root {
                 self.search.search(root, &query);
@@ -166,14 +183,21 @@ impl JsonViewerApp {
                         .and_then(|n| n.to_str())
                         .unwrap_or("неизвестный файл");
                     let size_kb = self.file_state.size_bytes as f64 / 1024.0;
+                    let format = self
+                        .file_state
+                        .format
+                        .map(|format| format.to_string())
+                        .unwrap_or_else(|| "неизвестный формат".to_string());
                     ui.label(format!(
-                        "📄 {}  |  {:.1} КБ  |  загружено за {} мс",
-                        name, size_kb, self.file_state.load_time_ms
+                        "📄 {}  |  {}  |  {:.1} КБ  |  загружено за {} мс",
+                        name, format, size_kb, self.file_state.load_time_ms
                     ));
                 } else {
                     ui.label(
-                        RichText::new("Откройте JSON-файл через меню Файл или перетащите его сюда")
-                            .color(Color32::GRAY),
+                        RichText::new(
+                            "Откройте файл данных через меню Файл или перетащите его сюда",
+                        )
+                        .color(Color32::GRAY),
                     );
                 }
 
@@ -214,6 +238,9 @@ impl JsonViewerApp {
 
             let outcome = self.show_tree(ui);
 
+            if let Some(request) = outcome.add_child_request {
+                self.open_add_child_dialog(request);
+            }
             if outcome.tree_changed {
                 self.refresh_search();
             }
@@ -226,6 +253,7 @@ impl JsonViewerApp {
             if let Some(err) = outcome.edit_error {
                 self.show_toast(&err);
             }
+            self.show_add_child_dialog(ui.ctx());
         });
     }
 
@@ -253,7 +281,7 @@ impl JsonViewerApp {
             i.raw
                 .dropped_files
                 .first()
-                .and_then(|file| Some(file.path().to_path_buf().clone()))
+                .map(|file| file.path().to_path_buf().clone())
         });
         if let Some(path) = dropped_path {
             self.load_file(path);
@@ -265,17 +293,19 @@ impl JsonViewerApp {
 fn show_placeholder(ui: &mut Ui) {
     ui.centered_and_justified(|ui| {
         ui.label(
-            RichText::new("Перетащите JSON-файл сюда\nили используйте Файл -> Открыть…")
-                .size(18.0)
-                .color(Color32::GRAY),
+            RichText::new(
+                "Перетащите JSON, YAML, TOML или JSON5 сюда\nили используйте Файл -> Открыть…",
+            )
+            .size(18.0)
+            .color(Color32::GRAY),
         );
     });
 }
 
-/// Отрисовать сообщение об ошибке разбора JSON.
+/// Отрисовать сообщение об ошибке разбора данных.
 fn show_parse_error(ui: &mut Ui, message: &str) {
     ui.add_space(8.0);
-    ui.colored_label(COLOR_ERROR, "Ошибка разбора JSON:");
+    ui.colored_label(COLOR_ERROR, "Ошибка разбора данных:");
     ui.add_space(4.0);
     egui::ScrollArea::both().show(ui, |ui| {
         ui.label(RichText::new(message).monospace());

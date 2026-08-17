@@ -3,9 +3,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use serde_json::Value;
-
-use crate::parser::parse_json;
+use crate::parser::{DataFormat, parse_data, serialize_data};
 use crate::search::SearchState;
 
 use super::args::Command;
@@ -39,7 +37,11 @@ pub fn run(command: &Command) -> Result<bool, String> {
             minify,
         } => run_format(input, output.as_deref(), *minify),
         Command::Validate { input } => run_validate(input),
-        Command::Find { query, input } => run_find(query, input),
+        Command::Find {
+            query,
+            input,
+            options,
+        } => run_find(query, input, *options),
         Command::Gui { .. } => panic!("Command::Gui не выполняется в headless-режиме"),
     }
 }
@@ -47,25 +49,19 @@ pub fn run(command: &Command) -> Result<bool, String> {
 /// Отформатировать JSON и записать результат в файл или stdout.
 fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<bool, String> {
     let content = input.read()?;
-    let value: Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!(
-                "Ошибка JSON: {} (строка {}, позиция {})",
-                e,
-                e.line(),
-                e.column()
-            );
+    let (root, input_format) = match parse_data(&content, input.format_hint()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("Ошибка разбора: {}", error);
             return Ok(false);
         }
     };
+    let value = crate::app::node_to_value(&root)?;
+    let output_format = output
+        .and_then(DataFormat::from_path)
+        .unwrap_or(input_format);
 
-    let formatted = if minify {
-        serde_json::to_string(&value)
-    } else {
-        serde_json::to_string_pretty(&value)
-    }
-    .map_err(|e| format!("Ошибка сериализации: {}", e))?;
+    let formatted = serialize_data(&value, output_format, minify)?;
 
     match output {
         Some(path) => std::fs::write(path, formatted)
@@ -78,31 +74,35 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
 /// Проверить синтаксис JSON.
 fn run_validate(input: &Source) -> Result<bool, String> {
     let content = input.read()?;
-    match parse_json(&content) {
-        Ok(_) => {
-            println!("JSON корректен");
+    match parse_data(&content, input.format_hint()) {
+        Ok((_, format)) => {
+            println!("{} корректен", format);
             Ok(true)
         }
-        Err(e) => {
-            eprintln!("Ошибка JSON: {}", e);
+        Err(error) => {
+            eprintln!("Ошибка разбора: {}", error);
             Ok(false)
         }
     }
 }
 
 /// Найти узлы по подстроке и вывести их пути.
-fn run_find(query: &str, input: &Source) -> Result<bool, String> {
+fn run_find(
+    query: &str,
+    input: &Source,
+    options: crate::search::SearchOptions,
+) -> Result<bool, String> {
     let content = input.read()?;
-    let root = match parse_json(&content) {
-        Ok(node) => node,
-        Err(e) => {
-            eprintln!("Ошибка JSON: {}", e);
+    let root = match parse_data(&content, input.format_hint()) {
+        Ok((node, _)) => node,
+        Err(error) => {
+            eprintln!("Ошибка разбора: {}", error);
             return Ok(false);
         }
     };
 
     let mut state = SearchState::default();
-    state.search(&root, query);
+    state.search_with_options(&root, query, options);
 
     if state.matches.is_empty() {
         eprintln!("Совпадений не найдено");

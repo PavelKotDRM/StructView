@@ -25,6 +25,17 @@ pub(super) struct TreeOutcome {
     pub(super) edit_error: Option<String>,
     /// Признак того, что дерево было изменено и поиск нужно пересчитать.
     pub(super) tree_changed: bool,
+    /// Запрос на открытие диалога добавления поля или элемента.
+    pub(super) add_child_request: Option<AddChildRequest>,
+}
+
+/// Контейнер, в который пользователь хочет добавить данные.
+#[derive(Debug, Clone)]
+pub(super) struct AddChildRequest {
+    /// Путь контейнера в дереве.
+    pub(super) parent_path: String,
+    /// `true`, если контейнер является объектом и требуется имя поля.
+    pub(super) is_object: bool,
 }
 
 /// Рекурсивно отрисовать узел JSON в [`Ui`].
@@ -141,7 +152,7 @@ fn render_container(
     node.expanded = updated.is_open();
 
     header_resp.context_menu(|ui| {
-        context_menu(ui, node, &mut outcome.copy_request);
+        container_context_menu(ui, node, mode, outcome);
     });
 }
 
@@ -233,6 +244,29 @@ fn context_menu(ui: &mut Ui, node: &JsonNode, copy_request: &mut Option<String>)
     }
     if ui.button("📍  Копировать путь").clicked() {
         *copy_request = Some(node.path.clone());
+        ui.close();
+    }
+}
+
+/// Контекстное меню контейнера с командами копирования и добавления данных.
+fn container_context_menu(ui: &mut Ui, node: &JsonNode, mode: AppMode, outcome: &mut TreeOutcome) {
+    context_menu(ui, node, &mut outcome.copy_request);
+
+    if mode != AppMode::Edit {
+        return;
+    }
+
+    let is_object = node.value_type == JsonValueType::Object;
+    let label = if is_object {
+        "➕  Добавить поле…"
+    } else {
+        "➕  Добавить элемент…"
+    };
+    if ui.button(label).clicked() {
+        outcome.add_child_request = Some(AddChildRequest {
+            parent_path: node.path.clone(),
+            is_object,
+        });
         ui.close();
     }
 }

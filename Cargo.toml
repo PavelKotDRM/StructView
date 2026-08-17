@@ -2,7 +2,7 @@
 name = "json_viewer"
 version = "0.1.0"
 edition = "2024"
-description = "A fast, cross-platform desktop JSON viewer"
+description = "A fast, cross-platform desktop viewer for JSON, YAML, TOML, and JSON5"
 build = "build.rs"
 
 [[bin]]
@@ -11,7 +11,11 @@ path = "src/main.rs"
 
 [dependencies]
 egui = "0.36"
+serde = "1"
 serde_json = "1"
+serde_yaml_ng = "0.10"
+toml = "1"
+json5 = "1"
 rfd = "0.17"
 arboard = "3"
 

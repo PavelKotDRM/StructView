@@ -1,7 +1,9 @@
-//! Источник JSON-данных для headless-команд.
+//! Источник структурированных данных для headless-команд.
 
 use std::io::Read;
 use std::path::PathBuf;
+
+use crate::parser::DataFormat;
 
 /// Источник JSON-данных для headless-команд.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +15,14 @@ pub enum Source {
 }
 
 impl Source {
+    /// Получить подсказку формата из расширения файла.
+    pub fn format_hint(&self) -> Option<DataFormat> {
+        match self {
+            Source::Stdin => None,
+            Source::File(path) => DataFormat::from_path(path),
+        }
+    }
+
     /// Прочитать содержимое источника в строку.
     ///
     /// # Errors

@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::parser::{JsonNode, JsonValueType};
+use crate::parser::{DataFormat, JsonNode, JsonValueType, build_path, parse_data, plural_ru};
 
 /// Преобразовать JSON-узел обратно в [`serde_json::Value`].
 ///
@@ -13,7 +13,7 @@ use crate::parser::{JsonNode, JsonValueType};
 ///
 /// Возвращает описание ошибки с путём узла, если отображаемое значение
 /// не является корректным JSON-литералом ожидаемого типа.
-pub(super) fn node_to_value(node: &JsonNode) -> Result<Value, String> {
+pub(crate) fn node_to_value(node: &JsonNode) -> Result<Value, String> {
     match node.value_type {
         JsonValueType::Object => {
             let mut map = serde_json::Map::new();
@@ -91,6 +91,111 @@ pub(super) fn apply_primitive_edit(node: &mut JsonNode, edited: &str) -> Result<
     Ok(())
 }
 
+/// Добавить поле в объект или элемент в массив.
+///
+/// Значение разбирается синтаксисом открытого формата. Для TOML значение
+/// временно оборачивается в поле, поскольку TOML не допускает корневые
+/// скаляры.
+pub(super) fn add_child(
+    parent: &mut JsonNode,
+    key: &str,
+    input: &str,
+    format: DataFormat,
+) -> Result<(), String> {
+    let key = match parent.value_type {
+        JsonValueType::Object => {
+            let key = key.trim();
+            if key.is_empty() {
+                return Err("Имя поля не может быть пустым".to_string());
+            }
+            if parent
+                .children
+                .iter()
+                .any(|child| child.key.as_deref() == Some(key))
+            {
+                return Err(format!("Поле «{}» уже существует", key));
+            }
+            Some(key.to_string())
+        }
+        JsonValueType::Array => Some(parent.children.len().to_string()),
+        _ => return Err("Добавлять данные можно только в объект или массив".to_string()),
+    };
+
+    let mut child = parse_child_value(input, format)?;
+    child.key = key;
+    update_paths(&mut child, &parent.path);
+    parent.children.push(child);
+    update_container_label(parent);
+    Ok(())
+}
+
+/// Найти узел по пути и добавить в него дочерний узел.
+pub(super) fn add_child_at_path(
+    root: &mut JsonNode,
+    parent_path: &str,
+    key: &str,
+    input: &str,
+    format: DataFormat,
+) -> Result<(), String> {
+    let parent = find_node_mut(root, parent_path)
+        .ok_or_else(|| "Не удалось найти контейнер для добавления данных".to_string())?;
+    add_child(parent, key, input, format)
+}
+
+fn parse_child_value(input: &str, format: DataFormat) -> Result<JsonNode, String> {
+    let source = match format {
+        DataFormat::Toml => format!("value = {}", input),
+        _ => input.to_string(),
+    };
+    let (root, _) = parse_data(&source, Some(format)).map_err(|error| error.to_string())?;
+
+    if format == DataFormat::Toml {
+        root.children
+            .into_iter()
+            .next()
+            .ok_or_else(|| "TOML-значение не содержит данных".to_string())
+    } else {
+        Ok(root)
+    }
+}
+
+fn find_node_mut<'a>(node: &'a mut JsonNode, path: &str) -> Option<&'a mut JsonNode> {
+    if node.path == path {
+        return Some(node);
+    }
+    node.children
+        .iter_mut()
+        .find_map(|child| find_node_mut(child, path))
+}
+
+fn update_paths(node: &mut JsonNode, parent_path: &str) {
+    node.path = build_path(parent_path, &node.key);
+    let path = node.path.clone();
+    for (index, child) in node.children.iter_mut().enumerate() {
+        if node.value_type == JsonValueType::Array {
+            child.key = Some(index.to_string());
+        }
+        update_paths(child, &path);
+    }
+}
+
+fn update_container_label(node: &mut JsonNode) {
+    let count = node.children.len();
+    node.display_value = match node.value_type {
+        JsonValueType::Object => format!(
+            "{{{}}} {}",
+            count,
+            plural_ru(count, "поле", "поля", "полей")
+        ),
+        JsonValueType::Array => format!(
+            "[{}] {}",
+            count,
+            plural_ru(count, "элемент", "элемента", "элементов")
+        ),
+        _ => return,
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +241,32 @@ mod tests {
         assert!(apply_primitive_edit(&mut node, "").is_err());
         assert!(apply_primitive_edit(&mut node, "нет кавычек").is_err());
         assert_eq!(node.display_value, "\"x\"");
+    }
+
+    #[test]
+    fn adds_object_fields_and_array_elements_for_all_formats() {
+        let (mut root, _) = parse_data("{}", Some(DataFormat::Json)).unwrap();
+        add_child(&mut root, "enabled", "true", DataFormat::Json).unwrap();
+        add_child(&mut root, "profile", "name: Ada", DataFormat::Yaml).unwrap();
+        add_child(&mut root, "server", "{ port = 8080 }", DataFormat::Toml).unwrap();
+        add_child(&mut root, "items", "[1, 2,]", DataFormat::Json5).unwrap();
+
+        assert_eq!(root.children.len(), 4);
+        assert_eq!(root.children[0].path, "enabled");
+        assert_eq!(root.children[1].children[0].key.as_deref(), Some("name"));
+        assert_eq!(root.children[2].children[0].key.as_deref(), Some("port"));
+        assert_eq!(root.children[3].children.len(), 2);
+
+        let mut array = parse_data("[]", Some(DataFormat::Json)).unwrap().0;
+        add_child(&mut array, "", "\"first\"", DataFormat::Json).unwrap();
+        assert_eq!(array.children[0].key.as_deref(), Some("0"));
+        assert_eq!(array.children[0].path, "0");
+    }
+
+    #[test]
+    fn rejects_duplicate_object_field() {
+        let (mut root, _) = parse_data(r#"{"name":"Ada"}"#, Some(DataFormat::Json)).unwrap();
+        let error = add_child(&mut root, "name", "\"Grace\"", DataFormat::Json).unwrap_err();
+        assert!(error.contains("уже существует"));
     }
 }

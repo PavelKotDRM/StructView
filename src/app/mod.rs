@@ -31,4 +31,6 @@ mod state;
 mod theme;
 mod tree;
 
+pub(crate) use edit::node_to_value;
+
 pub use state::JsonViewerApp;

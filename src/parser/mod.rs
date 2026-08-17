@@ -1,12 +1,13 @@
-//! # Модуль парсинга JSON
+//! # Модуль парсинга структурированных данных
 //!
-//! Содержит структуры и функции для разбора JSON-файлов в дерево узлов,
+//! Содержит структуры и функции для разбора JSON, YAML, TOML и JSON5 в дерево узлов,
 //! пригодное для отображения в древовидном представлении [`egui`].
 //!
 //! ## Основные типы
 //! - [`JsonNode`] — узел дерева, хранящий тип, ключ, значение и дочерние узлы.
 //! - [`ParseError`] — ошибка парсинга с указанием строки и позиции.
-//! - [`parse_json`] — функция преобразования строки в [`JsonNode`].
+//! - [`parse_data`] — разбор поддерживаемых форматов с автодетектом.
+//! - [`parse_json`] — совместимый API для строгого разбора JSON.
 //!
 //! ## Состав подмодулей
 //!
@@ -18,5 +19,5 @@
 mod build;
 mod node;
 
-pub use build::{build_path, parse_json, plural_ru};
+pub use build::{DataFormat, build_path, parse_data, parse_json, plural_ru, serialize_data};
 pub use node::{JsonNode, JsonValueType, ParseError, set_expanded_all};

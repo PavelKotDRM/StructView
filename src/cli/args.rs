@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::search::SearchOptions;
+
 use super::source::Source;
 
 /// Разобранная команда командной строки.
@@ -12,7 +14,7 @@ pub enum Command {
         /// Файл, который нужно открыть при старте.
         file: Option<PathBuf>,
     },
-    /// Отформатировать JSON.
+    /// Отформатировать структурированные данные.
     Format {
         /// Источник данных.
         input: Source,
@@ -26,12 +28,14 @@ pub enum Command {
         /// Источник данных.
         input: Source,
     },
-    /// Найти узлы, ключ или значение которых содержит подстроку.
+    /// Найти узлы по запросу и параметрам поиска.
     Find {
-        /// Поисковый запрос (регистронезависимый).
+        /// Поисковый запрос.
         query: String,
         /// Источник данных.
         input: Source,
+        /// Параметры поиска.
+        options: SearchOptions,
     },
     /// Вывести справку.
     Help,
@@ -125,12 +129,31 @@ fn parse_validate(args: &[String]) -> Result<Command, String> {
 fn parse_find(args: &[String]) -> Result<Command, String> {
     let mut query: Option<String> = None;
     let mut input: Option<Source> = None;
+    let mut options = SearchOptions::default();
+    let mut scope_selected = false;
 
     for arg in args {
-        if query.is_none() {
-            query = Some(arg.clone());
-        } else {
-            input = Some(take_positional(input, arg, "find")?);
+        match arg.as_str() {
+            "--keys" => {
+                if !scope_selected {
+                    options.search_keys = false;
+                    options.search_values = false;
+                    scope_selected = true;
+                }
+                options.search_keys = true;
+            }
+            "--values" => {
+                if !scope_selected {
+                    options.search_keys = false;
+                    options.search_values = false;
+                    scope_selected = true;
+                }
+                options.search_values = true;
+            }
+            "--case-sensitive" => options.case_sensitive = true,
+            "--exact" => options.exact_match = true,
+            _ if query.is_none() => query = Some(arg.clone()),
+            _ => input = Some(take_positional(input, arg, "find")?),
         }
     }
 
@@ -138,6 +161,7 @@ fn parse_find(args: &[String]) -> Result<Command, String> {
     Ok(Command::Find {
         query,
         input: input.unwrap_or(Source::Stdin),
+        options,
     })
 }
 
@@ -210,6 +234,36 @@ mod tests {
     #[test]
     fn find_requires_query() {
         assert!(parse_args(["find".to_string()]).is_err());
+    }
+
+    #[test]
+    fn find_parses_search_options() {
+        let command = parse_args(
+            [
+                "find",
+                "--keys",
+                "--case-sensitive",
+                "--exact",
+                "Name",
+                "a.json",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(
+            command,
+            Command::Find {
+                query: "Name".to_string(),
+                input: Source::File(PathBuf::from("a.json")),
+                options: SearchOptions {
+                    search_keys: true,
+                    search_values: false,
+                    case_sensitive: true,
+                    exact_match: true,
+                },
+            }
+        );
     }
 
     #[test]
