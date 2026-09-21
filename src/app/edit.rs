@@ -221,6 +221,15 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_escapes_control_characters_in_strings() {
+        let source = r#"{"text":"line\n\u0000"}"#;
+        let node = parse_json(source).unwrap();
+        let value = node_to_value(&node).unwrap();
+
+        assert_eq!(serde_json::to_string(&value).unwrap(), source);
+    }
+
+    #[test]
     fn edit_detects_literal_type() {
         let mut node = leaf(JsonValueType::Null, "null");
 

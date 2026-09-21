@@ -3,7 +3,7 @@
 //! Здесь хранится всё, что переживает отдельный кадр отрисовки: разобранное
 //! JSON-дерево, состояние поиска, метаданные файла и настройки темы.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::parser::{DataFormat, JsonNode, ParseError, parse_data, serialize_data};
@@ -70,6 +70,10 @@ pub struct JsonViewerApp {
     pub(super) search: SearchState,
     /// Буфер для строки поиска в UI.
     pub(super) search_query_buf: String,
+    /// Путь совпадения, к которому нужно прокрутить дерево в следующем кадре.
+    pub(super) search_scroll_target: Option<String>,
+    /// Отложенный запрос на сохранение текущего файла.
+    pub(super) save_requested: bool,
     /// Мета-информация о загруженном файле.
     pub(super) file_state: FileState,
     /// Временное уведомление (например, «Скопировано») и момент его показа.
@@ -89,6 +93,8 @@ impl Default for JsonViewerApp {
             parse_error: None,
             search: SearchState::default(),
             search_query_buf: String::new(),
+            search_scroll_target: None,
+            save_requested: false,
             file_state: FileState::default(),
             toast: None,
             dark_mode: true,
@@ -180,6 +186,7 @@ impl JsonViewerApp {
                         // Сбрасываем поиск при загрузке нового файла
                         self.search = SearchState::default();
                         self.search_query_buf.clear();
+                        self.search_scroll_target = None;
                     }
                     Err(e) => {
                         self.parse_error = Some(e);
@@ -212,40 +219,84 @@ impl JsonViewerApp {
     ///
     /// Ошибки записи файла отображаются во всплывающем уведомлении.
     pub(super) fn save_pretty(&mut self) {
-        let Some(root) = self.root.as_ref() else {
+        if self.root.is_none() {
+            return;
+        }
+
+        let current_format = self.file_state.format.unwrap_or(DataFormat::Json);
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Supported files", &["json", "yaml", "yml", "toml", "json5"])
+            .add_filter("JSON", &["json", "json5"])
+            .add_filter("YAML", &["yaml", "yml"])
+            .add_filter("TOML", &["toml"]);
+        if let Some(name) = self
+            .file_state
+            .path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+        {
+            dialog = dialog.set_file_name(name);
+        }
+        if let Some(save_path) = dialog.save_file() {
+            let format = DataFormat::from_path(&save_path).unwrap_or(current_format);
+            match self.write_root_to_path(&save_path, format) {
+                Ok(_) => self.show_toast("Файл сохранён"),
+                Err(error) => self.show_toast(&error),
+            }
+        }
+    }
+
+    /// Сохранить текущие данные в открытый файл без запроса нового пути.
+    ///
+    /// Если файл ещё не был сохранён, открывается диалог «Сохранить как…».
+    pub(super) fn save_current(&mut self) {
+        let Some(path) = self.file_state.path.clone() else {
+            self.save_pretty();
             return;
         };
 
-        match node_to_value(root) {
-            Ok(value) => {
-                let current_format = self.file_state.format.unwrap_or(DataFormat::Json);
-                let mut dialog = rfd::FileDialog::new()
-                    .add_filter("Supported files", &["json", "yaml", "yml", "toml", "json5"])
-                    .add_filter("JSON", &["json", "json5"])
-                    .add_filter("YAML", &["yaml", "yml"])
-                    .add_filter("TOML", &["toml"]);
-                if let Some(name) = self
-                    .file_state
-                    .path
-                    .as_ref()
-                    .and_then(|path| path.file_name())
-                    .and_then(|name| name.to_str())
-                {
-                    dialog = dialog.set_file_name(name);
-                }
-                if let Some(save_path) = dialog.save_file() {
-                    let format = DataFormat::from_path(&save_path).unwrap_or(current_format);
-                    match serialize_data(&value, format, false).and_then(|formatted| {
-                        std::fs::write(&save_path, formatted)
-                            .map_err(|error| format!("Ошибка сохранения: {}", error))
-                    }) {
-                        Ok(_) => self.show_toast("Файл сохранён"),
-                        Err(error) => self.show_toast(&error),
-                    }
-                }
+        let format = DataFormat::from_path(&path)
+            .or(self.file_state.format)
+            .unwrap_or(DataFormat::Json);
+        match self.write_root_to_path(&path, format) {
+            Ok(size_bytes) => {
+                self.file_state.size_bytes = size_bytes;
+                self.show_toast("Файл сохранён");
             }
-            Err(err) => self.show_toast(&err),
+            Err(error) => self.show_toast(&error),
         }
+    }
+
+    /// Отложить сохранение до завершения текущей отрисовки дерева.
+    pub(super) fn request_save_current(&mut self) {
+        self.save_requested = true;
+    }
+
+    /// Закрыть текущий документ и очистить связанные с ним состояния.
+    pub(super) fn close_file(&mut self) {
+        self.root = None;
+        self.parse_error = None;
+        self.search = SearchState::default();
+        self.search_query_buf.clear();
+        self.search_scroll_target = None;
+        self.save_requested = false;
+        self.file_state = FileState::default();
+        self.add_child_dialog = None;
+        self.mode = AppMode::View;
+    }
+
+    /// Сериализовать корень и записать его в указанный путь.
+    fn write_root_to_path(&self, path: &Path, format: DataFormat) -> Result<u64, String> {
+        let root = self
+            .root
+            .as_ref()
+            .ok_or_else(|| "Нет открытого документа".to_string())?;
+        let value = node_to_value(root)?;
+        let formatted = serialize_data(&value, format, false)?;
+        let size_bytes = formatted.len() as u64;
+        std::fs::write(path, formatted).map_err(|error| format!("Ошибка сохранения: {}", error))?;
+        Ok(size_bytes)
     }
 
     /// Показать кратковременное уведомление в статус-баре.
@@ -257,13 +308,18 @@ impl JsonViewerApp {
     ///
     /// Вызывается после правки дерева, чтобы подсветка оставалась актуальной.
     pub(super) fn refresh_search(&mut self) {
-        if self.search_query_buf.is_empty() {
+        self.search_scroll_target = None;
+        let Some(root) = &self.root else {
             return;
-        }
-        if let Some(root) = &self.root {
-            let query = self.search_query_buf.clone();
-            self.search.search(root, &query);
-        }
+        };
+
+        let query = self.search_query_buf.clone();
+        self.search.search(root, &query);
+    }
+
+    /// Запланировать прокрутку к текущему совпадению, если оно существует.
+    pub(super) fn request_search_scroll(&mut self) {
+        self.search_scroll_target = self.search.current_match_path().map(str::to_owned);
     }
 
     /// Открыть диалог добавления данных в выбранный контейнер.
@@ -346,6 +402,57 @@ impl JsonViewerApp {
                 self.add_child_dialog = Some(dialog);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JsonViewerApp;
+
+    #[test]
+    fn save_current_writes_updated_document_to_loaded_path() {
+        let path =
+            std::env::temp_dir().join(format!("json_viewer-save-test-{}.json", std::process::id()));
+        std::fs::write(&path, r#"{"value":1}"#).unwrap();
+
+        let mut app = JsonViewerApp::default();
+        app.load_file(path.clone());
+        app.root
+            .as_mut()
+            .unwrap()
+            .children
+            .first_mut()
+            .unwrap()
+            .display_value = "2".to_string();
+
+        app.save_current();
+
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("\"value\": 2"));
+        assert_eq!(app.file_state.size_bytes, saved.len() as u64);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn close_file_clears_document_state() {
+        let path = std::env::temp_dir().join(format!(
+            "json_viewer-close-test-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, r#"{"value":1}"#).unwrap();
+
+        let mut app = JsonViewerApp::default();
+        app.load_file(path.clone());
+        app.search_query_buf = "value".to_string();
+        app.save_requested = true;
+        app.close_file();
+
+        assert!(app.root.is_none());
+        assert!(app.file_state.path.is_none());
+        assert!(app.search_query_buf.is_empty());
+        assert!(!app.save_requested);
+        assert_eq!(app.mode, super::AppMode::View);
+        std::fs::remove_file(path).unwrap();
     }
 }
 

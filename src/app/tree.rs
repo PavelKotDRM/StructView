@@ -52,22 +52,47 @@ pub(super) struct AddChildRequest {
 /// * `node` — узел для отрисовки.
 /// * `search` — текущее состояние поиска (для подсветки).
 /// * `mode` — режим просмотра или редактирования.
+/// * `scroll_to_path` — путь узла, к которому нужно прокрутить дерево.
 /// * `outcome` — накопитель отложенных действий.
 pub(super) fn render_node(
     ui: &mut Ui,
     node: &mut JsonNode,
     search: &SearchState,
     mode: AppMode,
+    scroll_to_path: Option<&str>,
     outcome: &mut TreeOutcome,
 ) {
     let highlight = Highlight::for_node(search, &node.path);
+    let scroll_to_match = scroll_to_path.is_some_and(|path| path == node.path);
 
     match node.value_type {
-        JsonValueType::Object | JsonValueType::Array => {
-            render_container(ui, node, search, mode, outcome, highlight)
-        }
-        _ => render_leaf(ui, node, mode, outcome, highlight),
+        JsonValueType::Object | JsonValueType::Array => render_container(
+            ui,
+            node,
+            search,
+            mode,
+            outcome,
+            highlight,
+            scroll_to_match,
+            scroll_to_path,
+        ),
+        _ => render_leaf(ui, node, mode, outcome, highlight, scroll_to_match),
     }
+}
+
+/// Свернуть нерелевантные ветки и раскрыть контейнеры на пути к совпадению.
+pub(super) fn focus_match_path(node: &mut JsonNode, target_path: &str) -> bool {
+    let is_target = node.path == target_path;
+    let mut contains_target = false;
+    for child in &mut node.children {
+        contains_target |= focus_match_path(child, target_path);
+    }
+
+    if !node.children.is_empty() {
+        node.expanded = contains_target;
+    }
+
+    is_target || contains_target
 }
 
 /// Подсветка узла в зависимости от результатов поиска.
@@ -116,6 +141,8 @@ fn render_container(
     mode: AppMode,
     outcome: &mut TreeOutcome,
     highlight: Highlight,
+    scroll_to_match: bool,
+    scroll_to_path: Option<&str>,
 ) {
     let header_text = make_header_text(node, highlight);
 
@@ -139,9 +166,13 @@ fn render_container(
         })
         .body(|ui| {
             for child in &mut node.children {
-                render_node(ui, child, search, mode, outcome);
+                render_node(ui, child, search, mode, scroll_to_path, outcome);
             }
         });
+
+    if scroll_to_match {
+        header_resp.scroll_to_me(Some(egui::Align::Center));
+    }
 
     // Считываем актуальное состояние (пользователь мог кликнуть по заголовку)
     let updated = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -163,8 +194,9 @@ fn render_leaf(
     mode: AppMode,
     outcome: &mut TreeOutcome,
     highlight: Highlight,
+    scroll_to_match: bool,
 ) {
-    ui.horizontal(|ui| {
+    let row_response = ui.horizontal(|ui| {
         if let Some(key) = &node.key {
             let key_text = highlight.apply(RichText::new(format!("{}: ", key)), COLOR_KEY);
             let key_resp = ui.label(key_text);
@@ -186,6 +218,12 @@ fn render_leaf(
             });
         }
     });
+
+    if scroll_to_match {
+        row_response
+            .response
+            .scroll_to_me(Some(egui::Align::Center));
+    }
 }
 
 /// Проверить, доступно ли значение узла для правки в текущем режиме.
@@ -202,16 +240,26 @@ fn is_editable(node: &JsonNode, mode: AppMode) -> bool {
 
 /// Отрисовать однострочное поле правки значения и применить изменение при потере фокуса.
 fn render_value_editor(ui: &mut Ui, node: &mut JsonNode, outcome: &mut TreeOutcome) {
-    let mut edited = node.display_value.clone();
     let edit_resp = ui.add(
-        egui::TextEdit::singleline(&mut edited)
+        egui::TextEdit::singleline(&mut node.display_value)
             .desired_width(EDIT_FIELD_WIDTH)
             .font(egui::TextStyle::Monospace),
     );
 
-    if edit_resp.lost_focus() && edited != node.display_value {
+    if edit_resp.changed() {
+        outcome.tree_changed = true;
+    }
+
+    if edit_resp.lost_focus() {
+        let previous_type = node.value_type.clone();
+        let previous_display = node.display_value.clone();
+        let edited = node.display_value.clone();
         match apply_primitive_edit(node, &edited) {
-            Ok(()) => outcome.tree_changed = true,
+            Ok(()) => {
+                if node.value_type != previous_type || node.display_value != previous_display {
+                    outcome.tree_changed = true;
+                }
+            }
             Err(err) => outcome.edit_error = Some(err),
         }
     }
@@ -268,5 +316,63 @@ fn container_context_menu(ui: &mut Ui, node: &JsonNode, mode: AppMode, outcome: 
             is_object,
         });
         ui.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::focus_match_path;
+    use crate::parser::{parse_json, set_expanded_all};
+
+    #[test]
+    fn focus_match_path_reveals_target_and_collapses_other_branches() {
+        let mut root = parse_json(
+            r#"{"outer":{"inner":{"value":"needle"},"other":{"value":1}},"second":{"value":2}}"#,
+        )
+        .unwrap();
+        set_expanded_all(&mut root, true);
+
+        assert!(focus_match_path(&mut root, "outer.inner.value"));
+        assert!(root.expanded);
+        let outer = root
+            .children
+            .iter()
+            .find(|node| node.key.as_deref() == Some("outer"))
+            .unwrap();
+        assert!(outer.expanded);
+        assert!(
+            outer
+                .children
+                .iter()
+                .find(|node| node.key.as_deref() == Some("inner"))
+                .unwrap()
+                .expanded
+        );
+        assert!(
+            !outer
+                .children
+                .iter()
+                .find(|node| node.key.as_deref() == Some("other"))
+                .unwrap()
+                .expanded
+        );
+        assert!(
+            !root
+                .children
+                .iter()
+                .find(|node| node.key.as_deref() == Some("second"))
+                .unwrap()
+                .expanded
+        );
+    }
+
+    #[test]
+    fn focus_match_path_collapses_tree_for_missing_target() {
+        let mut root = parse_json(r#"{"outer":{"value":1}}"#).unwrap();
+        set_expanded_all(&mut root, true);
+
+        assert!(!focus_match_path(&mut root, "missing"));
+        assert!(!root.expanded);
+        assert!(!root.children[0].expanded);
     }
 }

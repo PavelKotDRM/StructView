@@ -8,7 +8,7 @@ use crate::parser::set_expanded_all;
 
 use super::state::{AppMode, JsonViewerApp};
 use super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
-use super::tree::{TreeOutcome, render_node};
+use super::tree::{TreeOutcome, focus_match_path, render_node};
 
 /// Время показа всплывающего уведомления в секундах.
 const TOAST_LIFETIME_SECS: u64 = 3;
@@ -36,9 +36,17 @@ impl JsonViewerApp {
                 ui.close();
                 self.open_file_dialog();
             }
+            if ui.button("💾  Сохранить").clicked() {
+                ui.close();
+                self.request_save_current();
+            }
             if ui.button("💾  Сохранить как…").clicked() {
                 ui.close();
                 self.save_pretty();
+            }
+            if ui.button("✖  Закрыть файл").clicked() {
+                ui.close();
+                self.close_file();
             }
             ui.separator();
             if ui.button("❌  Выход").clicked() {
@@ -93,13 +101,19 @@ impl JsonViewerApp {
         });
     }
 
-    /// Отрисовать быстрые кнопки разворачивания и сворачивания дерева.
+    /// Отрисовать быстрые кнопки дерева и сохранения файла.
     fn show_tree_buttons(&mut self, ui: &mut Ui) {
         if ui.button(">> Развернуть все").clicked() {
             self.set_all_expanded(true);
         }
         if ui.button("<< Свернуть все").clicked() {
             self.set_all_expanded(false);
+        }
+        if ui.button("💾 Сохранить").clicked() {
+            self.request_save_current();
+        }
+        if ui.button("✖ Закрыть").clicked() {
+            self.close_file();
         }
     }
 
@@ -148,9 +162,9 @@ impl JsonViewerApp {
         });
 
         if query_changed || enter_pressed || options_changed {
-            let query = self.search_query_buf.clone();
-            if let Some(root) = &self.root {
-                self.search.search(root, &query);
+            self.refresh_search();
+            if self.root.is_some() {
+                self.request_search_scroll();
             }
         }
 
@@ -162,9 +176,11 @@ impl JsonViewerApp {
             );
             if ui.button("<").clicked() {
                 self.search.prev();
+                self.request_search_scroll();
             }
             if ui.button(">").clicked() {
                 self.search.next();
+                self.request_search_scroll();
             }
         } else if !self.search_query_buf.is_empty() {
             ui.label(RichText::new("Не найдено").color(Color32::GRAY));
@@ -227,15 +243,18 @@ impl JsonViewerApp {
             self.handle_dropped_files(ui);
 
             if self.root.is_none() && self.parse_error.is_none() {
+                self.save_requested = false;
                 show_placeholder(ui);
                 return;
             }
 
             if let Some(err) = &self.parse_error {
+                self.save_requested = false;
                 show_parse_error(ui, &err.to_string());
                 return;
             }
 
+            let save_requested = std::mem::take(&mut self.save_requested);
             let outcome = self.show_tree(ui);
 
             if let Some(request) = outcome.add_child_request {
@@ -243,6 +262,9 @@ impl JsonViewerApp {
             }
             if outcome.tree_changed {
                 self.refresh_search();
+            }
+            if save_requested {
+                self.save_current();
             }
             if let Some(text) = outcome.copy_request {
                 match copy_to_clipboard(&text) {
@@ -259,6 +281,13 @@ impl JsonViewerApp {
 
     /// Отрисовать прокручиваемую область с деревом и вернуть отложенные действия.
     fn show_tree(&mut self, ui: &mut Ui) -> TreeOutcome {
+        let scroll_to_path = self.search_scroll_target.take();
+        if let Some(path) = scroll_to_path.as_deref()
+            && let Some(root) = &mut self.root
+        {
+            focus_match_path(root, path);
+        }
+
         // Клонируем состояние поиска, чтобы одновременно держать `&mut self.root`.
         let search = self.search.clone();
         let mode = self.mode;
@@ -268,7 +297,14 @@ impl JsonViewerApp {
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 if let Some(root) = &mut self.root {
-                    render_node(ui, root, &search, mode, &mut outcome);
+                    render_node(
+                        ui,
+                        root,
+                        &search,
+                        mode,
+                        scroll_to_path.as_deref(),
+                        &mut outcome,
+                    );
                 }
             });
 

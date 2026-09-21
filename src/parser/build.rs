@@ -254,7 +254,7 @@ fn build_node(key: Option<String>, value: &Value, parent_path: String) -> JsonNo
                     plural_ru(count, "поле", "поля", "полей")
                 ),
                 children,
-                expanded: true,
+                expanded: false,
                 path,
             }
         }
@@ -274,11 +274,16 @@ fn build_node(key: Option<String>, value: &Value, parent_path: String) -> JsonNo
                     plural_ru(count, "элемент", "элемента", "элементов")
                 ),
                 children,
-                expanded: true,
+                expanded: false,
                 path,
             }
         }
-        Value::String(s) => leaf(key, JsonValueType::String, format!("\"{}\"", s), path),
+        Value::String(s) => leaf(
+            key,
+            JsonValueType::String,
+            serde_json::Value::String(s.clone()).to_string(),
+            path,
+        ),
         Value::Number(n) => leaf(key, JsonValueType::Number, n.to_string(), path),
         Value::Bool(b) => leaf(key, JsonValueType::Bool, b.to_string(), path),
         Value::Null => leaf(key, JsonValueType::Null, "null".to_string(), path),
@@ -371,6 +376,16 @@ mod tests {
         assert_eq!(format, DataFormat::Yaml);
         assert_eq!(root.value_type, JsonValueType::Array);
         assert_eq!(root.children.len(), 2);
+    }
+
+    #[test]
+    fn parsed_containers_are_collapsed_by_default() {
+        let root = parse_json(r#"{"object":{"value":1},"array":[{"value":2}]}"#).unwrap();
+
+        assert!(!root.expanded);
+        assert!(!root.children[0].expanded);
+        assert!(!root.children[1].expanded);
+        assert!(!root.children[1].children[0].expanded);
     }
 
     #[test]
