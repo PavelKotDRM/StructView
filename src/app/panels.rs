@@ -8,7 +8,7 @@ use crate::parser::set_expanded_all;
 
 use super::state::{AppMode, JsonViewerApp};
 use super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
-use super::tree::{TreeOutcome, focus_match_path, render_node};
+use super::tree::{RenderOptions, TreeOutcome, focus_match_path, render_node};
 
 /// Время показа всплывающего уведомления в секундах.
 const TOAST_LIFETIME_SECS: u64 = 3;
@@ -16,16 +16,22 @@ const TOAST_LIFETIME_SECS: u64 = 3;
 impl JsonViewerApp {
     /// Отрисовать верхнюю панель с меню, переключателем режима и строкой поиска.
     pub(super) fn show_top_panel(&mut self, ui: &mut Ui) {
+        self.handle_shortcuts(ui.ctx());
         egui::Panel::top("top_panel").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                self.show_menu_bar(ui);
-                ui.separator();
-                self.show_tree_buttons(ui);
-                ui.separator();
-                self.show_mode_switch(ui);
-                ui.separator();
-                self.show_search_bar(ui);
-            });
+            egui::ScrollArea::horizontal()
+                .id_salt("top_panel_controls_scroll")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        self.show_menu_bar(ui);
+                        ui.separator();
+                        self.show_tree_buttons(ui);
+                        ui.separator();
+                        self.show_mode_switch(ui);
+                        ui.separator();
+                        self.show_search_bar(ui);
+                    });
+                });
         });
     }
 
@@ -51,6 +57,32 @@ impl JsonViewerApp {
             ui.separator();
             if ui.button("❌  Выход").clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+
+        ui.menu_button("Правка", |ui| {
+            let copy_enabled = !self.selected_paths.is_empty();
+            if ui
+                .add_enabled(
+                    copy_enabled,
+                    egui::Button::new("📋  Копировать выбранные структуры  Ctrl+C"),
+                )
+                .clicked()
+            {
+                self.copy_structures_requested = true;
+                ui.close();
+            }
+
+            let paste_enabled = self.mode == AppMode::Edit && self.can_paste_into_selected();
+            if ui
+                .add_enabled(
+                    paste_enabled,
+                    egui::Button::new("📥  Вставить в выбранный контейнер  Ctrl+V"),
+                )
+                .clicked()
+            {
+                self.paste_requested = true;
+                ui.close();
             }
         });
 
@@ -112,9 +144,43 @@ impl JsonViewerApp {
         if ui.button("💾 Сохранить").clicked() {
             self.request_save_current();
         }
+        if ui
+            .add_enabled(
+                !self.selected_paths.is_empty(),
+                egui::Button::new("📋 Копировать"),
+            )
+            .clicked()
+        {
+            self.copy_structures_requested = true;
+        }
+        if ui
+            .add_enabled(
+                self.mode == AppMode::Edit && self.can_paste_into_selected(),
+                egui::Button::new("📥 Вставить"),
+            )
+            .clicked()
+        {
+            self.paste_requested = true;
+        }
         if ui.button("✖ Закрыть").clicked() {
             self.close_file();
         }
+    }
+
+    /// Обработать горячие клавиши копирования и вставки структур.
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+
+        let (copy, paste) = ctx.input(|input| {
+            (
+                input.modifiers.command && input.key_pressed(egui::Key::C),
+                input.modifiers.command && input.key_pressed(egui::Key::V),
+            )
+        });
+        self.copy_structures_requested |= copy;
+        self.paste_requested |= paste;
     }
 
     /// Развернуть или свернуть все узлы дерева.
@@ -241,22 +307,25 @@ impl JsonViewerApp {
     pub(super) fn show_central_panel(&mut self, ui: &mut Ui) {
         egui::CentralPanel::default().show(ui, |ui| {
             self.handle_dropped_files(ui);
+            let save_requested = std::mem::take(&mut self.save_requested);
+            let copy_structures_requested = std::mem::take(&mut self.copy_structures_requested);
+            let paste_requested = std::mem::take(&mut self.paste_requested);
 
             if self.root.is_none() && self.parse_error.is_none() {
-                self.save_requested = false;
                 show_placeholder(ui);
                 return;
             }
 
             if let Some(err) = &self.parse_error {
-                self.save_requested = false;
                 show_parse_error(ui, &err.to_string());
                 return;
             }
 
-            let save_requested = std::mem::take(&mut self.save_requested);
             let outcome = self.show_tree(ui);
 
+            if let Some(request) = outcome.selection_request {
+                self.apply_selection_request(request);
+            }
             if let Some(request) = outcome.add_child_request {
                 self.open_add_child_dialog(request);
             }
@@ -266,7 +335,20 @@ impl JsonViewerApp {
             if save_requested {
                 self.save_current();
             }
+            if copy_structures_requested {
+                self.copy_structures_at_paths(self.selected_paths.iter().cloned().collect());
+            }
+            if let Some(paths) = outcome.copy_structure_paths {
+                self.copy_structures_at_paths(paths);
+            }
+            if paste_requested {
+                self.paste_into_selected();
+            }
+            if let Some(path) = outcome.paste_target_path {
+                self.paste_into_path(path);
+            }
             if let Some(text) = outcome.copy_request {
+                self.clipboard_payload = None;
                 match copy_to_clipboard(&text) {
                     Ok(_) => self.show_toast("Скопировано в буфер обмена"),
                     Err(e) => self.show_toast(&format!("Ошибка копирования: {}", e)),
@@ -290,21 +372,21 @@ impl JsonViewerApp {
 
         // Клонируем состояние поиска, чтобы одновременно держать `&mut self.root`.
         let search = self.search.clone();
+        let selected_paths = self.selected_paths.clone();
         let mode = self.mode;
+        let options = RenderOptions {
+            search: &search,
+            mode,
+            scroll_to_path: scroll_to_path.as_deref(),
+            selected_paths: &selected_paths,
+        };
         let mut outcome = TreeOutcome::default();
 
         egui::ScrollArea::both()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 if let Some(root) = &mut self.root {
-                    render_node(
-                        ui,
-                        root,
-                        &search,
-                        mode,
-                        scroll_to_path.as_deref(),
-                        &mut outcome,
-                    );
+                    render_node(ui, root, &options, &mut outcome);
                 }
             });
 

@@ -3,14 +3,20 @@
 //! Здесь хранится всё, что переживает отдельный кадр отрисовки: разобранное
 //! JSON-дерево, состояние поиска, метаданные файла и настройки темы.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::parser::{DataFormat, JsonNode, ParseError, parse_data, serialize_data};
+use crate::clipboard::{
+    ClipboardEntry, copy_to_clipboard, decode_structures, encode_structures, read_from_clipboard,
+};
+use crate::parser::{DataFormat, JsonNode, JsonValueType, ParseError, parse_data, serialize_data};
 use crate::search::SearchState;
 
-use super::edit::{add_child_at_path, node_to_value};
-use super::tree::AddChildRequest;
+use super::edit::{
+    add_child_at_path, find_node, node_to_value, paste_structures_at_path, selected_structures,
+};
+use super::tree::{AddChildRequest, SelectionRequest};
 
 /// Метаданные загруженного файла, отображаемые в статус-баре.
 #[derive(Debug, Default)]
@@ -84,6 +90,16 @@ pub struct JsonViewerApp {
     pub(super) mode: AppMode,
     /// Открытый диалог добавления поля или элемента.
     pub(super) add_child_dialog: Option<AddChildDialog>,
+    /// Пути выбранных узлов дерева.
+    pub(super) selected_paths: BTreeSet<String>,
+    /// Последний успешно сформированный буфер структур внутри приложения.
+    ///
+    /// Нужен как запасной вариант, если системный буфер временно недоступен.
+    pub(super) clipboard_payload: Option<Vec<ClipboardEntry>>,
+    /// Отложенный запрос копирования выбранных структур.
+    pub(super) copy_structures_requested: bool,
+    /// Отложенный запрос вставки в выбранный контейнер.
+    pub(super) paste_requested: bool,
 }
 
 impl Default for JsonViewerApp {
@@ -100,6 +116,10 @@ impl Default for JsonViewerApp {
             dark_mode: true,
             mode: AppMode::default(),
             add_child_dialog: None,
+            selected_paths: BTreeSet::new(),
+            clipboard_payload: None,
+            copy_structures_requested: false,
+            paste_requested: false,
         }
     }
 }
@@ -160,6 +180,7 @@ impl JsonViewerApp {
     /// Ошибки чтения файла и парсинга записываются в `self.parse_error`;
     /// метод не возвращает `Result` — ошибки отображаются в UI.
     pub(super) fn load_file(&mut self, path: PathBuf) {
+        self.selected_paths.clear();
         let t0 = Instant::now();
         match std::fs::read_to_string(&path) {
             Err(e) => {
@@ -284,6 +305,9 @@ impl JsonViewerApp {
         self.file_state = FileState::default();
         self.add_child_dialog = None;
         self.mode = AppMode::View;
+        self.selected_paths.clear();
+        self.copy_structures_requested = false;
+        self.paste_requested = false;
     }
 
     /// Сериализовать корень и записать его в указанный путь.
@@ -302,6 +326,119 @@ impl JsonViewerApp {
     /// Показать кратковременное уведомление в статус-баре.
     pub(super) fn show_toast(&mut self, message: &str) {
         self.toast = Some((message.to_string(), Instant::now()));
+    }
+
+    /// Применить к текущему выбору действие клика по узлу.
+    pub(super) fn apply_selection_request(&mut self, request: SelectionRequest) {
+        if !request.additive {
+            self.selected_paths.clear();
+            self.selected_paths.insert(request.path);
+            return;
+        }
+
+        if !self.selected_paths.insert(request.path.clone()) {
+            self.selected_paths.remove(&request.path);
+        }
+    }
+
+    /// Проверить, можно ли вставить структуры в текущий выбор.
+    pub(super) fn can_paste_into_selected(&self) -> bool {
+        let Some(path) = self.selected_paths.iter().next() else {
+            return false;
+        };
+        self.selected_paths.len() == 1
+            && self
+                .root
+                .as_ref()
+                .and_then(|root| find_node(root, path))
+                .is_some_and(|node| {
+                    matches!(
+                        node.value_type,
+                        JsonValueType::Object | JsonValueType::Array
+                    )
+                })
+    }
+
+    /// Скопировать структуры по указанным путям в системный буфер обмена.
+    pub(super) fn copy_structures_at_paths(&mut self, paths: Vec<String>) {
+        let selected_paths = paths.into_iter().collect::<BTreeSet<_>>();
+        let entries = match self.root.as_ref() {
+            Some(root) => selected_structures(root, &selected_paths),
+            None => Err("Нет открытого документа".to_string()),
+        };
+        let entries = match entries {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.show_toast(&error);
+                return;
+            }
+        };
+
+        let encoded = match encode_structures(&entries) {
+            Ok(encoded) => encoded,
+            Err(error) => {
+                self.show_toast(&error);
+                return;
+            }
+        };
+        self.clipboard_payload = Some(entries.clone());
+        match copy_to_clipboard(&encoded) {
+            Ok(()) => self.show_toast(&format!("Скопировано структур: {}", entries.len())),
+            Err(error) => {
+                self.show_toast(&format!("Ошибка копирования в системный буфер: {}", error))
+            }
+        }
+    }
+
+    /// Вставить структуры в единственный выбранный контейнер.
+    pub(super) fn paste_into_selected(&mut self) {
+        let Some(path) = self.selected_paths.iter().next().cloned() else {
+            self.show_toast("Выберите контейнер для вставки");
+            return;
+        };
+        if self.selected_paths.len() != 1 {
+            self.show_toast("Для вставки выберите ровно один контейнер");
+            return;
+        }
+        self.paste_into_path(path);
+    }
+
+    /// Вставить структуры в контейнер по пути.
+    pub(super) fn paste_into_path(&mut self, target_path: String) {
+        if self.mode != AppMode::Edit {
+            self.show_toast("Вставка доступна только в режиме редактирования");
+            return;
+        }
+
+        let entries = match read_from_clipboard() {
+            Ok(text) => decode_structures(&text),
+            Err(system_error) => self
+                .clipboard_payload
+                .clone()
+                .ok_or_else(|| format!("Не удалось прочитать буфер обмена: {}", system_error)),
+        };
+        let entries = match entries {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.show_toast(&error);
+                return;
+            }
+        };
+
+        let result = self
+            .root
+            .as_mut()
+            .ok_or_else(|| "Нет открытого документа".to_string())
+            .and_then(|root| paste_structures_at_path(root, &target_path, &entries));
+
+        match result {
+            Ok(count) => {
+                self.selected_paths.clear();
+                self.refresh_search();
+                self.show_toast(&format!("Вставлено структур: {}", count));
+            }
+            Err(error) => self.show_toast(&format!("Ошибка вставки: {}", error)),
+        }
     }
 
     /// Пересчитать результаты поиска по текущему запросу.
@@ -405,6 +542,19 @@ impl JsonViewerApp {
     }
 }
 
+impl eframe::App for JsonViewerApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Принудительное обновление, если показано уведомление (чтобы оно исчезло вовремя)
+        if self.toast.is_some() {
+            ui.ctx().request_repaint();
+        }
+
+        self.show_top_panel(ui);
+        self.show_bottom_panel(ui);
+        self.show_central_panel(ui);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::JsonViewerApp;
@@ -453,18 +603,5 @@ mod tests {
         assert!(!app.save_requested);
         assert_eq!(app.mode, super::AppMode::View);
         std::fs::remove_file(path).unwrap();
-    }
-}
-
-impl eframe::App for JsonViewerApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Принудительное обновление, если показано уведомление (чтобы оно исчезло вовремя)
-        if self.toast.is_some() {
-            ui.ctx().request_repaint();
-        }
-
-        self.show_top_panel(ui);
-        self.show_bottom_panel(ui);
-        self.show_central_panel(ui);
     }
 }

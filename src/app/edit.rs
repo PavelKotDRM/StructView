@@ -1,7 +1,10 @@
 //! Правка примитивных значений дерева и обратное преобразование в [`serde_json::Value`].
 
+use std::collections::{BTreeSet, HashSet};
+
 use serde_json::Value;
 
+use crate::clipboard::ClipboardEntry;
 use crate::parser::{DataFormat, JsonNode, JsonValueType, build_path, parse_data, plural_ru};
 
 /// Преобразовать JSON-узел обратно в [`serde_json::Value`].
@@ -49,6 +52,159 @@ pub(crate) fn node_to_value(node: &JsonNode) -> Result<Value, String> {
         }
         JsonValueType::Null => Ok(Value::Null),
     }
+}
+
+/// Собрать выбранные узлы для копирования, не дублируя вложенные выборы.
+///
+/// Если одновременно выбраны контейнер и его потомок, в буфер попадает
+/// только контейнер: его значение уже содержит всю вложенную иерархию.
+pub(super) fn selected_structures(
+    root: &JsonNode,
+    selected_paths: &BTreeSet<String>,
+) -> Result<Vec<ClipboardEntry>, String> {
+    let mut entries = Vec::new();
+    collect_selected_structures(root, selected_paths, &mut entries)?;
+    if entries.is_empty() {
+        return Err("Не выбрано ни одной структуры".to_string());
+    }
+    Ok(entries)
+}
+
+fn collect_selected_structures(
+    node: &JsonNode,
+    selected_paths: &BTreeSet<String>,
+    entries: &mut Vec<ClipboardEntry>,
+) -> Result<(), String> {
+    if selected_paths.contains(&node.path) {
+        entries.push(ClipboardEntry {
+            key: node.key.clone(),
+            value: node_to_value(node)?,
+        });
+        return Ok(());
+    }
+
+    for child in &node.children {
+        collect_selected_structures(child, selected_paths, entries)?;
+    }
+    Ok(())
+}
+
+/// Вставить структуры в объект или массив по пути контейнера.
+///
+/// Ключи полей объектов сохраняются, а элементы массивов добавляются в конец
+/// с новыми индексами. Неключевой объект (например, скопированный корень)
+/// разворачивается в целевой объект своими полями; неключевой массив
+/// разворачивается в целевой массив своими элементами.
+pub(super) fn paste_structures_at_path(
+    root: &mut JsonNode,
+    target_path: &str,
+    entries: &[ClipboardEntry],
+) -> Result<usize, String> {
+    if entries.is_empty() {
+        return Err("Буфер структур пуст".to_string());
+    }
+
+    let parent = find_node_mut(root, target_path)
+        .ok_or_else(|| "Не удалось найти контейнер для вставки данных".to_string())?;
+    match parent.value_type {
+        JsonValueType::Object => paste_into_object(parent, entries),
+        JsonValueType::Array => paste_into_array(parent, entries),
+        _ => Err("Вставлять структуры можно только в объект или массив".to_string()),
+    }
+}
+
+fn paste_into_object(parent: &mut JsonNode, entries: &[ClipboardEntry]) -> Result<usize, String> {
+    let mut candidates = Vec::new();
+    for entry in entries {
+        match (&entry.key, &entry.value) {
+            (Some(key), value) => candidates.push((key.clone(), value.clone())),
+            (None, Value::Object(fields)) => {
+                candidates.extend(
+                    fields
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone())),
+                );
+            }
+            (None, _) => {
+                return Err(
+                    "Для вставки значения без ключа в объект скопируйте поле объекта".to_string(),
+                );
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return Err("В буфере нет полей для вставки в объект".to_string());
+    }
+
+    let mut known_keys = parent
+        .children
+        .iter()
+        .filter_map(|child| child.key.as_deref())
+        .map(ToOwned::to_owned)
+        .collect::<HashSet<_>>();
+    for (key, _) in &candidates {
+        if !known_keys.insert(key.clone()) {
+            return Err(format!("Поле «{}» уже существует", key));
+        }
+    }
+
+    let parent_path = parent.path.clone();
+    let nodes = candidates
+        .into_iter()
+        .map(|(key, value)| value_to_node(Some(key), &value, &parent_path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let count = nodes.len();
+    parent.children.extend(nodes);
+    update_container_label(parent);
+    Ok(count)
+}
+
+fn paste_into_array(parent: &mut JsonNode, entries: &[ClipboardEntry]) -> Result<usize, String> {
+    let mut values = Vec::new();
+    for entry in entries {
+        if entry.key.is_none()
+            && let Value::Array(items) = &entry.value
+        {
+            values.extend(items.iter().cloned());
+            continue;
+        }
+        values.push(entry.value.clone());
+    }
+    if values.is_empty() {
+        return Err("В буфере нет элементов для вставки в массив".to_string());
+    }
+
+    let parent_path = parent.path.clone();
+    let first_index = parent.children.len();
+    let nodes = values
+        .into_iter()
+        .enumerate()
+        .map(|(offset, value)| {
+            value_to_node(
+                Some((first_index + offset).to_string()),
+                &value,
+                &parent_path,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let count = nodes.len();
+    parent.children.extend(nodes);
+    update_container_label(parent);
+    Ok(count)
+}
+
+fn value_to_node(
+    key: Option<String>,
+    value: &Value,
+    parent_path: &str,
+) -> Result<JsonNode, String> {
+    let source = serde_json::to_string(value)
+        .map_err(|error| format!("Ошибка подготовки структуры к вставке: {}", error))?;
+    let (mut node, _) = parse_data(&source, Some(DataFormat::Json))
+        .map_err(|error| format!("Не удалось подготовить структуру к вставке: {}", error))?;
+    node.key = key;
+    update_paths(&mut node, parent_path);
+    Ok(node)
 }
 
 /// Применить правку к примитивному узлу (string / number / bool / null).
@@ -168,6 +324,15 @@ fn find_node_mut<'a>(node: &'a mut JsonNode, path: &str) -> Option<&'a mut JsonN
         .find_map(|child| find_node_mut(child, path))
 }
 
+pub(super) fn find_node<'a>(node: &'a JsonNode, path: &str) -> Option<&'a JsonNode> {
+    if node.path == path {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_node(child, path))
+}
+
 fn update_paths(node: &mut JsonNode, parent_path: &str) {
     node.path = build_path(parent_path, &node.key);
     let path = node.path.clone();
@@ -277,5 +442,88 @@ mod tests {
         let (mut root, _) = parse_data(r#"{"name":"Ada"}"#, Some(DataFormat::Json)).unwrap();
         let error = add_child(&mut root, "name", "\"Grace\"", DataFormat::Json).unwrap_err();
         assert!(error.contains("уже существует"));
+    }
+
+    #[test]
+    fn selected_structures_keep_hierarchy_and_skip_nested_duplicates() {
+        let root =
+            parse_json(r#"{"profile":{"name":"Ada","roles":["admin"]},"enabled":true}"#).unwrap();
+        let selected_paths = BTreeSet::from([
+            "profile".to_string(),
+            "profile.name".to_string(),
+            "enabled".to_string(),
+        ]);
+
+        let entries = selected_structures(&root, &selected_paths).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        let profile = entries
+            .iter()
+            .find(|entry| entry.key.as_deref() == Some("profile"))
+            .unwrap();
+        assert_eq!(
+            profile.value,
+            serde_json::json!({"name": "Ada", "roles": ["admin"]})
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.key.as_deref() == Some("enabled"))
+        );
+    }
+
+    #[test]
+    fn pasting_object_structures_preserves_nested_values_and_paths() {
+        let source = parse_json(r#"{"profile":{"name":"Ada","roles":["admin"]}}"#).unwrap();
+        let selected_paths = BTreeSet::from(["profile".to_string()]);
+        let entries = selected_structures(&source, &selected_paths).unwrap();
+        let mut target = parse_json(r#"{"existing":true}"#).unwrap();
+
+        let inserted = paste_structures_at_path(&mut target, "", &entries).unwrap();
+
+        assert_eq!(inserted, 1);
+        assert_eq!(
+            node_to_value(&target).unwrap(),
+            serde_json::json!({
+                "existing": true,
+                "profile": {"name": "Ada", "roles": ["admin"]}
+            })
+        );
+        assert_eq!(target.children[1].path, "profile");
+        assert_eq!(target.children[1].children[0].path, "profile.name");
+    }
+
+    #[test]
+    fn pasting_root_array_into_array_appends_its_elements() {
+        let source = parse_json(r#"[{"id":1},{"id":2}]"#).unwrap();
+        let selected_paths = BTreeSet::from(["".to_string()]);
+        let entries = selected_structures(&source, &selected_paths).unwrap();
+        let mut target = parse_json(r#"[{"id":0}]"#).unwrap();
+
+        let inserted = paste_structures_at_path(&mut target, "", &entries).unwrap();
+
+        assert_eq!(inserted, 2);
+        assert_eq!(
+            node_to_value(&target).unwrap(),
+            serde_json::json!([{"id": 0}, {"id": 1}, {"id": 2}])
+        );
+        assert_eq!(target.children[2].path, "2");
+    }
+
+    #[test]
+    fn duplicate_paste_does_not_partially_modify_object() {
+        let entry = ClipboardEntry {
+            key: Some("name".to_string()),
+            value: Value::String("Grace".to_string()),
+        };
+        let mut target = parse_json(r#"{"name":"Ada"}"#).unwrap();
+
+        let error = paste_structures_at_path(&mut target, "", &[entry]).unwrap_err();
+
+        assert!(error.contains("уже существует"));
+        assert_eq!(
+            node_to_value(&target).unwrap(),
+            serde_json::json!({"name": "Ada"})
+        );
     }
 }
