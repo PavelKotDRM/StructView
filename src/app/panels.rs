@@ -9,10 +9,15 @@ use crate::parser::set_expanded_all;
 use super::i18n::{Locale, TextKey};
 use super::state::{AppMode, JsonViewerApp};
 use super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
-use super::tree::{RenderOptions, TreeOutcome, focus_match_path, render_node};
+use super::tree::{
+    RenderOptions, TreeOutcome, VisibleRows, focus_match_path, render_visible_rows,
+    tree_row_height, visible_row_index,
+};
 
 /// Время показа всплывающего уведомления в секундах.
 const TOAST_LIFETIME_SECS: u64 = 3;
+/// Минимальная ширина поля поиска, достаточная для отображения подсказки.
+const SEARCH_FIELD_MIN_WIDTH: f32 = 260.0;
 
 impl JsonViewerApp {
     /// Отрисовать верхнюю панель с меню, переключателем режима и строкой поиска.
@@ -220,6 +225,7 @@ impl JsonViewerApp {
     fn set_all_expanded(&mut self, expanded: bool) {
         if let Some(root) = &mut self.root {
             set_expanded_all(root, expanded);
+            self.visible_rows_dirty = true;
         }
     }
 
@@ -246,7 +252,8 @@ impl JsonViewerApp {
         let search_response = ui.add(
             egui::TextEdit::singleline(&mut self.search_query_buf)
                 .hint_text(locale.text(TextKey::SearchPlaceholder))
-                .desired_width(220.0),
+                .desired_width(SEARCH_FIELD_MIN_WIDTH)
+                .min_size(egui::vec2(SEARCH_FIELD_MIN_WIDTH, 0.0)),
         );
 
         let query_changed = search_response.changed();
@@ -417,13 +424,23 @@ impl JsonViewerApp {
         });
     }
 
-    /// Отрисовать прокручиваемую область с деревом и вернуть отложенные действия.
+    /// Отрисовать виртуализированную область с деревом и вернуть отложенные действия.
     fn show_tree(&mut self, ui: &mut Ui) -> TreeOutcome {
         let scroll_to_path = self.search_scroll_target.take();
         if let Some(path) = scroll_to_path.as_deref()
             && let Some(root) = &mut self.root
         {
             focus_match_path(root, path);
+            self.visible_rows_dirty = true;
+        }
+
+        if self.visible_rows_dirty {
+            self.visible_rows = self
+                .root
+                .as_ref()
+                .map(VisibleRows::from_root)
+                .unwrap_or_default();
+            self.visible_rows_dirty = false;
         }
 
         // Клонируем состояние поиска, чтобы одновременно держать `&mut self.root`.
@@ -438,15 +455,46 @@ impl JsonViewerApp {
             locale: self.locale,
         };
         let mut outcome = TreeOutcome::default();
+        let total_rows = self.visible_rows.len();
+        let row_height = tree_row_height(ui);
+        let target_row = scroll_to_path.as_deref().and_then(|path| {
+            self.root
+                .as_ref()
+                .and_then(|root| visible_row_index(root, path))
+        });
+        let visible_rows = &self.visible_rows;
+        let root = &mut self.root;
 
-        egui::ScrollArea::both()
-            .auto_shrink([false; 2])
-            .show(ui, |ui| {
-                if let Some(root) = &mut self.root {
-                    render_node(ui, root, &options, &mut outcome);
+        egui::ScrollArea::both().auto_shrink([false; 2]).show_rows(
+            ui,
+            row_height,
+            total_rows,
+            |ui, row_range| {
+                if let Some(target_row) = target_row
+                    && !row_range.contains(&target_row)
+                {
+                    let row_height_with_spacing = row_height + ui.spacing().item_spacing.y;
+                    let content_top =
+                        ui.max_rect().top() - row_range.start as f32 * row_height_with_spacing;
+                    let target_top = content_top + target_row as f32 * row_height_with_spacing;
+                    let clip_rect = ui.clip_rect();
+                    ui.scroll_to_rect(
+                        egui::Rect::from_min_max(
+                            egui::pos2(clip_rect.left(), target_top),
+                            egui::pos2(clip_rect.right(), target_top + row_height),
+                        ),
+                        Some(egui::Align::Center),
+                    );
                 }
-            });
+                if let Some(root) = root {
+                    render_visible_rows(ui, root, visible_rows, &options, &mut outcome, row_range);
+                }
+            },
+        );
 
+        if outcome.expansion_changed {
+            self.visible_rows_dirty = true;
+        }
         outcome
     }
 

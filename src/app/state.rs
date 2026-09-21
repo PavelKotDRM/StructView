@@ -17,7 +17,7 @@ use super::edit::{
     add_child_at_path, find_node, node_to_value, paste_structures_at_path, selected_structures,
 };
 use super::i18n::{Locale, TextKey};
-use super::tree::{AddChildRequest, SelectionRequest};
+use super::tree::{AddChildRequest, SelectionRequest, VisibleRows};
 
 /// Метаданные загруженного файла, отображаемые в статус-баре.
 #[derive(Debug, Default)]
@@ -95,6 +95,10 @@ pub struct JsonViewerApp {
     pub(super) add_child_dialog: Option<AddChildDialog>,
     /// Пути выбранных узлов дерева.
     pub(super) selected_paths: BTreeSet<String>,
+    /// Индекс строк, видимых в текущем состоянии раскрытия дерева.
+    pub(super) visible_rows: VisibleRows,
+    /// Требуется ли перестроить индекс видимых строк перед отрисовкой.
+    pub(super) visible_rows_dirty: bool,
     /// Последний успешно сформированный буфер структур внутри приложения.
     ///
     /// Нужен как запасной вариант, если системный буфер временно недоступен.
@@ -121,6 +125,8 @@ impl Default for JsonViewerApp {
             locale: Locale::default(),
             add_child_dialog: None,
             selected_paths: BTreeSet::new(),
+            visible_rows: VisibleRows::default(),
+            visible_rows_dirty: true,
             clipboard_payload: None,
             copy_structures_requested: false,
             paste_requested: false,
@@ -185,6 +191,7 @@ impl JsonViewerApp {
     /// метод не возвращает `Result` — ошибки отображаются в UI.
     pub(super) fn load_file(&mut self, path: PathBuf) {
         self.selected_paths.clear();
+        self.visible_rows_dirty = true;
         let t0 = Instant::now();
         match std::fs::read_to_string(&path) {
             Err(e) => {
@@ -301,6 +308,8 @@ impl JsonViewerApp {
     /// Закрыть текущий документ и очистить связанные с ним состояния.
     pub(super) fn close_file(&mut self) {
         self.root = None;
+        self.visible_rows = VisibleRows::default();
+        self.visible_rows_dirty = true;
         self.parse_error = None;
         self.search = SearchState::default();
         self.search_query_buf.clear();
@@ -437,6 +446,7 @@ impl JsonViewerApp {
         match result {
             Ok(count) => {
                 self.selected_paths.clear();
+                self.visible_rows_dirty = true;
                 self.refresh_search();
                 self.show_toast(&self.locale.structures_pasted(count));
             }
@@ -535,6 +545,7 @@ impl JsonViewerApp {
 
         match result {
             Ok(()) => {
+                self.visible_rows_dirty = true;
                 self.refresh_search();
                 self.show_toast(self.locale.text(TextKey::DataAdded));
             }

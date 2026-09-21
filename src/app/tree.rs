@@ -1,6 +1,7 @@
-//! Рекурсивная отрисовка дерева JSON и контекстное меню узла.
+//! Виртуализированная отрисовка дерева JSON и контекстное меню узла.
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use egui::{RichText, Ui};
 
@@ -34,6 +35,8 @@ pub(super) struct TreeOutcome {
     pub(super) edit_error: Option<String>,
     /// Признак того, что дерево было изменено и поиск нужно пересчитать.
     pub(super) tree_changed: bool,
+    /// Признак изменения раскрытия контейнера.
+    pub(super) expansion_changed: bool,
     /// Запрос на открытие диалога добавления поля или элемента.
     pub(super) add_child_request: Option<AddChildRequest>,
 }
@@ -70,23 +73,143 @@ pub(super) struct AddChildRequest {
     pub(super) is_object: bool,
 }
 
-/// Рекурсивно отрисовать узел JSON в [`Ui`].
+/// Высота одной строки дерева без вертикального промежутка между строками.
 ///
-/// Объекты и массивы отображаются как раскрывающийся [`egui::collapsing_header::CollapsingState`].
-/// Листовые узлы отображаются как строки с цветной подписью типа; в режиме
-/// [`AppMode::Edit`] примитивные значения доступны для правки.
+/// `ScrollArea::show_rows` использует фиксированную высоту, поэтому значения
+/// контролов дерева должны согласовываться с высотой строки egui.
+pub(super) fn tree_row_height(ui: &Ui) -> f32 {
+    ui.spacing().interact_size.y
+}
+
+/// Компактный индекс строк, видимых при текущем состоянии раскрытия.
 ///
-/// При правом клике на узел показывается контекстное меню с опциями копирования.
+/// В индексах хранятся позиции дочерних узлов, а не копии строковых путей.
+/// Это позволяет быстро находить строку при прокрутке больших массивов без
+/// повторного обхода всех предшествующих узлов.
+#[derive(Debug, Default)]
+pub(super) struct VisibleRows {
+    rows: Vec<VisibleRow>,
+    path_indices: Vec<usize>,
+}
+
+#[derive(Debug)]
+struct VisibleRow {
+    path_start: usize,
+    depth: usize,
+}
+
+impl VisibleRows {
+    /// Построить индекс по текущему состоянию раскрытия дерева.
+    pub(super) fn from_root(root: &JsonNode) -> Self {
+        let mut rows = Vec::new();
+        let mut path_indices = Vec::new();
+        let mut path = Vec::new();
+        collect_visible_rows(root, &mut path, &mut rows, &mut path_indices);
+        Self { rows, path_indices }
+    }
+
+    /// Вернуть число строк в индексе.
+    pub(super) fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Получить путь и уровень вложенности строки.
+    fn row(&self, index: usize) -> Option<(&[usize], usize)> {
+        let row = self.rows.get(index)?;
+        let path = &self.path_indices[row.path_start..row.path_start + row.depth];
+        Some((path, row.depth))
+    }
+}
+
+/// Найти индекс видимой строки по пути узла.
+pub(super) fn visible_row_index(root: &JsonNode, target_path: &str) -> Option<usize> {
+    let mut row_index = 0;
+    find_visible_row_index(root, target_path, &mut row_index)
+}
+
+/// Рекурсивно найти индекс узла в порядке отображения дерева.
+fn find_visible_row_index(
+    node: &JsonNode,
+    target_path: &str,
+    row_index: &mut usize,
+) -> Option<usize> {
+    let current_index = *row_index;
+    *row_index += 1;
+    if node.path == target_path {
+        return Some(current_index);
+    }
+
+    if node.expanded {
+        for child in &node.children {
+            if let Some(index) = find_visible_row_index(child, target_path, row_index) {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+/// Рекурсивно построить компактный индекс видимых строк.
+fn collect_visible_rows(
+    node: &JsonNode,
+    path: &mut Vec<usize>,
+    rows: &mut Vec<VisibleRow>,
+    path_indices: &mut Vec<usize>,
+) {
+    let path_start = path_indices.len();
+    path_indices.extend(path.iter().copied());
+    rows.push(VisibleRow {
+        path_start,
+        depth: path.len(),
+    });
+
+    if node.expanded {
+        for (index, child) in node.children.iter().enumerate() {
+            path.push(index);
+            collect_visible_rows(child, path, rows, path_indices);
+            path.pop();
+        }
+    }
+}
+
+/// Отрисовать диапазон строк раскрытого дерева.
 ///
-/// # Arguments
-///
-/// * `ui` — текущий [`Ui`]-контекст egui.
-/// * `node` — узел для отрисовки.
-/// * `options` — неизменяемые параметры текущего обхода дерева.
-/// * `outcome` — накопитель отложенных действий.
-pub(super) fn render_node(
+/// Вызов обычно выполняется из [`egui::ScrollArea::show_rows`]. Узлы
+/// разрешаются по компактному индексу, а виджеты создаются исключительно
+/// для строк из диапазона.
+pub(super) fn render_visible_rows(
+    ui: &mut Ui,
+    root: &mut JsonNode,
+    visible_rows: &VisibleRows,
+    options: &RenderOptions<'_>,
+    outcome: &mut TreeOutcome,
+    row_range: Range<usize>,
+) {
+    for row_index in row_range {
+        let Some((path, depth)) = visible_rows.row(row_index) else {
+            break;
+        };
+        let Some(node) = node_at_path_mut(root, path) else {
+            break;
+        };
+        render_node_row(ui, node, depth, options, outcome);
+    }
+}
+
+/// Найти узел по компактному пути индексов.
+fn node_at_path_mut<'a>(root: &'a mut JsonNode, path: &[usize]) -> Option<&'a mut JsonNode> {
+    let mut node = root;
+    for &index in path {
+        node = node.children.get_mut(index)?;
+    }
+    Some(node)
+}
+
+/// Отрисовать одну строку дерева с учётом её уровня вложенности.
+fn render_node_row(
     ui: &mut Ui,
     node: &mut JsonNode,
+    depth: usize,
     options: &RenderOptions<'_>,
     outcome: &mut TreeOutcome,
 ) {
@@ -94,10 +217,24 @@ pub(super) fn render_node(
     let scroll_to_match = options.scroll_to_path.is_some_and(|path| path == node.path);
 
     match node.value_type {
-        JsonValueType::Object | JsonValueType::Array => {
-            render_container(ui, node, options, outcome, highlight, scroll_to_match)
-        }
-        _ => render_leaf(ui, node, options, outcome, highlight, scroll_to_match),
+        JsonValueType::Object | JsonValueType::Array => render_container_row(
+            ui,
+            node,
+            depth,
+            options,
+            outcome,
+            highlight,
+            scroll_to_match,
+        ),
+        _ => render_leaf(
+            ui,
+            node,
+            depth,
+            options,
+            outcome,
+            highlight,
+            scroll_to_match,
+        ),
     }
 }
 
@@ -154,10 +291,11 @@ impl Highlight {
     }
 }
 
-/// Отрисовать объект или массив как раскрывающийся блок с дочерними узлами.
-fn render_container(
+/// Отрисовать строку объекта или массива с кнопкой раскрытия.
+fn render_container_row(
     ui: &mut Ui,
     node: &mut JsonNode,
+    depth: usize,
     options: &RenderOptions<'_>,
     outcome: &mut TreeOutcome,
     highlight: Highlight,
@@ -165,6 +303,7 @@ fn render_container(
 ) {
     let header_text = make_header_text(node, highlight, options.locale);
     let selected = options.selected_paths.contains(&node.path);
+    let previous_expanded = node.expanded;
 
     let id = ui.make_persistent_id(&node.path);
     let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -180,13 +319,15 @@ fn render_container(
         state.store(ui.ctx());
     }
 
-    let (_toggle_response, header_inner, _body) = state
-        .show_header(ui, |ui| ui.selectable_label(selected, header_text))
-        .body(|ui| {
-            for child in &mut node.children {
-                render_node(ui, child, options, outcome);
-            }
-        });
+    let row_response = ui.horizontal(|ui| {
+        let row_height = tree_row_height(ui);
+        ui.set_min_height(row_height);
+        add_tree_indent(ui, depth);
+        state
+            .show_header(ui, |ui| ui.selectable_label(selected, header_text))
+            .body_unindented(|_| {})
+    });
+    let (_toggle_response, header_inner, _body) = row_response.inner;
 
     if scroll_to_match {
         header_inner
@@ -205,6 +346,9 @@ fn render_container(
         node.expanded,
     );
     node.expanded = updated.is_open();
+    if node.expanded != previous_expanded {
+        outcome.expansion_changed = true;
+    }
 
     header_inner.inner.context_menu(|ui| {
         container_context_menu(
@@ -222,6 +366,7 @@ fn render_container(
 fn render_leaf(
     ui: &mut Ui,
     node: &mut JsonNode,
+    depth: usize,
     options: &RenderOptions<'_>,
     outcome: &mut TreeOutcome,
     highlight: Highlight,
@@ -229,6 +374,10 @@ fn render_leaf(
 ) {
     let selected = options.selected_paths.contains(&node.path);
     let row_response = ui.horizontal(|ui| {
+        let row_height = tree_row_height(ui);
+        ui.set_min_height(row_height);
+        add_tree_indent(ui, depth);
+
         if let Some(key) = &node.key {
             let key_text = highlight.apply(RichText::new(format!("{}: ", key)), COLOR_KEY);
             let key_resp = ui.selectable_label(selected, key_text);
@@ -261,6 +410,14 @@ fn render_leaf(
         row_response
             .response
             .scroll_to_me(Some(egui::Align::Center));
+    }
+}
+
+/// Добавить отступ, соответствующий уровню узла в плоском списке строк.
+fn add_tree_indent(ui: &mut Ui, depth: usize) {
+    let indent = ui.spacing().indent * depth as f32;
+    if indent > 0.0 {
+        ui.add_space(indent);
     }
 }
 
@@ -406,7 +563,7 @@ fn container_context_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::focus_match_path;
+    use super::{VisibleRows, focus_match_path, visible_row_index};
     use crate::parser::{parse_json, set_expanded_all};
 
     #[test]
@@ -459,5 +616,20 @@ mod tests {
         assert!(!focus_match_path(&mut root, "missing"));
         assert!(!root.expanded);
         assert!(!root.children[0].expanded);
+    }
+
+    #[test]
+    fn visible_rows_index_respects_expanded_branches() {
+        let mut root = parse_json(r#"{"outer":{"value":1},"array":[{"value":2},3]}"#).unwrap();
+
+        assert_eq!(VisibleRows::from_root(&root).len(), 1);
+
+        root.expanded = true;
+        assert_eq!(VisibleRows::from_root(&root).len(), 3);
+
+        set_expanded_all(&mut root, true);
+        assert_eq!(VisibleRows::from_root(&root).len(), 7);
+        assert_eq!(visible_row_index(&root, "array[0].value"), Some(3));
+        assert_eq!(visible_row_index(&root, "missing"), None);
     }
 }

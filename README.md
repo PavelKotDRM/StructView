@@ -91,6 +91,20 @@ The interface provides:
 - adding fields and elements in edit mode;
 - light and dark theme switching.
 
+### Large files and performance
+
+The GUI keeps the parsed document in memory, but the tree uses row
+virtualization: when a large subtree is expanded, egui creates widgets only
+for rows inside the current viewport. Scrolling, selection, editing, search,
+and context menus continue to work for the whole tree.
+
+Virtualization reduces the cost of painting a fully expanded tree, but it does
+not make memory usage constant. Opening a document still reads the complete
+file and builds the complete in-memory tree, so memory usage is proportional to
+the number of nodes. For especially large files, keep unrelated branches
+collapsed and use the CLI `find`, `validate`, and `format` commands when an
+interactive view is not required.
+
 When saving, the output format is selected from the destination file
 extension. If the extension is unsupported, the format of the open document
 is used.
