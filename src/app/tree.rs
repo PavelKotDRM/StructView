@@ -8,6 +8,7 @@ use crate::parser::{JsonNode, JsonValueType};
 use crate::search::SearchState;
 
 use super::edit::apply_primitive_edit;
+use super::i18n::{Locale, TextKey};
 use super::state::AppMode;
 use super::theme::{COLOR_ACTIVE_MATCH, COLOR_KEY, COLOR_MATCH, value_color};
 
@@ -56,6 +57,8 @@ pub(super) struct RenderOptions<'a> {
     pub(super) scroll_to_path: Option<&'a str>,
     /// Пути выбранных узлов.
     pub(super) selected_paths: &'a BTreeSet<String>,
+    /// Язык интерфейса.
+    pub(super) locale: Locale,
 }
 
 /// Контейнер, в который пользователь хочет добавить данные.
@@ -160,7 +163,7 @@ fn render_container(
     highlight: Highlight,
     scroll_to_match: bool,
 ) {
-    let header_text = make_header_text(node, highlight);
+    let header_text = make_header_text(node, highlight, options.locale);
     let selected = options.selected_paths.contains(&node.path);
 
     let id = ui.make_persistent_id(&node.path);
@@ -204,7 +207,14 @@ fn render_container(
     node.expanded = updated.is_open();
 
     header_inner.inner.context_menu(|ui| {
-        container_context_menu(ui, node, options.mode, options.selected_paths, outcome);
+        container_context_menu(
+            ui,
+            node,
+            options.mode,
+            options.locale,
+            options.selected_paths,
+            outcome,
+        );
     });
 }
 
@@ -226,12 +236,12 @@ fn render_leaf(
                 outcome.selection_request = Some(selection_request(ui, &node.path));
             }
             key_resp.context_menu(|ui| {
-                context_menu(ui, node, options.selected_paths, outcome);
+                context_menu(ui, node, options.locale, options.selected_paths, outcome);
             });
         }
 
         if is_editable(node, options.mode) {
-            render_value_editor(ui, node, options.selected_paths, outcome);
+            render_value_editor(ui, node, options.locale, options.selected_paths, outcome);
         } else {
             let value_text = highlight.apply(
                 RichText::new(&node.display_value),
@@ -242,7 +252,7 @@ fn render_leaf(
                 outcome.selection_request = Some(selection_request(ui, &node.path));
             }
             value_resp.context_menu(|ui| {
-                context_menu(ui, node, options.selected_paths, outcome);
+                context_menu(ui, node, options.locale, options.selected_paths, outcome);
             });
         }
     });
@@ -270,6 +280,7 @@ fn is_editable(node: &JsonNode, mode: AppMode) -> bool {
 fn render_value_editor(
     ui: &mut Ui,
     node: &mut JsonNode,
+    locale: Locale,
     selected_paths: &BTreeSet<String>,
     outcome: &mut TreeOutcome,
 ) {
@@ -301,7 +312,7 @@ fn render_value_editor(
         outcome.selection_request = Some(selection_request(ui, &node.path));
     }
     edit_resp.context_menu(|ui| {
-        context_menu(ui, node, selected_paths, outcome);
+        context_menu(ui, node, locale, selected_paths, outcome);
     });
 }
 
@@ -313,10 +324,15 @@ fn selection_request(ui: &Ui, path: &str) -> SelectionRequest {
 }
 
 /// Сформировать текст заголовка для объекта/массива с учётом подсветки поиска.
-fn make_header_text(node: &JsonNode, highlight: Highlight) -> RichText {
+fn make_header_text(node: &JsonNode, highlight: Highlight, locale: Locale) -> RichText {
+    let display_value = match node.value_type {
+        JsonValueType::Object => locale.object_count(node.children.len()),
+        JsonValueType::Array => locale.array_count(node.children.len()),
+        _ => node.display_value.clone(),
+    };
     let label = match &node.key {
-        Some(k) => format!("{}: {}", k, node.display_value),
-        None => node.display_value.clone(),
+        Some(k) => format!("{}: {}", k, display_value),
+        None => display_value,
     };
     highlight.apply(RichText::new(label), COLOR_KEY)
 }
@@ -325,29 +341,29 @@ fn make_header_text(node: &JsonNode, highlight: Highlight) -> RichText {
 fn context_menu(
     ui: &mut Ui,
     node: &JsonNode,
+    locale: Locale,
     selected_paths: &BTreeSet<String>,
     outcome: &mut TreeOutcome,
 ) {
-    if ui.button("📋  Копировать значение").clicked() {
+    if ui.button(locale.text(TextKey::CopyValue)).clicked() {
         outcome.copy_request = Some(node.display_value.clone());
         ui.close();
     }
     if let Some(key) = &node.key
-        && ui.button("🔑  Копировать ключ").clicked()
+        && ui.button(locale.text(TextKey::CopyKey)).clicked()
     {
         outcome.copy_request = Some(key.clone());
         ui.close();
     }
-    if ui.button("📍  Копировать путь").clicked() {
+    if ui.button(locale.text(TextKey::CopyPath)).clicked() {
         outcome.copy_request = Some(node.path.clone());
         ui.close();
     }
-    if ui.button("🌿  Копировать структуру").clicked() {
+    if ui.button(locale.text(TextKey::CopyStructure)).clicked() {
         outcome.copy_structure_paths = Some(vec![node.path.clone()]);
         ui.close();
     }
-    if !selected_paths.is_empty() && ui.button("🌿  Копировать выбранные структуры").clicked()
-    {
+    if !selected_paths.is_empty() && ui.button(locale.text(TextKey::CopySelected)).clicked() {
         outcome.copy_structure_paths = Some(selected_paths.iter().cloned().collect());
         ui.close();
     }
@@ -358,25 +374,26 @@ fn container_context_menu(
     ui: &mut Ui,
     node: &JsonNode,
     mode: AppMode,
+    locale: Locale,
     selected_paths: &BTreeSet<String>,
     outcome: &mut TreeOutcome,
 ) {
-    context_menu(ui, node, selected_paths, outcome);
+    context_menu(ui, node, locale, selected_paths, outcome);
 
     if mode != AppMode::Edit {
         return;
     }
 
-    if ui.button("📥  Вставить сюда").clicked() {
+    if ui.button(locale.text(TextKey::PasteHere)).clicked() {
         outcome.paste_target_path = Some(node.path.clone());
         ui.close();
     }
 
     let is_object = node.value_type == JsonValueType::Object;
     let label = if is_object {
-        "➕  Добавить поле…"
+        locale.text(TextKey::AddField)
     } else {
-        "➕  Добавить элемент…"
+        locale.text(TextKey::AddElement)
     };
     if ui.button(label).clicked() {
         outcome.add_child_request = Some(AddChildRequest {

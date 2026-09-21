@@ -35,11 +35,11 @@ impl Source {
                 let mut buf = String::new();
                 std::io::stdin()
                     .read_to_string(&mut buf)
-                    .map_err(|e| format!("Ошибка чтения stdin: {}", e))?;
+                    .map_err(|e| format!("Error reading stdin: {}", e))?;
                 Ok(buf)
             }
             Source::File(path) => std::fs::read_to_string(path)
-                .map_err(|e| format!("Ошибка чтения файла {}: {}", path.display(), e)),
+                .map_err(|e| format!("Error reading file {}: {}", path.display(), e)),
         }
     }
 }

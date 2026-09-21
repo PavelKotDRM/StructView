@@ -6,6 +6,7 @@ use crate::build_info;
 use crate::clipboard::copy_to_clipboard;
 use crate::parser::set_expanded_all;
 
+use super::i18n::{Locale, TextKey};
 use super::state::{AppMode, JsonViewerApp};
 use super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
 use super::tree::{RenderOptions, TreeOutcome, focus_match_path, render_node};
@@ -21,6 +22,8 @@ impl JsonViewerApp {
             egui::ScrollArea::horizontal()
                 .id_salt("top_panel_controls_scroll")
                 .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         self.show_menu_bar(ui);
@@ -37,35 +40,36 @@ impl JsonViewerApp {
 
     /// Отрисовать строку меню («Файл», «Вид», «Помощь»).
     fn show_menu_bar(&mut self, ui: &mut Ui) {
-        ui.menu_button("Файл", |ui| {
-            if ui.button("📂  Открыть…").clicked() {
+        let locale = self.locale;
+        ui.menu_button(locale.text(TextKey::FileMenu), |ui| {
+            if ui.button(locale.text(TextKey::Open)).clicked() {
                 ui.close();
                 self.open_file_dialog();
             }
-            if ui.button("💾  Сохранить").clicked() {
+            if ui.button(locale.text(TextKey::Save)).clicked() {
                 ui.close();
                 self.request_save_current();
             }
-            if ui.button("💾  Сохранить как…").clicked() {
+            if ui.button(locale.text(TextKey::SaveAs)).clicked() {
                 ui.close();
                 self.save_pretty();
             }
-            if ui.button("✖  Закрыть файл").clicked() {
+            if ui.button(locale.text(TextKey::CloseFile)).clicked() {
                 ui.close();
                 self.close_file();
             }
             ui.separator();
-            if ui.button("❌  Выход").clicked() {
+            if ui.button(locale.text(TextKey::Exit)).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
 
-        ui.menu_button("Правка", |ui| {
+        ui.menu_button(locale.text(TextKey::EditMenu), |ui| {
             let copy_enabled = !self.selected_paths.is_empty();
             if ui
                 .add_enabled(
                     copy_enabled,
-                    egui::Button::new("📋  Копировать выбранные структуры  Ctrl+C"),
+                    egui::Button::new(locale.text(TextKey::CopySelectedStructures)),
                 )
                 .clicked()
             {
@@ -77,7 +81,7 @@ impl JsonViewerApp {
             if ui
                 .add_enabled(
                     paste_enabled,
-                    egui::Button::new("📥  Вставить в выбранный контейнер  Ctrl+V"),
+                    egui::Button::new(locale.text(TextKey::PasteSelectedContainer)),
                 )
                 .clicked()
             {
@@ -86,11 +90,11 @@ impl JsonViewerApp {
             }
         });
 
-        ui.menu_button("Вид", |ui| {
+        ui.menu_button(locale.text(TextKey::ViewMenu), |ui| {
             let theme_label = if self.dark_mode {
-                "☀  Светлая тема"
+                locale.text(TextKey::LightTheme)
             } else {
-                "🌙  Тёмная тема"
+                locale.text(TextKey::DarkTheme)
             };
             if ui.button(theme_label).clicked() {
                 ui.close();
@@ -99,17 +103,30 @@ impl JsonViewerApp {
                 self.apply_theme(&ctx);
             }
             ui.separator();
-            if ui.button(">  Развернуть все").clicked() {
+            if ui.button(locale.text(TextKey::ExpandAll)).clicked() {
                 ui.close();
                 self.set_all_expanded(true);
             }
-            if ui.button("<  Свернуть все").clicked() {
+            if ui.button(locale.text(TextKey::CollapseAll)).clicked() {
                 ui.close();
                 self.set_all_expanded(false);
             }
         });
 
-        ui.menu_button("Помощь", |ui| {
+        ui.menu_button(locale.text(TextKey::SettingsMenu), |ui| {
+            ui.label(locale.text(TextKey::Language));
+            for available_locale in Locale::ALL {
+                if ui
+                    .selectable_label(locale == available_locale, available_locale.language_name())
+                    .clicked()
+                {
+                    self.locale = available_locale;
+                    ui.close();
+                }
+            }
+        });
+
+        ui.menu_button(locale.text(TextKey::HelpMenu), |ui| {
             ui.label(format!("JSON Viewer {}", build_info::VERSION));
             ui.separator();
             egui::Grid::new("about_build_info")
@@ -117,13 +134,25 @@ impl JsonViewerApp {
                 .spacing([12.0, 2.0])
                 .show(ui, |ui| {
                     for (name, value) in [
-                        ("Время сборки", build_info::BUILD_TIMESTAMP),
-                        ("Целевая платформа", build_info::TARGET_TRIPLE),
-                        ("Платформа сборки", build_info::HOST_TRIPLE),
-                        ("Уровень оптимизации", build_info::OPT_LEVEL),
-                        ("Отладочная сборка", build_info::DEBUG),
-                        ("Компилятор rustc", build_info::RUSTC_SEMVER),
-                        ("Канал rustc", build_info::RUSTC_CHANNEL),
+                        (locale.text(TextKey::BuildTime), build_info::BUILD_TIMESTAMP),
+                        (
+                            locale.text(TextKey::TargetPlatform),
+                            build_info::TARGET_TRIPLE,
+                        ),
+                        (locale.text(TextKey::HostPlatform), build_info::HOST_TRIPLE),
+                        (
+                            locale.text(TextKey::OptimizationLevel),
+                            build_info::OPT_LEVEL,
+                        ),
+                        (locale.text(TextKey::DebugBuild), build_info::DEBUG),
+                        (
+                            locale.text(TextKey::RustcCompiler),
+                            build_info::RUSTC_SEMVER,
+                        ),
+                        (
+                            locale.text(TextKey::RustcChannel),
+                            build_info::RUSTC_CHANNEL,
+                        ),
                     ] {
                         ui.label(name);
                         ui.label(RichText::new(value).monospace());
@@ -135,19 +164,23 @@ impl JsonViewerApp {
 
     /// Отрисовать быстрые кнопки дерева и сохранения файла.
     fn show_tree_buttons(&mut self, ui: &mut Ui) {
-        if ui.button(">> Развернуть все").clicked() {
+        let locale = self.locale;
+        if ui.button(locale.text(TextKey::ToolbarExpandAll)).clicked() {
             self.set_all_expanded(true);
         }
-        if ui.button("<< Свернуть все").clicked() {
+        if ui
+            .button(locale.text(TextKey::ToolbarCollapseAll))
+            .clicked()
+        {
             self.set_all_expanded(false);
         }
-        if ui.button("💾 Сохранить").clicked() {
+        if ui.button(locale.text(TextKey::Save)).clicked() {
             self.request_save_current();
         }
         if ui
             .add_enabled(
                 !self.selected_paths.is_empty(),
-                egui::Button::new("📋 Копировать"),
+                egui::Button::new(locale.text(TextKey::Copy)),
             )
             .clicked()
         {
@@ -156,13 +189,13 @@ impl JsonViewerApp {
         if ui
             .add_enabled(
                 self.mode == AppMode::Edit && self.can_paste_into_selected(),
-                egui::Button::new("📥 Вставить"),
+                egui::Button::new(locale.text(TextKey::Paste)),
             )
             .clicked()
         {
             self.paste_requested = true;
         }
-        if ui.button("✖ Закрыть").clicked() {
+        if ui.button(locale.text(TextKey::Close)).clicked() {
             self.close_file();
         }
     }
@@ -192,17 +225,27 @@ impl JsonViewerApp {
 
     /// Отрисовать переключатель режима «Просмотр» / «Редактирование».
     fn show_mode_switch(&mut self, ui: &mut Ui) {
-        ui.label("Режим:");
-        ui.selectable_value(&mut self.mode, AppMode::View, "Просмотр");
-        ui.selectable_value(&mut self.mode, AppMode::Edit, "Редактирование");
+        let locale = self.locale;
+        ui.label(locale.text(TextKey::Mode));
+        ui.selectable_value(
+            &mut self.mode,
+            AppMode::View,
+            locale.text(TextKey::ViewMode),
+        );
+        ui.selectable_value(
+            &mut self.mode,
+            AppMode::Edit,
+            locale.text(TextKey::EditMode),
+        );
     }
 
     /// Отрисовать строку поиска и навигацию по совпадениям.
     fn show_search_bar(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
         ui.label("🔍");
         let search_response = ui.add(
             egui::TextEdit::singleline(&mut self.search_query_buf)
-                .hint_text("Поиск по ключам и значениям…")
+                .hint_text(locale.text(TextKey::SearchPlaceholder))
                 .desired_width(220.0),
         );
 
@@ -211,19 +254,31 @@ impl JsonViewerApp {
             search_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
         let mut options_changed = false;
-        ui.menu_button("Параметры", |ui| {
+        ui.menu_button(locale.text(TextKey::SearchOptions), |ui| {
             options_changed |= ui
-                .checkbox(&mut self.search.options.search_keys, "Искать в ключах")
+                .checkbox(
+                    &mut self.search.options.search_keys,
+                    locale.text(TextKey::SearchKeys),
+                )
                 .changed();
             options_changed |= ui
-                .checkbox(&mut self.search.options.search_values, "Искать в значениях")
+                .checkbox(
+                    &mut self.search.options.search_values,
+                    locale.text(TextKey::SearchValues),
+                )
                 .changed();
             ui.separator();
             options_changed |= ui
-                .checkbox(&mut self.search.options.case_sensitive, "Учитывать регистр")
+                .checkbox(
+                    &mut self.search.options.case_sensitive,
+                    locale.text(TextKey::CaseSensitive),
+                )
                 .changed();
             options_changed |= ui
-                .checkbox(&mut self.search.options.exact_match, "Точное совпадение")
+                .checkbox(
+                    &mut self.search.options.exact_match,
+                    locale.text(TextKey::ExactMatch),
+                )
                 .changed();
         });
 
@@ -249,38 +304,39 @@ impl JsonViewerApp {
                 self.request_search_scroll();
             }
         } else if !self.search_query_buf.is_empty() {
-            ui.label(RichText::new("Не найдено").color(Color32::GRAY));
+            ui.label(RichText::new(locale.text(TextKey::NotFound)).color(Color32::GRAY));
         }
     }
 
     /// Отрисовать нижнюю панель (статус-бар) с информацией о файле и уведомлениями.
     pub(super) fn show_bottom_panel(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
         egui::Panel::bottom("bottom_panel").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if let Some(err) = &self.parse_error {
-                    ui.label(RichText::new(format!("⚠ Ошибка: {}", err)).color(COLOR_ERROR));
+                    ui.label(
+                        RichText::new(format!("⚠ {}: {}", locale.text(TextKey::Error), err))
+                            .color(COLOR_ERROR),
+                    );
                 } else if let Some(path) = &self.file_state.path {
                     let name = path
                         .file_name()
                         .and_then(|n| n.to_str())
-                        .unwrap_or("неизвестный файл");
+                        .unwrap_or(locale.text(TextKey::UnknownFile));
                     let size_kb = self.file_state.size_bytes as f64 / 1024.0;
                     let format = self
                         .file_state
                         .format
                         .map(|format| format.to_string())
-                        .unwrap_or_else(|| "неизвестный формат".to_string());
-                    ui.label(format!(
-                        "📄 {}  |  {}  |  {:.1} КБ  |  загружено за {} мс",
-                        name, format, size_kb, self.file_state.load_time_ms
+                        .unwrap_or_else(|| locale.text(TextKey::UnknownFormat).to_string());
+                    ui.label(locale.loaded_file_status(
+                        name,
+                        &format,
+                        size_kb,
+                        self.file_state.load_time_ms,
                     ));
                 } else {
-                    ui.label(
-                        RichText::new(
-                            "Откройте файл данных через меню Файл или перетащите его сюда",
-                        )
-                        .color(Color32::GRAY),
-                    );
+                    ui.label(RichText::new(locale.text(TextKey::Placeholder)).color(Color32::GRAY));
                 }
 
                 self.show_toast_label(ui);
@@ -312,12 +368,12 @@ impl JsonViewerApp {
             let paste_requested = std::mem::take(&mut self.paste_requested);
 
             if self.root.is_none() && self.parse_error.is_none() {
-                show_placeholder(ui);
+                show_placeholder(ui, self.locale);
                 return;
             }
 
             if let Some(err) = &self.parse_error {
-                show_parse_error(ui, &err.to_string());
+                show_parse_error(ui, &err.to_string(), self.locale);
                 return;
             }
 
@@ -350,8 +406,8 @@ impl JsonViewerApp {
             if let Some(text) = outcome.copy_request {
                 self.clipboard_payload = None;
                 match copy_to_clipboard(&text) {
-                    Ok(_) => self.show_toast("Скопировано в буфер обмена"),
-                    Err(e) => self.show_toast(&format!("Ошибка копирования: {}", e)),
+                    Ok(_) => self.show_toast(self.locale.text(TextKey::Copied)),
+                    Err(e) => self.show_toast(&self.locale.copy_error(&e)),
                 }
             }
             if let Some(err) = outcome.edit_error {
@@ -379,6 +435,7 @@ impl JsonViewerApp {
             mode,
             scroll_to_path: scroll_to_path.as_deref(),
             selected_paths: &selected_paths,
+            locale: self.locale,
         };
         let mut outcome = TreeOutcome::default();
 
@@ -408,22 +465,20 @@ impl JsonViewerApp {
 }
 
 /// Отрисовать подсказку, показываемую, пока файл не открыт.
-fn show_placeholder(ui: &mut Ui) {
+fn show_placeholder(ui: &mut Ui, locale: Locale) {
     ui.centered_and_justified(|ui| {
         ui.label(
-            RichText::new(
-                "Перетащите JSON, YAML, TOML или JSON5 сюда\nили используйте Файл -> Открыть…",
-            )
-            .size(18.0)
-            .color(Color32::GRAY),
+            RichText::new(locale.text(TextKey::DropFilePlaceholder))
+                .size(18.0)
+                .color(Color32::GRAY),
         );
     });
 }
 
 /// Отрисовать сообщение об ошибке разбора данных.
-fn show_parse_error(ui: &mut Ui, message: &str) {
+fn show_parse_error(ui: &mut Ui, message: &str, locale: Locale) {
     ui.add_space(8.0);
-    ui.colored_label(COLOR_ERROR, "Ошибка разбора данных:");
+    ui.colored_label(COLOR_ERROR, locale.text(TextKey::DataParseError));
     ui.add_space(4.0);
     egui::ScrollArea::both().show(ui, |ui| {
         ui.label(RichText::new(message).monospace());

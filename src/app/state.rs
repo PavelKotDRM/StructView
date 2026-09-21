@@ -16,6 +16,7 @@ use crate::search::SearchState;
 use super::edit::{
     add_child_at_path, find_node, node_to_value, paste_structures_at_path, selected_structures,
 };
+use super::i18n::{Locale, TextKey};
 use super::tree::{AddChildRequest, SelectionRequest};
 
 /// Метаданные загруженного файла, отображаемые в статус-баре.
@@ -88,6 +89,8 @@ pub struct JsonViewerApp {
     pub(super) dark_mode: bool,
     /// Текущий режим работы приложения.
     pub(super) mode: AppMode,
+    /// Текущий язык интерфейса.
+    pub(super) locale: Locale,
     /// Открытый диалог добавления поля или элемента.
     pub(super) add_child_dialog: Option<AddChildDialog>,
     /// Пути выбранных узлов дерева.
@@ -115,6 +118,7 @@ impl Default for JsonViewerApp {
             toast: None,
             dark_mode: true,
             mode: AppMode::default(),
+            locale: Locale::default(),
             add_child_dialog: None,
             selected_paths: BTreeSet::new(),
             clipboard_payload: None,
@@ -185,7 +189,7 @@ impl JsonViewerApp {
         match std::fs::read_to_string(&path) {
             Err(e) => {
                 self.parse_error = Some(ParseError {
-                    message: format!("Ошибка чтения файла: {}", e),
+                    message: self.locale.file_read_error(&e.to_string()),
                     line: None,
                     column: None,
                 });
@@ -262,7 +266,7 @@ impl JsonViewerApp {
         if let Some(save_path) = dialog.save_file() {
             let format = DataFormat::from_path(&save_path).unwrap_or(current_format);
             match self.write_root_to_path(&save_path, format) {
-                Ok(_) => self.show_toast("Файл сохранён"),
+                Ok(_) => self.show_toast(self.locale.text(TextKey::FileSaved)),
                 Err(error) => self.show_toast(&error),
             }
         }
@@ -283,7 +287,7 @@ impl JsonViewerApp {
         match self.write_root_to_path(&path, format) {
             Ok(size_bytes) => {
                 self.file_state.size_bytes = size_bytes;
-                self.show_toast("Файл сохранён");
+                self.show_toast(self.locale.text(TextKey::FileSaved));
             }
             Err(error) => self.show_toast(&error),
         }
@@ -315,11 +319,12 @@ impl JsonViewerApp {
         let root = self
             .root
             .as_ref()
-            .ok_or_else(|| "Нет открытого документа".to_string())?;
+            .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())?;
         let value = node_to_value(root)?;
         let formatted = serialize_data(&value, format, false)?;
         let size_bytes = formatted.len() as u64;
-        std::fs::write(path, formatted).map_err(|error| format!("Ошибка сохранения: {}", error))?;
+        std::fs::write(path, formatted)
+            .map_err(|error| self.locale.save_error(&error.to_string()))?;
         Ok(size_bytes)
     }
 
@@ -364,7 +369,7 @@ impl JsonViewerApp {
         let selected_paths = paths.into_iter().collect::<BTreeSet<_>>();
         let entries = match self.root.as_ref() {
             Some(root) => selected_structures(root, &selected_paths),
-            None => Err("Нет открытого документа".to_string()),
+            None => Err(self.locale.text(TextKey::NoDocument).to_string()),
         };
         let entries = match entries {
             Ok(entries) => entries,
@@ -383,21 +388,19 @@ impl JsonViewerApp {
         };
         self.clipboard_payload = Some(entries.clone());
         match copy_to_clipboard(&encoded) {
-            Ok(()) => self.show_toast(&format!("Скопировано структур: {}", entries.len())),
-            Err(error) => {
-                self.show_toast(&format!("Ошибка копирования в системный буфер: {}", error))
-            }
+            Ok(()) => self.show_toast(&self.locale.structures_copied(entries.len())),
+            Err(error) => self.show_toast(&self.locale.system_copy_error(&error)),
         }
     }
 
     /// Вставить структуры в единственный выбранный контейнер.
     pub(super) fn paste_into_selected(&mut self) {
         let Some(path) = self.selected_paths.iter().next().cloned() else {
-            self.show_toast("Выберите контейнер для вставки");
+            self.show_toast(self.locale.text(TextKey::SelectContainer));
             return;
         };
         if self.selected_paths.len() != 1 {
-            self.show_toast("Для вставки выберите ровно один контейнер");
+            self.show_toast(self.locale.text(TextKey::SelectOneContainer));
             return;
         }
         self.paste_into_path(path);
@@ -406,7 +409,7 @@ impl JsonViewerApp {
     /// Вставить структуры в контейнер по пути.
     pub(super) fn paste_into_path(&mut self, target_path: String) {
         if self.mode != AppMode::Edit {
-            self.show_toast("Вставка доступна только в режиме редактирования");
+            self.show_toast(self.locale.text(TextKey::PasteEditOnly));
             return;
         }
 
@@ -415,7 +418,7 @@ impl JsonViewerApp {
             Err(system_error) => self
                 .clipboard_payload
                 .clone()
-                .ok_or_else(|| format!("Не удалось прочитать буфер обмена: {}", system_error)),
+                .ok_or_else(|| self.locale.clipboard_read_error(&system_error)),
         };
         let entries = match entries {
             Ok(entries) => entries,
@@ -428,16 +431,16 @@ impl JsonViewerApp {
         let result = self
             .root
             .as_mut()
-            .ok_or_else(|| "Нет открытого документа".to_string())
+            .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())
             .and_then(|root| paste_structures_at_path(root, &target_path, &entries));
 
         match result {
             Ok(count) => {
                 self.selected_paths.clear();
                 self.refresh_search();
-                self.show_toast(&format!("Вставлено структур: {}", count));
+                self.show_toast(&self.locale.structures_pasted(count));
             }
-            Err(error) => self.show_toast(&format!("Ошибка вставки: {}", error)),
+            Err(error) => self.show_toast(&self.locale.paste_error(&error)),
         }
     }
 
@@ -472,10 +475,11 @@ impl JsonViewerApp {
 
         let mut submit = false;
         let mut cancel = false;
+        let locale = self.locale;
         let title = if dialog.is_object {
-            "Добавить поле"
+            locale.text(TextKey::AddFieldTitle)
         } else {
-            "Добавить элемент"
+            locale.text(TextKey::AddElementTitle)
         };
 
         egui::Window::new(title)
@@ -483,10 +487,10 @@ impl JsonViewerApp {
             .resizable(true)
             .show(ctx, |ui| {
                 if dialog.is_object {
-                    ui.label("Имя поля");
+                    ui.label(locale.text(TextKey::FieldName));
                     ui.add(egui::TextEdit::singleline(&mut dialog.key).desired_width(320.0));
                 }
-                ui.label("Значение");
+                ui.label(locale.text(TextKey::Value));
                 ui.add(
                     egui::TextEdit::multiline(&mut dialog.value)
                         .desired_width(420.0)
@@ -497,10 +501,10 @@ impl JsonViewerApp {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Добавить").clicked() {
+                    if ui.button(locale.text(TextKey::Add)).clicked() {
                         submit = true;
                     }
-                    if ui.button("Отмена").clicked() {
+                    if ui.button(locale.text(TextKey::Cancel)).clicked() {
                         cancel = true;
                     }
                 });
@@ -518,7 +522,7 @@ impl JsonViewerApp {
         let result = self
             .root
             .as_mut()
-            .ok_or_else(|| "Нет открытого документа".to_string())
+            .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())
             .and_then(|root| {
                 add_child_at_path(
                     root,
@@ -532,7 +536,7 @@ impl JsonViewerApp {
         match result {
             Ok(()) => {
                 self.refresh_search();
-                self.show_toast("Данные добавлены");
+                self.show_toast(self.locale.text(TextKey::DataAdded));
             }
             Err(error) => {
                 dialog.error = Some(error);

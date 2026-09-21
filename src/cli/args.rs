@@ -75,10 +75,10 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, St
     }
 
     if first.starts_with('-') {
-        return Err(format!("Неизвестная опция: {}", first));
+        return Err(format!("Unknown option: {}", first));
     }
     if args.len() > 1 {
-        return Err("GUI принимает не более одного файла".to_string());
+        return Err("GUI accepts at most one file".to_string());
     }
     Ok(Command::Gui {
         file: Some(PathBuf::from(first)),
@@ -99,7 +99,7 @@ fn parse_format(args: &[String]) -> Result<Command, String> {
                 i += 1;
                 let value = args
                     .get(i)
-                    .ok_or_else(|| "Опция --output требует путь к файлу".to_string())?;
+                    .ok_or_else(|| "--output requires a file path".to_string())?;
                 output = Some(PathBuf::from(value));
             }
             other => input = Some(take_positional(input, other, "format")?),
@@ -157,7 +157,7 @@ fn parse_find(args: &[String]) -> Result<Command, String> {
         }
     }
 
-    let query = query.ok_or_else(|| "Подкоманда find требует поисковый запрос".to_string())?;
+    let query = query.ok_or_else(|| "The find command requires a search query".to_string())?;
     Ok(Command::Find {
         query,
         input: input.unwrap_or(Source::Stdin),
@@ -168,13 +168,13 @@ fn parse_find(args: &[String]) -> Result<Command, String> {
 /// Принять позиционный аргумент-источник, отвергнув неизвестные флаги и дубликаты.
 fn take_positional(current: Option<Source>, arg: &str, command: &str) -> Result<Source, String> {
     if current.is_some() {
-        return Err(format!("Подкоманда {} принимает только один файл", command));
+        return Err(format!("The {} command accepts only one file", command));
     }
     if arg == "-" {
         return Ok(Source::Stdin);
     }
     if arg.starts_with('-') {
-        return Err(format!("Неизвестная опция для {}: {}", command, arg));
+        return Err(format!("Unknown option for {}: {}", command, arg));
     }
     Ok(Source::File(PathBuf::from(arg)))
 }

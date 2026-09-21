@@ -23,8 +23,8 @@ fn main() -> ExitCode {
     let command = match cli::parse_args(args) {
         Ok(command) => command,
         Err(err) => {
-            eprintln!("Ошибка: {}", err);
-            eprintln!("Подсказка: json_viewer --help");
+            eprintln!("Error: {}", err);
+            eprintln!("Hint: json_viewer --help");
             return ExitCode::from(2);
         }
     };
@@ -35,7 +35,7 @@ fn main() -> ExitCode {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::FAILURE,
             Err(err) => {
-                eprintln!("Ошибка: {}", err);
+                eprintln!("Error: {}", err);
                 ExitCode::FAILURE
             }
         },
@@ -45,8 +45,8 @@ fn main() -> ExitCode {
 /// Запустить графический интерфейс, опционально открыв указанный файл.
 fn run_gui(file: Option<PathBuf>) -> ExitCode {
     if !display_available() {
-        eprintln!("Ошибка: графический сервер не найден (DISPLAY и WAYLAND_DISPLAY не заданы).");
-        eprintln!("Доступен режим командной строки: json_viewer --help");
+        eprintln!("Error: no graphical server found (DISPLAY and WAYLAND_DISPLAY are unset).");
+        eprintln!("Command-line mode is available: json_viewer --help");
         return ExitCode::FAILURE;
     }
 
@@ -71,7 +71,7 @@ fn run_gui(file: Option<PathBuf>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("Ошибка запуска GUI: {}", err);
+            eprintln!("Error starting GUI: {}", err);
             ExitCode::FAILURE
         }
     }

@@ -1,15 +1,15 @@
 //! # Информация о сборке
 //!
 //! Значения подставляются на этапе компиляции скриптом `build.rs`
-//! через `vergen`. Если переменная не была сгенерирована (например,
-//! сборка из тарбола без части метаданных), используется `неизвестно`.
+//! через `vergen`. If a variable was not generated, for example when
+//! building from a source archive without all metadata, `unknown` is used.
 
 /// Возвращает значение переменной окружения времени компиляции или заглушку.
 macro_rules! env_or_unknown {
     ($name:literal) => {
         match option_env!($name) {
             Some(value) => value,
-            None => "неизвестно",
+            None => "unknown",
         }
     };
 }
@@ -44,11 +44,25 @@ pub fn detailed() -> String {
     format!(
         "json_viewer {VERSION}\n\
          \n\
-         Время сборки:        {BUILD_TIMESTAMP}\n\
-         Целевая платформа:   {TARGET_TRIPLE}\n\
-         Платформа сборки:    {HOST_TRIPLE}\n\
-         Уровень оптимизации: {OPT_LEVEL}\n\
-         Отладочная сборка:   {DEBUG}\n\
-         Компилятор rustc:    {RUSTC_SEMVER} ({RUSTC_CHANNEL})\n"
+         Build time:          {BUILD_TIMESTAMP}\n\
+         Target platform:     {TARGET_TRIPLE}\n\
+         Build platform:      {HOST_TRIPLE}\n\
+         Optimization level:  {OPT_LEVEL}\n\
+         Debug build:         {DEBUG}\n\
+         rustc compiler:      {RUSTC_SEMVER} ({RUSTC_CHANNEL})\n"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detailed;
+
+    #[test]
+    fn detailed_output_uses_english_labels() {
+        let output = detailed();
+
+        assert!(output.contains("Build time:"));
+        assert!(output.contains("Target platform:"));
+        assert!(!output.contains("Время сборки"));
+    }
 }

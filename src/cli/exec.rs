@@ -42,7 +42,7 @@ pub fn run(command: &Command) -> Result<bool, String> {
             input,
             options,
         } => run_find(query, input, *options),
-        Command::Gui { .. } => panic!("Command::Gui не выполняется в headless-режиме"),
+        Command::Gui { .. } => panic!("Command::Gui cannot run in headless mode"),
     }
 }
 
@@ -52,7 +52,7 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
     let (root, input_format) = match parse_data(&content, input.format_hint()) {
         Ok(parsed) => parsed,
         Err(error) => {
-            eprintln!("Ошибка разбора: {}", error);
+            eprintln!("Parse error: {}", error);
             return Ok(false);
         }
     };
@@ -65,7 +65,7 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
 
     match output {
         Some(path) => std::fs::write(path, formatted)
-            .map_err(|e| format!("Ошибка записи {}: {}", path.display(), e))?,
+            .map_err(|e| format!("Write error for {}: {}", path.display(), e))?,
         None => write_lines(std::iter::once(formatted.as_str()))?,
     }
     Ok(true)
@@ -76,11 +76,11 @@ fn run_validate(input: &Source) -> Result<bool, String> {
     let content = input.read()?;
     match parse_data(&content, input.format_hint()) {
         Ok((_, format)) => {
-            println!("{} корректен", format);
+            println!("{} is valid", format);
             Ok(true)
         }
         Err(error) => {
-            eprintln!("Ошибка разбора: {}", error);
+            eprintln!("Parse error: {}", error);
             Ok(false)
         }
     }
@@ -96,7 +96,7 @@ fn run_find(
     let root = match parse_data(&content, input.format_hint()) {
         Ok((node, _)) => node,
         Err(error) => {
-            eprintln!("Ошибка разбора: {}", error);
+            eprintln!("Parse error: {}", error);
             return Ok(false);
         }
     };
@@ -105,7 +105,7 @@ fn run_find(
     state.search_with_options(&root, query, options);
 
     if state.matches.is_empty() {
-        eprintln!("Совпадений не найдено");
+        eprintln!("No matches found");
         return Ok(false);
     }
 
@@ -123,7 +123,7 @@ fn write_lines<'a, I: IntoIterator<Item = &'a str>>(lines: I) -> Result<(), Stri
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     for line in lines {
-        writeln!(lock, "{}", line).map_err(|e| format!("Ошибка вывода: {}", e))?;
+        writeln!(lock, "{}", line).map_err(|e| format!("Output error: {}", e))?;
     }
     Ok(())
 }
