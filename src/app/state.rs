@@ -15,10 +15,11 @@ use crate::parser::{DataFormat, JsonNode, JsonValueType, ParseError, parse_data,
 use crate::search::SearchState;
 
 use super::edit::{
-    add_child_at_path, find_node, node_to_value, paste_structures_at_path, selected_structures,
+    add_typed_child_at_path, edit_child_at_path, find_node, is_object_child, node_to_value,
+    paste_structures_at_path, selected_structures,
 };
 use super::i18n::{Locale, TextKey};
-use super::tree::{AddChildRequest, SelectionRequest, VisibleRows};
+use super::tree::{AddChildRequest, EditFieldRequest, SelectionRequest, VisibleRows};
 
 /// Метаданные загруженного файла, отображаемые в статус-баре.
 #[derive(Debug, Default)]
@@ -61,26 +62,41 @@ pub(super) enum AppMode {
     /// Только просмотр данных без изменения значений.
     #[default]
     View,
-    /// Разрешено редактирование примитивных значений JSON.
+    /// Разрешено редактирование значений JSON.
     Edit,
 }
 
-/// Состояние диалога добавления поля объекта или элемента массива.
+/// Цель конструктора поля.
+#[derive(Debug, Clone)]
+pub(super) enum FieldDialogTarget {
+    /// Добавление поля или элемента в контейнер.
+    Add {
+        parent_path: String,
+        is_object: bool,
+    },
+    /// Редактирование существующего узла.
+    Edit { path: String, key_editable: bool },
+}
+
+/// Состояние конструктора поля объекта или элемента массива.
 #[derive(Debug)]
-pub(super) struct AddChildDialog {
-    parent_path: String,
-    is_object: bool,
+pub(super) struct FieldDialog {
+    target: FieldDialogTarget,
     key: String,
+    value_type: JsonValueType,
     value: String,
     error: Option<String>,
 }
 
-impl From<AddChildRequest> for AddChildDialog {
+impl From<AddChildRequest> for FieldDialog {
     fn from(request: AddChildRequest) -> Self {
         Self {
-            parent_path: request.parent_path,
-            is_object: request.is_object,
+            target: FieldDialogTarget::Add {
+                parent_path: request.parent_path,
+                is_object: request.is_object,
+            },
             key: String::new(),
+            value_type: JsonValueType::String,
             value: String::new(),
             error: None,
         }
@@ -116,8 +132,8 @@ pub struct JsonViewerApp {
     pub(super) mode: AppMode,
     /// Текущий язык интерфейса.
     pub(super) locale: Locale,
-    /// Открытый диалог добавления поля или элемента.
-    pub(super) add_child_dialog: Option<AddChildDialog>,
+    /// Открытый конструктор добавления или редактирования поля.
+    pub(super) field_dialog: Option<FieldDialog>,
     /// Пути выбранных узлов дерева.
     pub(super) selected_paths: BTreeSet<String>,
     /// Индекс строк, видимых в текущем состоянии раскрытия дерева.
@@ -149,7 +165,7 @@ impl Default for JsonViewerApp {
             dark_mode: true,
             mode: AppMode::default(),
             locale: Locale::default(),
-            add_child_dialog: None,
+            field_dialog: None,
             selected_paths: BTreeSet::new(),
             visible_rows: VisibleRows::default(),
             visible_rows_dirty: true,
@@ -227,6 +243,7 @@ impl JsonViewerApp {
         self.selected_paths.clear();
         self.visible_rows_dirty = true;
         self.file_state = FileState::default();
+        self.field_dialog = None;
         let t0 = Instant::now();
         match std::fs::read_to_string(&path) {
             Err(e) => {
@@ -278,6 +295,67 @@ impl JsonViewerApp {
         }
     }
 
+    /// Открыть диалог выбора имени и создать новый пустой файл.
+    ///
+    /// Формат определяется по расширению выбранного пути. Новый документ
+    /// содержит пустой объект, сразу открывается в режиме редактирования и
+    /// записывается на диск, чтобы файл был создан до добавления данных.
+    pub(super) fn open_new_file_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_file_name("untitled.json")
+            .add_filter("Supported files", &["json", "yaml", "yml", "toml", "json5"])
+            .add_filter("JSON", &["json"])
+            .add_filter("YAML", &["yaml", "yml"])
+            .add_filter("TOML", &["toml"])
+            .add_filter("JSON5", &["json5"])
+            .save_file()
+        {
+            let Some(format) = DataFormat::from_path(&path) else {
+                self.show_toast(self.locale.text(TextKey::UnsupportedFileExtension));
+                return;
+            };
+            self.create_new_file(path, format);
+        }
+    }
+
+    /// Инициализировать новый документ с пустым объектом и сохранить его.
+    fn create_new_file(&mut self, path: PathBuf, format: DataFormat) {
+        let started_at = Instant::now();
+        let root = match parse_data("{}", Some(DataFormat::Json)) {
+            Ok((root, _)) => root,
+            Err(error) => {
+                self.show_toast(&format!(
+                    "{} {}",
+                    self.locale.text(TextKey::DataParseError),
+                    error
+                ));
+                return;
+            }
+        };
+
+        self.close_file();
+        self.root = Some(root);
+        self.mode = AppMode::Edit;
+        self.file_state = FileState {
+            path: Some(path.clone()),
+            size_bytes: 0,
+            load_time_ms: started_at.elapsed().as_millis(),
+            format: Some(format),
+        };
+
+        match self.write_root_to_path(&path, format) {
+            Ok(size_bytes) => {
+                self.file_state.size_bytes = size_bytes;
+                self.file_state.load_time_ms = started_at.elapsed().as_millis();
+                self.show_toast(self.locale.text(TextKey::FileCreated));
+            }
+            Err(error) => {
+                self.close_file();
+                self.show_toast(&error);
+            }
+        }
+    }
+
     /// Открыть системный диалог выбора нескольких файлов для сравнения.
     pub(super) fn open_comparison_dialog(&mut self) {
         if let Some(paths) = rfd::FileDialog::new()
@@ -309,7 +387,7 @@ impl JsonViewerApp {
         self.search_query_buf.clear();
         self.search_scroll_target = None;
         self.save_requested = false;
-        self.add_child_dialog = None;
+        self.field_dialog = None;
         self.mode = AppMode::View;
         self.selected_paths.clear();
         self.copy_structures_requested = false;
@@ -444,7 +522,7 @@ impl JsonViewerApp {
         self.search_scroll_target = None;
         self.save_requested = false;
         self.file_state = FileState::default();
-        self.add_child_dialog = None;
+        self.field_dialog = None;
         self.mode = AppMode::View;
         self.selected_paths.clear();
         self.copy_structures_requested = false;
@@ -607,44 +685,173 @@ impl JsonViewerApp {
 
     /// Открыть диалог добавления данных в выбранный контейнер.
     pub(super) fn open_add_child_dialog(&mut self, request: AddChildRequest) {
-        self.add_child_dialog = Some(request.into());
+        self.field_dialog = Some(request.into());
     }
 
-    /// Отрисовать диалог и добавить новый узел после подтверждения.
-    pub(super) fn show_add_child_dialog(&mut self, ctx: &egui::Context) {
-        let Some(mut dialog) = self.add_child_dialog.take() else {
+    /// Открыть конструктор для редактирования существующего узла.
+    pub(super) fn open_edit_field_dialog(&mut self, request: EditFieldRequest) {
+        let result: Result<(String, JsonValueType, String, bool), String> = (|| {
+            let root = self
+                .root
+                .as_ref()
+                .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())?;
+            let node = find_node(root, &request.path)
+                .ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?;
+            let value_type = node.value_type.clone();
+            let value = match value_type {
+                JsonValueType::String => serde_json::from_str::<String>(&node.display_value)
+                    .map_err(|error| format!("Некорректная строка: {}", error))?,
+                _ => node.display_value.clone(),
+            };
+            Ok((
+                node.key.clone().unwrap_or_default(),
+                node.value_type.clone(),
+                value,
+                is_object_child(root, &request.path),
+            ))
+        })();
+
+        let (key, value_type, value, key_editable) = match result {
+            Ok(data) => data,
+            Err(error) => {
+                self.show_toast(&error);
+                return;
+            }
+        };
+
+        self.field_dialog = Some(FieldDialog {
+            target: FieldDialogTarget::Edit {
+                path: request.path,
+                key_editable,
+            },
+            key,
+            value_type,
+            value,
+            error: None,
+        });
+    }
+
+    /// Отрисовать конструктор и добавить или изменить узел после подтверждения.
+    pub(super) fn show_field_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut dialog) = self.field_dialog.take() else {
             return;
         };
 
         let mut submit = false;
         let mut cancel = false;
         let locale = self.locale;
-        let title = if dialog.is_object {
-            locale.text(TextKey::AddFieldTitle)
-        } else {
-            locale.text(TextKey::AddElementTitle)
+        let format = self.file_state.format.unwrap_or(DataFormat::Json);
+        let is_toml_root = format == DataFormat::Toml
+            && matches!(&dialog.target, FieldDialogTarget::Edit { path, .. } if path.is_empty());
+        let is_edit = matches!(&dialog.target, FieldDialogTarget::Edit { .. });
+        let show_key_input = match &dialog.target {
+            FieldDialogTarget::Add { is_object, .. } => *is_object,
+            FieldDialogTarget::Edit { key_editable, .. } => *key_editable,
+        };
+        let show_readonly_key = is_edit && !show_key_input && !dialog.key.is_empty();
+        let title = match &dialog.target {
+            FieldDialogTarget::Add {
+                is_object: true, ..
+            } => locale.text(TextKey::AddFieldTitle),
+            FieldDialogTarget::Add {
+                is_object: false, ..
+            } => locale.text(TextKey::AddElementTitle),
+            FieldDialogTarget::Edit { .. } => locale.text(TextKey::EditFieldTitle),
         };
 
         egui::Window::new(title)
             .collapsible(false)
             .resizable(true)
             .show(ctx, |ui| {
-                if dialog.is_object {
+                if show_key_input {
                     ui.label(locale.text(TextKey::FieldName));
                     ui.add(egui::TextEdit::singleline(&mut dialog.key).desired_width(320.0));
+                } else if show_readonly_key {
+                    ui.horizontal(|ui| {
+                        ui.label(locale.text(TextKey::FieldName));
+                        ui.add_enabled(
+                            false,
+                            egui::TextEdit::singleline(&mut dialog.key).desired_width(320.0),
+                        );
+                    });
                 }
-                ui.label(locale.text(TextKey::Value));
-                ui.add(
-                    egui::TextEdit::multiline(&mut dialog.value)
-                        .desired_width(420.0)
-                        .desired_rows(5)
-                        .font(egui::TextStyle::Monospace),
-                );
+
+                ui.horizontal(|ui| {
+                    ui.label(locale.text(TextKey::FieldType));
+                    let previous_type = dialog.value_type.clone();
+                    egui::ComboBox::from_id_salt("field_dialog_type")
+                        .selected_text(field_type_label(locale, &dialog.value_type))
+                        .show_ui(ui, |ui| {
+                            for value_type in field_value_types(format, is_toml_root) {
+                                ui.selectable_value(
+                                    &mut dialog.value_type,
+                                    value_type.clone(),
+                                    field_type_label(locale, &value_type),
+                                );
+                            }
+                        });
+                    if dialog.value_type != previous_type {
+                        dialog.value = default_field_value(&dialog.value_type);
+                    }
+                });
+
+                match &dialog.value_type {
+                    JsonValueType::String => {
+                        ui.label(locale.text(TextKey::Value));
+                        ui.add(
+                            egui::TextEdit::multiline(&mut dialog.value)
+                                .desired_width(420.0)
+                                .desired_rows(4),
+                        );
+                    }
+                    JsonValueType::Number => {
+                        ui.label(locale.text(TextKey::Value));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut dialog.value)
+                                .desired_width(320.0)
+                                .font(egui::TextStyle::Monospace),
+                        );
+                    }
+                    JsonValueType::Bool => {
+                        ui.horizontal(|ui| {
+                            ui.label(locale.text(TextKey::Value));
+                            egui::ComboBox::from_id_salt("field_dialog_bool")
+                                .selected_text(&dialog.value)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut dialog.value,
+                                        "true".to_string(),
+                                        "true",
+                                    );
+                                    ui.selectable_value(
+                                        &mut dialog.value,
+                                        "false".to_string(),
+                                        "false",
+                                    );
+                                });
+                        });
+                    }
+                    JsonValueType::Null => {
+                        ui.label(format!("{}: null", locale.text(TextKey::Value)));
+                    }
+                    JsonValueType::Object => {
+                        ui.label(locale.text(TextKey::EmptyObject));
+                    }
+                    JsonValueType::Array => {
+                        ui.label(locale.text(TextKey::EmptyArray));
+                    }
+                }
+
                 if let Some(error) = &dialog.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
                 ui.horizontal(|ui| {
-                    if ui.button(locale.text(TextKey::Add)).clicked() {
+                    let action = if is_edit {
+                        TextKey::Apply
+                    } else {
+                        TextKey::Add
+                    };
+                    if ui.button(locale.text(action)).clicked() {
                         submit = true;
                     }
                     if ui.button(locale.text(TextKey::Cancel)).clicked() {
@@ -657,36 +864,93 @@ impl JsonViewerApp {
             return;
         }
         if !submit {
-            self.add_child_dialog = Some(dialog);
+            self.field_dialog = Some(dialog);
             return;
         }
 
-        let format = self.file_state.format.unwrap_or(DataFormat::Json);
+        let target = dialog.target.clone();
         let result = self
             .root
             .as_mut()
             .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())
-            .and_then(|root| {
-                add_child_at_path(
+            .and_then(|root| match target {
+                FieldDialogTarget::Add { parent_path, .. } => add_typed_child_at_path(
                     root,
-                    &dialog.parent_path,
+                    &parent_path,
                     &dialog.key,
+                    &dialog.value_type,
                     &dialog.value,
                     format,
-                )
+                ),
+                FieldDialogTarget::Edit { path, key_editable } => edit_child_at_path(
+                    root,
+                    &path,
+                    key_editable.then_some(dialog.key.as_str()),
+                    &dialog.value_type,
+                    &dialog.value,
+                    format,
+                ),
             });
 
         match result {
             Ok(()) => {
+                if is_edit {
+                    self.selected_paths.clear();
+                }
                 self.visible_rows_dirty = true;
                 self.refresh_search();
-                self.show_toast(self.locale.text(TextKey::DataAdded));
+                let message = if is_edit {
+                    TextKey::FieldUpdated
+                } else {
+                    TextKey::DataAdded
+                };
+                self.show_toast(self.locale.text(message));
             }
             Err(error) => {
                 dialog.error = Some(error);
-                self.add_child_dialog = Some(dialog);
+                self.field_dialog = Some(dialog);
             }
         }
+    }
+}
+
+fn field_value_types(format: DataFormat, is_toml_root: bool) -> Vec<JsonValueType> {
+    if is_toml_root {
+        return vec![JsonValueType::Object];
+    }
+
+    let mut types = vec![
+        JsonValueType::String,
+        JsonValueType::Number,
+        JsonValueType::Bool,
+        JsonValueType::Object,
+        JsonValueType::Array,
+    ];
+    if format != DataFormat::Toml {
+        types.insert(3, JsonValueType::Null);
+    }
+    types
+}
+
+fn field_type_label(locale: Locale, value_type: &JsonValueType) -> &'static str {
+    match value_type {
+        JsonValueType::String => locale.text(TextKey::TypeString),
+        JsonValueType::Number => locale.text(TextKey::TypeNumber),
+        JsonValueType::Bool => locale.text(TextKey::TypeBoolean),
+        JsonValueType::Null => locale.text(TextKey::TypeNull),
+        JsonValueType::Object => locale.text(TextKey::TypeObject),
+        JsonValueType::Array => locale.text(TextKey::TypeArray),
+    }
+}
+
+fn default_field_value(value_type: &JsonValueType) -> String {
+    match value_type {
+        JsonValueType::Bool => "true".to_string(),
+        JsonValueType::String
+        | JsonValueType::Number
+        | JsonValueType::Null
+        | JsonValueType::Object
+        | JsonValueType::Array => String::new(),
     }
 }
 
@@ -705,7 +969,8 @@ impl eframe::App for JsonViewerApp {
 
 #[cfg(test)]
 mod tests {
-    use super::JsonViewerApp;
+    use super::{AppMode, JsonViewerApp};
+    use crate::parser::{DataFormat, JsonValueType, parse_data};
 
     #[test]
     fn save_current_writes_updated_document_to_loaded_path() {
@@ -774,5 +1039,40 @@ mod tests {
 
         std::fs::remove_file(first).unwrap();
         std::fs::remove_file(second).unwrap();
+    }
+
+    #[test]
+    fn creating_new_file_initializes_editable_document_for_all_formats() {
+        let formats = [
+            DataFormat::Json,
+            DataFormat::Yaml,
+            DataFormat::Toml,
+            DataFormat::Json5,
+        ];
+
+        for (index, format) in formats.into_iter().enumerate() {
+            let path = std::env::temp_dir().join(format!(
+                "json_viewer-create-test-{}-{}.{}",
+                std::process::id(),
+                index,
+                format.extension()
+            ));
+            let mut app = JsonViewerApp::default();
+            app.create_new_file(path.clone(), format);
+
+            assert_eq!(app.mode, AppMode::Edit);
+            assert_eq!(app.file_state.path.as_deref(), Some(path.as_path()));
+            assert_eq!(app.file_state.format, Some(format));
+            assert_eq!(
+                app.root.as_ref().map(|root| root.value_type.clone()),
+                Some(JsonValueType::Object)
+            );
+
+            let content = std::fs::read_to_string(&path).unwrap();
+            let (_, parsed_format) = parse_data(&content, Some(format)).unwrap();
+            assert_eq!(parsed_format, format);
+            assert_eq!(app.file_state.size_bytes, content.len() as u64);
+            std::fs::remove_file(path).unwrap();
+        }
     }
 }

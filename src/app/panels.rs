@@ -52,6 +52,10 @@ impl JsonViewerApp {
     fn show_menu_bar(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::FileMenu), |ui| {
+            if ui.button(locale.text(TextKey::NewFile)).clicked() {
+                ui.close();
+                self.open_new_file_dialog();
+            }
             if ui.button(locale.text(TextKey::Open)).clicked() {
                 ui.close();
                 self.open_file_dialog();
@@ -434,6 +438,9 @@ impl JsonViewerApp {
             if let Some(request) = outcome.add_child_request {
                 self.open_add_child_dialog(request);
             }
+            if let Some(request) = outcome.edit_field_request {
+                self.open_edit_field_dialog(request);
+            }
             if outcome.tree_changed {
                 self.refresh_search();
             }
@@ -462,7 +469,7 @@ impl JsonViewerApp {
             if let Some(err) = outcome.edit_error {
                 self.show_toast(&err);
             }
-            self.show_add_child_dialog(ui.ctx());
+            self.show_field_dialog(ui.ctx());
         });
     }
 

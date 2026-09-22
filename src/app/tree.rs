@@ -39,6 +39,8 @@ pub(super) struct TreeOutcome {
     pub(super) expansion_changed: bool,
     /// Запрос на открытие диалога добавления поля или элемента.
     pub(super) add_child_request: Option<AddChildRequest>,
+    /// Запрос на открытие конструктора существующего поля.
+    pub(super) edit_field_request: Option<EditFieldRequest>,
 }
 
 /// Запрос на выбор узла дерева.
@@ -71,6 +73,13 @@ pub(super) struct AddChildRequest {
     pub(super) parent_path: String,
     /// `true`, если контейнер является объектом и требуется имя поля.
     pub(super) is_object: bool,
+}
+
+/// Запрос на редактирование существующего узла через конструктор.
+#[derive(Debug, Clone)]
+pub(super) struct EditFieldRequest {
+    /// Путь редактируемого узла.
+    pub(super) path: String,
 }
 
 /// Высота одной строки дерева без вертикального промежутка между строками.
@@ -385,7 +394,14 @@ fn render_leaf(
                 outcome.selection_request = Some(selection_request(ui, &node.path));
             }
             key_resp.context_menu(|ui| {
-                context_menu(ui, node, options.locale, options.selected_paths, outcome);
+                context_menu(
+                    ui,
+                    node,
+                    options.mode,
+                    options.locale,
+                    options.selected_paths,
+                    outcome,
+                );
             });
         }
 
@@ -401,7 +417,14 @@ fn render_leaf(
                 outcome.selection_request = Some(selection_request(ui, &node.path));
             }
             value_resp.context_menu(|ui| {
-                context_menu(ui, node, options.locale, options.selected_paths, outcome);
+                context_menu(
+                    ui,
+                    node,
+                    options.mode,
+                    options.locale,
+                    options.selected_paths,
+                    outcome,
+                );
             });
         }
     });
@@ -469,7 +492,7 @@ fn render_value_editor(
         outcome.selection_request = Some(selection_request(ui, &node.path));
     }
     edit_resp.context_menu(|ui| {
-        context_menu(ui, node, locale, selected_paths, outcome);
+        context_menu(ui, node, AppMode::Edit, locale, selected_paths, outcome);
     });
 }
 
@@ -498,6 +521,7 @@ fn make_header_text(node: &JsonNode, highlight: Highlight, locale: Locale) -> Ri
 fn context_menu(
     ui: &mut Ui,
     node: &JsonNode,
+    mode: AppMode,
     locale: Locale,
     selected_paths: &BTreeSet<String>,
     outcome: &mut TreeOutcome,
@@ -524,6 +548,12 @@ fn context_menu(
         outcome.copy_structure_paths = Some(selected_paths.iter().cloned().collect());
         ui.close();
     }
+    if mode == AppMode::Edit && ui.button(locale.text(TextKey::EditField)).clicked() {
+        outcome.edit_field_request = Some(EditFieldRequest {
+            path: node.path.clone(),
+        });
+        ui.close();
+    }
 }
 
 /// Контекстное меню контейнера с командами копирования и добавления данных.
@@ -535,7 +565,7 @@ fn container_context_menu(
     selected_paths: &BTreeSet<String>,
     outcome: &mut TreeOutcome,
 ) {
-    context_menu(ui, node, locale, selected_paths, outcome);
+    context_menu(ui, node, mode, locale, selected_paths, outcome);
 
     if mode != AppMode::Edit {
         return;

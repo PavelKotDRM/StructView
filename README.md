@@ -13,8 +13,11 @@ headless commands for formatting, validation, search, and comparison.
 - interactive object and array tree with expandable and collapsible nodes;
 - full-text search across keys and values;
 - search filters for keys/values, case sensitivity, and exact matching;
-- editing mode for primitive values;
+- editing mode for field values and primitive values;
+- creating a new empty JSON, YAML, TOML, or JSON5 file directly in edit mode;
 - adding object fields and array elements;
+- a field constructor with explicit string, number, boolean, null, object, and
+  array types;
 - saving to the original or another supported format;
 - copying a node value, key, or path from the context menu;
 - selecting and copying multiple structures while preserving their hierarchy;
@@ -77,17 +80,24 @@ json_viewer first.json second.yaml third.toml
 
 You can also choose a file through `File -> Open…` or drop it onto the window.
 Use `File -> Compare files…` to select two or more files for comparison.
+Use `File -> New file…`, choose a filename with a `.json`, `.yaml`, `.yml`,
+`.toml`, or `.json5` extension, and start adding data to the empty object in
+edit mode.
 
 The interface provides:
 
-- a `File` menu for opening, saving, saving to a new file, and closing a
-  document;
+- a `File` menu for creating, opening, saving, saving to a new file, and
+  closing a document;
 - a comparison view for two or more files, showing every changed JSON path and
   the value from each file;
 - controls for expanding and collapsing the whole tree;
 - search with previous and next match navigation;
 - search options for key/value scope, case sensitivity, and exact matching;
 - `View` and `Edit` modes;
+- adding fields through a type-aware constructor; strings use plain text,
+  numbers and booleans are validated, and objects/arrays start empty;
+- editing any node through `Edit field…` in its context menu, including
+  changing its type and renaming object fields;
 - node selection by clicking; hold `Ctrl`/`Cmd` while clicking to add nodes to
   the current selection;
 - copying selected structures through `Edit -> Copy`, `Ctrl+C`, or the context

@@ -1,4 +1,5 @@
-//! Правка примитивных значений дерева и обратное преобразование в [`serde_json::Value`].
+//! Конструктор значений, правка дерева и обратное преобразование
+//! в [`serde_json::Value`].
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -247,6 +248,94 @@ pub(super) fn apply_primitive_edit(node: &mut JsonNode, edited: &str) -> Result<
     Ok(())
 }
 
+/// Добавить поле или элемент с типом, выбранным в конструкторе значения.
+pub(super) fn add_typed_child_at_path(
+    root: &mut JsonNode,
+    parent_path: &str,
+    key: &str,
+    value_type: &JsonValueType,
+    value: &str,
+    format: DataFormat,
+) -> Result<(), String> {
+    let input = field_value_to_input(value_type, value)?;
+    add_child_at_path(root, parent_path, key, &input, format)
+}
+
+/// Изменить существующее поле или элемент через конструктор значения.
+pub(super) fn edit_child_at_path(
+    root: &mut JsonNode,
+    path: &str,
+    new_key: Option<&str>,
+    value_type: &JsonValueType,
+    value: &str,
+    format: DataFormat,
+) -> Result<(), String> {
+    if path.is_empty() && format == DataFormat::Toml && !matches!(value_type, JsonValueType::Object)
+    {
+        return Err("Корневое значение TOML должно быть объектом".to_string());
+    }
+
+    let input = field_value_to_input(value_type, value)?;
+    let replacement = parse_child_value(&input, format)?;
+
+    if let Some(new_key) = new_key {
+        let new_key = new_key.trim();
+        if new_key.is_empty() {
+            return Err("Имя поля не может быть пустым".to_string());
+        }
+        let parent = find_parent(root, path)
+            .ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?;
+        if parent.value_type != JsonValueType::Object {
+            return Err("Имя можно изменить только у поля объекта".to_string());
+        }
+        if parent
+            .children
+            .iter()
+            .any(|child| child.path != path && child.key.as_deref() == Some(new_key))
+        {
+            return Err(format!("Поле «{}» уже существует", new_key));
+        }
+    }
+
+    if replace_node_at_path(root, path, &replacement, new_key, "") {
+        Ok(())
+    } else {
+        Err("Не удалось найти поле для редактирования".to_string())
+    }
+}
+
+/// Проверить, является ли узел полем объекта и поэтому допускает переименование.
+pub(super) fn is_object_child(root: &JsonNode, path: &str) -> bool {
+    find_parent(root, path).is_some_and(|parent| {
+        parent.value_type == JsonValueType::Object
+            && parent.children.iter().any(|child| child.path == path)
+    })
+}
+
+/// Преобразовать значение из конструктора в JSON-совместимый литерал.
+fn field_value_to_input(value_type: &JsonValueType, value: &str) -> Result<String, String> {
+    match value_type {
+        JsonValueType::String => serde_json::to_string(value)
+            .map_err(|error| format!("Ошибка сериализации строки: {}", error)),
+        JsonValueType::Number => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err("Число не может быть пустым".to_string());
+            }
+            let number = serde_json::from_str::<serde_json::Number>(trimmed)
+                .map_err(|error| format!("Некорректное число: {}", error))?;
+            Ok(number.to_string())
+        }
+        JsonValueType::Bool => match value.trim() {
+            "true" | "false" => Ok(value.trim().to_string()),
+            _ => Err("Логическое значение должно быть true или false".to_string()),
+        },
+        JsonValueType::Null => Ok("null".to_string()),
+        JsonValueType::Object => Ok("{}".to_string()),
+        JsonValueType::Array => Ok("[]".to_string()),
+    }
+}
+
 /// Добавить поле в объект или элемент в массив.
 ///
 /// Значение разбирается синтаксисом открытого формата. Для TOML значение
@@ -324,6 +413,15 @@ fn find_node_mut<'a>(node: &'a mut JsonNode, path: &str) -> Option<&'a mut JsonN
         .find_map(|child| find_node_mut(child, path))
 }
 
+fn find_parent<'a>(node: &'a JsonNode, path: &str) -> Option<&'a JsonNode> {
+    if node.children.iter().any(|child| child.path == path) {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_parent(child, path))
+}
+
 pub(super) fn find_node<'a>(node: &'a JsonNode, path: &str) -> Option<&'a JsonNode> {
     if node.path == path {
         return Some(node);
@@ -331,6 +429,42 @@ pub(super) fn find_node<'a>(node: &'a JsonNode, path: &str) -> Option<&'a JsonNo
     node.children
         .iter()
         .find_map(|child| find_node(child, path))
+}
+
+fn replace_node_at_path(
+    node: &mut JsonNode,
+    path: &str,
+    replacement: &JsonNode,
+    new_key: Option<&str>,
+    parent_path: &str,
+) -> bool {
+    if node.path == path {
+        let mut updated = replacement.clone();
+        updated.key = new_key
+            .map(|key| key.trim().to_string())
+            .or_else(|| node.key.clone());
+        if matches!(
+            (&node.value_type, &updated.value_type),
+            (JsonValueType::Object, JsonValueType::Object)
+                | (JsonValueType::Array, JsonValueType::Array)
+        ) {
+            updated.children = node.children.clone();
+            updated.display_value = node.display_value.clone();
+        }
+        updated.expanded = node.expanded;
+        update_paths(&mut updated, parent_path);
+        *node = updated;
+        return true;
+    }
+
+    let current_path = node.path.clone();
+    for child in &mut node.children {
+        if replace_node_at_path(child, path, replacement, new_key, &current_path) {
+            update_container_label(node);
+            return true;
+        }
+    }
+    false
 }
 
 fn update_paths(node: &mut JsonNode, parent_path: &str) {
@@ -415,6 +549,118 @@ mod tests {
         assert!(apply_primitive_edit(&mut node, "").is_err());
         assert!(apply_primitive_edit(&mut node, "нет кавычек").is_err());
         assert_eq!(node.display_value, "\"x\"");
+    }
+
+    #[test]
+    fn typed_constructor_adds_values_without_format_literals() {
+        for format in [
+            DataFormat::Json,
+            DataFormat::Yaml,
+            DataFormat::Toml,
+            DataFormat::Json5,
+        ] {
+            let (mut root, _) = parse_data("{}", Some(DataFormat::Json)).unwrap();
+            add_typed_child_at_path(&mut root, "", "name", &JsonValueType::String, "Ada", format)
+                .unwrap();
+            add_typed_child_at_path(&mut root, "", "age", &JsonValueType::Number, "37", format)
+                .unwrap();
+            add_typed_child_at_path(
+                &mut root,
+                "",
+                "enabled",
+                &JsonValueType::Bool,
+                "false",
+                format,
+            )
+            .unwrap();
+            add_typed_child_at_path(&mut root, "", "profile", &JsonValueType::Object, "", format)
+                .unwrap();
+            add_typed_child_at_path(&mut root, "", "roles", &JsonValueType::Array, "", format)
+                .unwrap();
+
+            let value = node_to_value(&root).unwrap();
+            assert_eq!(value["name"], "Ada");
+            assert_eq!(value["age"], 37);
+            assert_eq!(value["enabled"], false);
+            assert_eq!(value["profile"], serde_json::json!({}));
+            assert_eq!(value["roles"], serde_json::json!([]));
+        }
+
+        let (mut root, _) = parse_data("{}", Some(DataFormat::Json)).unwrap();
+        add_typed_child_at_path(
+            &mut root,
+            "",
+            "missing",
+            &JsonValueType::Null,
+            "",
+            DataFormat::Json,
+        )
+        .unwrap();
+        assert_eq!(node_to_value(&root).unwrap()["missing"], Value::Null);
+    }
+
+    #[test]
+    fn typed_constructor_edits_type_renames_field_and_preserves_containers() {
+        let (mut root, _) = parse_data(
+            r#"{"profile":{"name":"Ada"},"value":1,"items":[1]}"#,
+            Some(DataFormat::Json),
+        )
+        .unwrap();
+
+        edit_child_at_path(
+            &mut root,
+            "value",
+            Some("count"),
+            &JsonValueType::Number,
+            "2",
+            DataFormat::Json,
+        )
+        .unwrap();
+        edit_child_at_path(
+            &mut root,
+            "profile",
+            None,
+            &JsonValueType::Object,
+            "",
+            DataFormat::Json,
+        )
+        .unwrap();
+        edit_child_at_path(
+            &mut root,
+            "items",
+            None,
+            &JsonValueType::Array,
+            "",
+            DataFormat::Json,
+        )
+        .unwrap();
+
+        assert_eq!(
+            node_to_value(&root).unwrap(),
+            serde_json::json!({
+                "profile": {"name": "Ada"},
+                "count": 2,
+                "items": [1]
+            })
+        );
+        assert!(is_object_child(&root, "count"));
+        assert_eq!(find_node(&root, "count").unwrap().path, "count");
+    }
+
+    #[test]
+    fn typed_constructor_rejects_toml_null_values() {
+        let (mut root, _) = parse_data("{}", Some(DataFormat::Json)).unwrap();
+        let error = add_typed_child_at_path(
+            &mut root,
+            "",
+            "missing",
+            &JsonValueType::Null,
+            "",
+            DataFormat::Toml,
+        )
+        .unwrap_err();
+        assert!(!error.is_empty());
+        assert!(root.children.is_empty());
     }
 
     #[test]
