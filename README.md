@@ -18,7 +18,8 @@ headless commands for formatting, validation, search, and comparison.
 - adding object fields and array elements;
 - a field constructor with explicit string, number, boolean, null, object, and
   array types;
-- saving to the original or another supported format;
+- saving to the original or another supported format, with explicit conversion
+  to every other supported format;
 - copying a node value, key, or path from the context menu;
 - selecting and copying multiple structures while preserving their hierarchy;
 - pasting copied structures into another open file;
@@ -86,8 +87,8 @@ edit mode.
 
 The interface provides:
 
-- a `File` menu for creating, opening, saving, saving to a new file, and
-  closing a document;
+- a `File` menu for creating, opening, saving, converting to another format,
+  saving to a new file, and closing a document;
 - a comparison view for two or more files, showing every changed JSON path and
   the value from each file;
 - controls for expanding and collapsing the whole tree;
@@ -128,6 +129,13 @@ not required.
 When saving, the output format is selected from the destination file
 extension. If the extension is unsupported, the format of the open document
 is used.
+
+To convert an open document, choose `File -> Convert to` and select `JSON`,
+`YAML`, `TOML`, or `JSON5` (the current format is omitted). The conversion
+dialog suggests a filename with the target format's extension and writes a
+separate file, leaving the open document unchanged. `JSON5` output uses the
+same JSON-compatible data as the other serializers, so comments and trailing
+commas are not preserved.
 
 ### Comparing files
 

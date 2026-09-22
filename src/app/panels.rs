@@ -5,7 +5,7 @@ use egui::{Color32, RichText, Ui};
 use crate::build_info;
 use crate::clipboard::copy_to_clipboard;
 use crate::diff::format_value;
-use crate::parser::set_expanded_all;
+use crate::parser::{DataFormat, set_expanded_all};
 
 use super::i18n::{Locale, TextKey};
 use super::state::{AppMode, JsonViewerApp};
@@ -84,6 +84,22 @@ impl JsonViewerApp {
                 ui.close();
                 self.save_pretty();
             }
+            ui.menu_button(locale.text(TextKey::ConvertTo), |ui| {
+                let current_format = self.file_state.format;
+                for format in DataFormat::ALL {
+                    if current_format == Some(format) {
+                        continue;
+                    }
+
+                    if ui
+                        .add_enabled(self.root.is_some(), egui::Button::new(format.to_string()))
+                        .clicked()
+                    {
+                        ui.close();
+                        self.convert_to_format(format);
+                    }
+                }
+            });
             if ui.button(locale.text(TextKey::CloseFile)).clicked() {
                 ui.close();
                 self.close_file();

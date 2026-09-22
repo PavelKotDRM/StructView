@@ -484,6 +484,31 @@ impl JsonViewerApp {
         }
     }
 
+    /// Преобразовать открытый документ в выбранный формат и сохранить его
+    /// отдельным файлом.
+    ///
+    /// Исходный документ остаётся открытым. Расширение результата определяется
+    /// выбранным форматом, даже если пользователь ввёл в диалоге другое
+    /// расширение.
+    pub(super) fn convert_to_format(&mut self, format: DataFormat) {
+        if self.root.is_none() {
+            return;
+        }
+
+        let format_name = format.to_string();
+        let mut dialog = rfd::FileDialog::new().add_filter(&format_name, format.extensions());
+        let file_name = self.conversion_file_name(format);
+        dialog = dialog.set_file_name(&file_name);
+
+        if let Some(save_path) = dialog.save_file() {
+            let save_path = with_format_extension(save_path, format);
+            match self.write_root_to_path(&save_path, format) {
+                Ok(_) => self.show_toast(self.locale.text(TextKey::FileConverted)),
+                Err(error) => self.show_toast(&error),
+            }
+        }
+    }
+
     /// Сохранить текущие данные в открытый файл без запроса нового пути.
     ///
     /// Если файл ещё не был сохранён, открывается диалог «Сохранить как…».
@@ -546,6 +571,20 @@ impl JsonViewerApp {
         std::fs::write(path, formatted)
             .map_err(|error| self.locale.save_error(&error.to_string()))?;
         Ok(size_bytes)
+    }
+
+    /// Сформировать имя результата преобразования рядом с именем открытого
+    /// файла, заменив его расширение на расширение целевого формата.
+    fn conversion_file_name(&self, format: DataFormat) -> String {
+        let stem = self
+            .file_state
+            .path
+            .as_ref()
+            .and_then(|path| path.file_stem())
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("converted");
+        format!("{}.{}", stem, format.extension())
     }
 
     /// Показать кратковременное уведомление в статус-баре.
@@ -967,9 +1006,15 @@ impl eframe::App for JsonViewerApp {
     }
 }
 
+/// Привести путь результата к расширению выбранного формата.
+fn with_format_extension(mut path: PathBuf, format: DataFormat) -> PathBuf {
+    path.set_extension(format.extension());
+    path
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AppMode, JsonViewerApp};
+    use super::{AppMode, JsonViewerApp, with_format_extension};
     use crate::parser::{DataFormat, JsonValueType, parse_data};
 
     #[test]
@@ -994,6 +1039,42 @@ mod tests {
         assert!(saved.contains("\"value\": 2"));
         assert_eq!(app.file_state.size_bytes, saved.len() as u64);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn open_document_can_be_converted_to_every_other_format() {
+        let input = std::env::temp_dir().join(format!(
+            "json_viewer-convert-test-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&input, r#"{"server":{"port":8080},"enabled":true}"#).unwrap();
+
+        let mut app = JsonViewerApp::default();
+        app.load_file(input.clone());
+
+        for (index, format) in DataFormat::ALL.into_iter().enumerate() {
+            if format == DataFormat::Json {
+                continue;
+            }
+
+            let requested_path = std::env::temp_dir().join(format!(
+                "json_viewer-convert-test-{}-{}.output",
+                std::process::id(),
+                index
+            ));
+            let output = with_format_extension(requested_path, format);
+            let size_bytes = app.write_root_to_path(&output, format).unwrap();
+            let content = std::fs::read_to_string(&output).unwrap();
+            let (_, parsed_format) = parse_data(&content, Some(format)).unwrap();
+
+            assert_eq!(parsed_format, format);
+            assert_eq!(size_bytes, content.len() as u64);
+            std::fs::remove_file(output).unwrap();
+        }
+
+        assert_eq!(app.file_state.path, Some(input.clone()));
+        assert_eq!(app.file_state.format, Some(DataFormat::Json));
+        std::fs::remove_file(input).unwrap();
     }
 
     #[test]

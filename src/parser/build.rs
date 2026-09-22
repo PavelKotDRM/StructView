@@ -22,6 +22,9 @@ pub enum DataFormat {
 }
 
 impl DataFormat {
+    /// Все форматы, доступные для преобразования и сохранения.
+    pub const ALL: [Self; 4] = [Self::Json, Self::Yaml, Self::Toml, Self::Json5];
+
     /// Определить формат по расширению пути.
     pub fn from_path(path: &Path) -> Option<Self> {
         match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
@@ -40,6 +43,16 @@ impl DataFormat {
             Self::Yaml => "yaml",
             Self::Toml => "toml",
             Self::Json5 => "json5",
+        }
+    }
+
+    /// Расширения, принимаемые диалогом выбора файла для этого формата.
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Self::Json => &["json"],
+            Self::Yaml => &["yaml", "yml"],
+            Self::Toml => &["toml"],
+            Self::Json5 => &["json5"],
         }
     }
 }
