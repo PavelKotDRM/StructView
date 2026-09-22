@@ -4,6 +4,7 @@ use egui::{Color32, RichText, Ui};
 
 use crate::build_info;
 use crate::clipboard::copy_to_clipboard;
+use crate::diff::format_value;
 use crate::parser::set_expanded_all;
 
 use super::i18n::{Locale, TextKey};
@@ -33,11 +34,15 @@ impl JsonViewerApp {
                     ui.horizontal(|ui| {
                         self.show_menu_bar(ui);
                         ui.separator();
-                        self.show_tree_buttons(ui);
-                        ui.separator();
-                        self.show_mode_switch(ui);
-                        ui.separator();
-                        self.show_search_bar(ui);
+                        if self.is_comparing() {
+                            self.show_comparison_buttons(ui);
+                        } else {
+                            self.show_tree_buttons(ui);
+                            ui.separator();
+                            self.show_mode_switch(ui);
+                            ui.separator();
+                            self.show_search_bar(ui);
+                        }
                     });
                 });
         });
@@ -51,11 +56,27 @@ impl JsonViewerApp {
                 ui.close();
                 self.open_file_dialog();
             }
-            if ui.button(locale.text(TextKey::Save)).clicked() {
+            if ui.button(locale.text(TextKey::CompareFiles)).clicked() {
+                ui.close();
+                self.open_comparison_dialog();
+            }
+            if ui
+                .add_enabled(
+                    self.root.is_some(),
+                    egui::Button::new(locale.text(TextKey::Save)),
+                )
+                .clicked()
+            {
                 ui.close();
                 self.request_save_current();
             }
-            if ui.button(locale.text(TextKey::SaveAs)).clicked() {
+            if ui
+                .add_enabled(
+                    self.root.is_some(),
+                    egui::Button::new(locale.text(TextKey::SaveAs)),
+                )
+                .clicked()
+            {
                 ui.close();
                 self.save_pretty();
             }
@@ -165,6 +186,17 @@ impl JsonViewerApp {
                     }
                 });
         });
+    }
+
+    /// Отрисовать кнопки управления режимом сравнения.
+    fn show_comparison_buttons(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
+        if ui.button(locale.text(TextKey::CompareFiles)).clicked() {
+            self.open_comparison_dialog();
+        }
+        if ui.button(locale.text(TextKey::Close)).clicked() {
+            self.close_file();
+        }
     }
 
     /// Отрисовать быстрые кнопки дерева и сохранения файла.
@@ -325,6 +357,11 @@ impl JsonViewerApp {
                         RichText::new(format!("⚠ {}: {}", locale.text(TextKey::Error), err))
                             .color(COLOR_ERROR),
                     );
+                } else if let Some(comparison) = &self.comparison {
+                    ui.label(locale.comparison_status(
+                        comparison.documents.len(),
+                        comparison.differences.len(),
+                    ));
                 } else if let Some(path) = &self.file_state.path {
                     let name = path
                         .file_name()
@@ -374,6 +411,11 @@ impl JsonViewerApp {
             let copy_structures_requested = std::mem::take(&mut self.copy_structures_requested);
             let paste_requested = std::mem::take(&mut self.paste_requested);
 
+            if self.comparison.is_some() {
+                self.show_comparison(ui);
+                return;
+            }
+
             if self.root.is_none() && self.parse_error.is_none() {
                 show_placeholder(ui, self.locale);
                 return;
@@ -421,6 +463,62 @@ impl JsonViewerApp {
                 self.show_toast(&err);
             }
             self.show_add_child_dialog(ui.ctx());
+        });
+    }
+
+    /// Отрисовать таблицу отличий по всем загруженным документам.
+    fn show_comparison(&self, ui: &mut Ui) {
+        let Some(comparison) = &self.comparison else {
+            return;
+        };
+        let locale = self.locale;
+
+        if comparison.differences.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    RichText::new(locale.text(TextKey::ComparisonNoDifferences))
+                        .size(18.0)
+                        .color(COLOR_SUCCESS),
+                );
+            });
+            return;
+        }
+
+        egui::ScrollArea::both().show(ui, |ui| {
+            egui::Grid::new("comparison_grid")
+                .striped(true)
+                .min_col_width(140.0)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new(locale.text(TextKey::ComparisonPath)).strong());
+                    for document in &comparison.documents {
+                        let header = format!(
+                            "{} ({}, {:.1} KB, {} ms)",
+                            document.path.display(),
+                            document.format,
+                            document.size_bytes as f64 / 1024.0,
+                            document.load_time_ms
+                        );
+                        ui.label(RichText::new(header).strong().monospace());
+                    }
+                    ui.end_row();
+
+                    for difference in &comparison.differences {
+                        ui.label(
+                            RichText::new(&difference.path)
+                                .color(COLOR_MATCH)
+                                .monospace(),
+                        );
+                        for value in &difference.values {
+                            let text = value
+                                .as_ref()
+                                .map(|value| format_value(Some(value)))
+                                .unwrap_or_else(|| locale.text(TextKey::MissingValue).to_string());
+                            ui.label(RichText::new(text).monospace());
+                        }
+                        ui.end_row();
+                    }
+                });
         });
     }
 
@@ -500,14 +598,17 @@ impl JsonViewerApp {
 
     /// Загрузить файл, перетащенный в окно приложения.
     fn handle_dropped_files(&mut self, ui: &Ui) {
-        let dropped_path = ui.ctx().input(|i| {
+        let dropped_paths = ui.ctx().input(|i| {
             i.raw
                 .dropped_files
-                .first()
-                .map(|file| file.path().to_path_buf().clone())
+                .iter()
+                .map(|file| file.path().to_path_buf())
+                .collect::<Vec<_>>()
         });
-        if let Some(path) = dropped_path {
-            self.load_file(path);
+        match dropped_paths.as_slice() {
+            [] => {}
+            [path] => self.load_file(path.clone()),
+            _ => self.load_comparison(dropped_paths),
         }
     }
 }

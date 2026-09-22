@@ -22,6 +22,18 @@ impl Locale {
         }
     }
 
+    /// Сформировать строку статуса режима сравнения.
+    pub(super) fn comparison_status(self, file_count: usize, difference_count: usize) -> String {
+        match self {
+            Self::Russian => {
+                format!("Сравнение файлов: {file_count}  |  отличий: {difference_count}")
+            }
+            Self::English => {
+                format!("File comparison: {file_count}  |  differences: {difference_count}")
+            }
+        }
+    }
+
     /// Получить перевод статического сообщения.
     pub(super) fn text(self, key: TextKey) -> &'static str {
         match self {
@@ -98,6 +110,7 @@ impl Locale {
 pub(super) enum TextKey {
     FileMenu,
     Open,
+    CompareFiles,
     Save,
     SaveAs,
     CloseFile,
@@ -162,6 +175,10 @@ pub(super) enum TextKey {
     SelectContainer,
     SelectOneContainer,
     PasteEditOnly,
+    ComparisonPath,
+    ComparisonNoDifferences,
+    MissingValue,
+    ComparisonRequiresFiles,
 }
 
 impl Locale {
@@ -218,6 +235,7 @@ fn russian_text(key: TextKey) -> &'static str {
     match key {
         TextKey::FileMenu => "Файл",
         TextKey::Open => "📂  Открыть…",
+        TextKey::CompareFiles => "⚖  Сравнить файлы…",
         TextKey::Save => "💾  Сохранить",
         TextKey::SaveAs => "💾  Сохранить как…",
         TextKey::CloseFile => "✖  Закрыть файл",
@@ -284,6 +302,10 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::SelectContainer => "Выберите контейнер для вставки",
         TextKey::SelectOneContainer => "Для вставки выберите ровно один контейнер",
         TextKey::PasteEditOnly => "Вставка доступна только в режиме редактирования",
+        TextKey::ComparisonPath => "Путь",
+        TextKey::ComparisonNoDifferences => "Файлы не отличаются",
+        TextKey::MissingValue => "<отсутствует>",
+        TextKey::ComparisonRequiresFiles => "Для сравнения выберите минимум два файла",
     }
 }
 
@@ -291,6 +313,7 @@ fn english_text(key: TextKey) -> &'static str {
     match key {
         TextKey::FileMenu => "File",
         TextKey::Open => "📂  Open…",
+        TextKey::CompareFiles => "⚖  Compare files…",
         TextKey::Save => "💾  Save",
         TextKey::SaveAs => "💾  Save as…",
         TextKey::CloseFile => "✖  Close file",
@@ -357,6 +380,10 @@ fn english_text(key: TextKey) -> &'static str {
         TextKey::SelectContainer => "Select a container to paste into",
         TextKey::SelectOneContainer => "Select exactly one container to paste into",
         TextKey::PasteEditOnly => "Pasting is available only in edit mode",
+        TextKey::ComparisonPath => "Path",
+        TextKey::ComparisonNoDifferences => "Files are identical",
+        TextKey::MissingValue => "<missing>",
+        TextKey::ComparisonRequiresFiles => "Select at least two files to compare",
     }
 }
 

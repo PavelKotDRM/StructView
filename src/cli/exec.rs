@@ -1,8 +1,9 @@
-//! Выполнение headless-команд: format, validate, find.
+//! Выполнение headless-команд: format, validate, find, diff.
 
 use std::io::Write;
 use std::path::Path;
 
+use crate::diff::{compare_values, format_value};
 use crate::parser::{DataFormat, parse_data, serialize_data};
 use crate::search::SearchState;
 
@@ -42,7 +43,59 @@ pub fn run(command: &Command) -> Result<bool, String> {
             input,
             options,
         } => run_find(query, input, *options),
-        Command::Gui { .. } => panic!("Command::Gui cannot run in headless mode"),
+        Command::Diff { inputs } => run_diff(inputs),
+        Command::Gui { .. } | Command::GuiCompare { .. } => {
+            panic!("GUI commands cannot run in headless mode")
+        }
+    }
+}
+
+/// Сравнить несколько источников и вывести отличающиеся пути.
+fn run_diff(inputs: &[Source]) -> Result<bool, String> {
+    if inputs.len() < 2 {
+        return Err("The diff command requires at least two files".to_string());
+    }
+
+    let mut values = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let content = input.read()?;
+        let (root, _) = match parse_data(&content, input.format_hint()) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                eprintln!("Parse error in {}: {}", source_name(input), error);
+                return Ok(false);
+            }
+        };
+        let value = match crate::app::node_to_value(&root) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("Conversion error in {}: {}", source_name(input), error);
+                return Ok(false);
+            }
+        };
+        values.push(value);
+    }
+
+    let differences = compare_values(&values);
+    if differences.is_empty() {
+        println!("Files are identical");
+        return Ok(true);
+    }
+
+    println!("{} difference(s) found", differences.len());
+    for difference in differences {
+        println!("{}:", difference.path);
+        for (input, value) in inputs.iter().zip(difference.values.iter()) {
+            println!("  {}: {}", source_name(input), format_value(value.as_ref()));
+        }
+    }
+    Ok(false)
+}
+
+fn source_name(source: &Source) -> String {
+    match source {
+        Source::Stdin => "<stdin>".to_string(),
+        Source::File(path) => path.display().to_string(),
     }
 }
 

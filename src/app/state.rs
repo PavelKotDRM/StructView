@@ -10,6 +10,7 @@ use std::time::Instant;
 use crate::clipboard::{
     ClipboardEntry, copy_to_clipboard, decode_structures, encode_structures, read_from_clipboard,
 };
+use crate::diff::{Difference, compare_values};
 use crate::parser::{DataFormat, JsonNode, JsonValueType, ParseError, parse_data, serialize_data};
 use crate::search::SearchState;
 
@@ -30,6 +31,28 @@ pub(super) struct FileState {
     pub(super) load_time_ms: u128,
     /// Формат открытого файла.
     pub(super) format: Option<DataFormat>,
+}
+
+/// Документ, загруженный в режим сравнения.
+#[derive(Debug)]
+pub(super) struct ComparisonDocument {
+    /// Путь к файлу.
+    pub(super) path: PathBuf,
+    /// Размер файла в байтах.
+    pub(super) size_bytes: u64,
+    /// Время загрузки и разбора файла в миллисекундах.
+    pub(super) load_time_ms: u128,
+    /// Формат файла.
+    pub(super) format: DataFormat,
+}
+
+/// Состояние отображения отличий нескольких документов.
+#[derive(Debug)]
+pub(super) struct ComparisonState {
+    /// Загруженные документы в порядке колонок таблицы.
+    pub(super) documents: Vec<ComparisonDocument>,
+    /// Отличия между значениями документов.
+    pub(super) differences: Vec<Difference>,
 }
 
 /// Режим работы приложения.
@@ -83,6 +106,8 @@ pub struct JsonViewerApp {
     pub(super) save_requested: bool,
     /// Мета-информация о загруженном файле.
     pub(super) file_state: FileState,
+    /// Состояние сравнения нескольких файлов.
+    pub(super) comparison: Option<ComparisonState>,
     /// Временное уведомление (например, «Скопировано») и момент его показа.
     pub(super) toast: Option<(String, Instant)>,
     /// Флаг тёмной темы.
@@ -119,6 +144,7 @@ impl Default for JsonViewerApp {
             search_scroll_target: None,
             save_requested: false,
             file_state: FileState::default(),
+            comparison: None,
             toast: None,
             dark_mode: true,
             mode: AppMode::default(),
@@ -164,9 +190,16 @@ impl JsonViewerApp {
     /// * `cc` — контекст создания `eframe`.
     /// * `path` — путь к JSON-файлу; `None` — стартовать с пустым состоянием.
     pub fn new_with_file(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> Self {
+        Self::new_with_files(cc, path.into_iter().collect())
+    }
+
+    /// Создать приложение и открыть один файл или режим сравнения нескольких файлов.
+    pub fn new_with_files(cc: &eframe::CreationContext<'_>, paths: Vec<PathBuf>) -> Self {
         let mut app = Self::new(cc);
-        if let Some(path) = path {
-            app.load_file(path);
+        match paths.as_slice() {
+            [] => {}
+            [path] => app.load_file(path.clone()),
+            _ => app.load_comparison(paths),
         }
         app
     }
@@ -190,8 +223,10 @@ impl JsonViewerApp {
     /// Ошибки чтения файла и парсинга записываются в `self.parse_error`;
     /// метод не возвращает `Result` — ошибки отображаются в UI.
     pub(super) fn load_file(&mut self, path: PathBuf) {
+        self.comparison = None;
         self.selected_paths.clear();
         self.visible_rows_dirty = true;
+        self.file_state = FileState::default();
         let t0 = Instant::now();
         match std::fs::read_to_string(&path) {
             Err(e) => {
@@ -241,6 +276,98 @@ impl JsonViewerApp {
         {
             self.load_file(path);
         }
+    }
+
+    /// Открыть системный диалог выбора нескольких файлов для сравнения.
+    pub(super) fn open_comparison_dialog(&mut self) {
+        if let Some(paths) = rfd::FileDialog::new()
+            .add_filter("Supported files", &["json", "yaml", "yml", "toml", "json5"])
+            .add_filter("JSON", &["json", "json5"])
+            .add_filter("YAML", &["yaml", "yml"])
+            .add_filter("TOML", &["toml"])
+            .add_filter("All files", &["*"])
+            .pick_files()
+        {
+            self.load_comparison(paths);
+        }
+    }
+
+    /// Загрузить два или более файла и показать отличия между ними.
+    pub(super) fn load_comparison(&mut self, paths: Vec<PathBuf>) {
+        if paths.len() < 2 {
+            self.show_toast(self.locale.text(TextKey::ComparisonRequiresFiles));
+            return;
+        }
+
+        self.root = None;
+        self.comparison = None;
+        self.parse_error = None;
+        self.file_state = FileState::default();
+        self.visible_rows = VisibleRows::default();
+        self.visible_rows_dirty = true;
+        self.search = SearchState::default();
+        self.search_query_buf.clear();
+        self.search_scroll_target = None;
+        self.save_requested = false;
+        self.add_child_dialog = None;
+        self.mode = AppMode::View;
+        self.selected_paths.clear();
+        self.copy_structures_requested = false;
+        self.paste_requested = false;
+
+        let locale = self.locale;
+        let mut documents = Vec::with_capacity(paths.len());
+        let mut values = Vec::with_capacity(paths.len());
+        for path in paths {
+            let started_at = Instant::now();
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(error) => {
+                    self.parse_error = Some(ParseError {
+                        message: locale.file_read_error(&format!("{}: {}", path.display(), error)),
+                        line: None,
+                        column: None,
+                    });
+                    return;
+                }
+            };
+            let size_bytes = content.len() as u64;
+            let format_hint = DataFormat::from_path(&path);
+            let (node, format) = match parse_data(&content, format_hint) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    self.parse_error = Some(ParseError {
+                        message: format!("{}: {}", path.display(), error),
+                        ..error
+                    });
+                    return;
+                }
+            };
+            let value = match node_to_value(&node) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.parse_error = Some(ParseError {
+                        message: format!("{}: {}", path.display(), error),
+                        line: None,
+                        column: None,
+                    });
+                    return;
+                }
+            };
+
+            documents.push(ComparisonDocument {
+                path,
+                size_bytes,
+                load_time_ms: started_at.elapsed().as_millis(),
+                format,
+            });
+            values.push(value);
+        }
+
+        self.comparison = Some(ComparisonState {
+            documents,
+            differences: compare_values(&values),
+        });
     }
 
     /// Сохранить текущие данные в форматированном виде.
@@ -308,6 +435,7 @@ impl JsonViewerApp {
     /// Закрыть текущий документ и очистить связанные с ним состояния.
     pub(super) fn close_file(&mut self) {
         self.root = None;
+        self.comparison = None;
         self.visible_rows = VisibleRows::default();
         self.visible_rows_dirty = true;
         self.parse_error = None;
@@ -321,6 +449,11 @@ impl JsonViewerApp {
         self.selected_paths.clear();
         self.copy_structures_requested = false;
         self.paste_requested = false;
+    }
+
+    /// Проверить, отображается ли сейчас режим сравнения.
+    pub(super) fn is_comparing(&self) -> bool {
+        self.comparison.is_some()
     }
 
     /// Сериализовать корень и записать его в указанный путь.
@@ -618,5 +751,28 @@ mod tests {
         assert!(!app.save_requested);
         assert_eq!(app.mode, super::AppMode::View);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn comparison_loads_all_documents_and_changed_paths() {
+        let prefix =
+            std::env::temp_dir().join(format!("json_viewer-compare-test-{}", std::process::id()));
+        let first = prefix.with_extension("first.json");
+        let second = prefix.with_extension("second.json");
+        std::fs::write(&first, r#"{"value":1,"same":true}"#).unwrap();
+        std::fs::write(&second, r#"{"value":2,"same":true}"#).unwrap();
+
+        let mut app = JsonViewerApp::default();
+        app.load_comparison(vec![first.clone(), second.clone()]);
+
+        let comparison = app.comparison.as_ref().unwrap();
+        assert_eq!(comparison.documents.len(), 2);
+        assert_eq!(comparison.differences.len(), 1);
+        assert_eq!(comparison.differences[0].path, "$.value");
+        assert!(app.root.is_none());
+        assert!(app.parse_error.is_none());
+
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
     }
 }

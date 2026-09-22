@@ -22,6 +22,7 @@
 //! | [`cli`] | Разбор аргументов командной строки и headless-команды |
 //! | [`console`] | Подключение к консоли родительского процесса (Windows) |
 //! | [`parser`] | Парсинг поддерживаемых форматов в дерево [`parser::JsonNode`] |
+//! | [`diff`] | Сравнение нескольких нормализованных документов |
 //! | [`search`] | Полнотекстовый поиск по узлам дерева, навигация Next/Prev |
 //! | [`clipboard`] | Копирование текста и структур в системный буфер обмена |
 //!
@@ -32,7 +33,7 @@
 //!   app/      state.rs · panels.rs · tree.rs · edit.rs · theme.rs
 //!   cli/      args.rs · exec.rs · source.rs
 //!   parser/   node.rs · build.rs
-//!   search.rs · clipboard.rs · console.rs · build_info.rs
+//!   diff.rs · search.rs · clipboard.rs · console.rs · build_info.rs
 //! ```
 
 #![deny(warnings)]
@@ -42,5 +43,6 @@ pub mod build_info;
 pub mod cli;
 pub mod clipboard;
 pub mod console;
+pub mod diff;
 pub mod parser;
 pub mod search;

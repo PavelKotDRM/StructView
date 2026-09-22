@@ -2,7 +2,7 @@
 
 A fast, cross-platform viewer and editor for structured data. The application
 displays JSON, YAML, TOML, and JSON5 as an interactive tree and also provides
-headless commands for formatting, validation, and search.
+headless commands for formatting, validation, search, and comparison.
 
 [Русская версия документации](docs/README.ru.md)
 
@@ -19,6 +19,7 @@ headless commands for formatting, validation, and search.
 - copying a node value, key, or path from the context menu;
 - selecting and copying multiple structures while preserving their hierarchy;
 - pasting copied structures into another open file;
+- comparing two or more structured files and showing changed paths;
 - light and dark themes;
 - Russian and English GUI localization;
 - command-line operation without starting the GUI.
@@ -68,12 +69,21 @@ Open a file directly at startup:
 json_viewer data.json
 ```
 
+Open several files directly in the comparison view:
+
+```sh
+json_viewer first.json second.yaml third.toml
+```
+
 You can also choose a file through `File -> Open…` or drop it onto the window.
+Use `File -> Compare files…` to select two or more files for comparison.
 
 The interface provides:
 
 - a `File` menu for opening, saving, saving to a new file, and closing a
   document;
+- a comparison view for two or more files, showing every changed JSON path and
+  the value from each file;
 - controls for expanding and collapsing the whole tree;
 - search with previous and next match navigation;
 - search options for key/value scope, case sensitivity, and exact matching;
@@ -101,13 +111,21 @@ and context menus continue to work for the whole tree.
 Virtualization reduces the cost of painting a fully expanded tree, but it does
 not make memory usage constant. Opening a document still reads the complete
 file and builds the complete in-memory tree, so memory usage is proportional to
-the number of nodes. For especially large files, keep unrelated branches
-collapsed and use the CLI `find`, `validate`, and `format` commands when an
-interactive view is not required.
+the number of nodes. For especially large files, keep unrelated branches collapsed and use the CLI
+`find`, `validate`, `format`, and `diff` commands when an interactive view is
+not required.
 
 When saving, the output format is selected from the destination file
 extension. If the extension is unsupported, the format of the open document
 is used.
+
+### Comparing files
+
+The comparison view parses every selected file using the same format detection
+as the regular viewer. Objects and arrays are compared recursively, so the
+table lists the deepest changed paths. A missing path is displayed separately
+from the JSON value `null`. The comparison is read-only; use `File -> Open…`
+or `File -> Close file` to return to the regular document view.
 
 ### Copying structures between files
 
@@ -217,6 +235,28 @@ json_viewer find --keys --exact id data.json
 
 If no matches are found, the command exits with a non-zero code.
 
+### Comparing files
+
+Compare two or more files and print every changed path with the value found in
+each input:
+
+```sh
+json_viewer diff first.json second.json
+json_viewer diff base.yaml candidate.yaml generated.json
+```
+
+The command also accepts stdin as one input by using `-`:
+
+```sh
+json_viewer diff reference.json - < candidate.json
+```
+
+Objects and arrays are compared recursively. The command prints `<missing>`
+for a path that does not exist in a file, while JSON `null` is printed as
+`null`. It returns exit code `0` when all inputs are identical and exit code
+`1` when differences or a data error are found. `compare` is accepted as an
+alias for `diff`.
+
 ### Common options
 
 ```sh
@@ -229,7 +269,7 @@ Exit codes:
 | Code | Meaning |
 | --- | --- |
 | `0` | command completed successfully |
-| `1` | data, I/O, or no-match error |
+| `1` | data, I/O, no-match, or file-difference result |
 | `2` | command-line argument parsing error |
 
 ## Development
@@ -249,6 +289,7 @@ src/
   app/       application state, localization, and GUI rendering;
   cli/       CLI argument parsing and command execution;
   parser/    format parsing and tree construction;
+  diff.rs    recursive comparison of normalized document values;
   search.rs  node search;
   clipboard.rs
              system clipboard integration.

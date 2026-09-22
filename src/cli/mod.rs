@@ -1,7 +1,7 @@
 //! # Модуль командной строки
 //!
 //! Разбирает аргументы командной строки и выполняет headless-команды
-//! (без запуска GUI): форматирование, валидацию и поиск по данным.
+//! (без запуска GUI): форматирование, валидацию, поиск и сравнение данных.
 //!
 //! ## Поддерживаемые вызовы
 //!
@@ -11,6 +11,7 @@
 //! json_viewer format data.json     # pretty-print в stdout
 //! json_viewer validate data.json   # проверить синтаксис
 //! json_viewer find name data.json  # вывести пути совпадений
+//! json_viewer diff one.json two.json # сравнить файлы
 //! ```
 //!
 //! ## Состав подмодулей
@@ -37,9 +38,11 @@ pub const HELP: &str = concat!(
     "\n",
     "USAGE:\n",
     "    json_viewer [FILE]                      start the GUI (optionally with a file)\n",
+    "    json_viewer FILE...                       start the GUI and compare files\n",
     "    json_viewer format [FILE] [OPTIONS]     format data\n",
     "    json_viewer validate [FILE]             validate syntax\n",
     "    json_viewer find [OPTIONS] <QUERY> [FILE] find matching node paths\n",
+    "    json_viewer diff <FILE> <FILE> [FILE...] compare files\n",
     "\n",
     "format OPTIONS:\n",
     "    -o, --output <FILE>    write the result to a file instead of stdout\n",
@@ -51,6 +54,9 @@ pub const HELP: &str = concat!(
     "    --case-sensitive       match letter case\n",
     "    --exact                require an exact match\n",
     "\n",
+    "diff:\n",
+    "    compare two or more files; use `-` for one stdin input\n",
+    "\n",
     "COMMON OPTIONS:\n",
     "    -h, --help             show this help\n",
     "    -V, --version          show the version and build information\n",
@@ -61,7 +67,7 @@ pub const HELP: &str = concat!(
     "\n",
     "EXIT CODES:\n",
     "    0  success\n",
-    "    1  data, no-match, or I/O error\n",
+    "    1  data, no-match, difference, or I/O error\n",
     "    2  command-line argument parsing error\n",
 );
 

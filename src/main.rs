@@ -30,7 +30,8 @@ fn main() -> ExitCode {
     };
 
     match command {
-        Command::Gui { file } => run_gui(file),
+        Command::Gui { file } => run_gui(file.into_iter().collect()),
+        Command::GuiCompare { files } => run_gui(files),
         other => match cli::run(&other) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::FAILURE,
@@ -43,7 +44,7 @@ fn main() -> ExitCode {
 }
 
 /// Запустить графический интерфейс, опционально открыв указанный файл.
-fn run_gui(file: Option<PathBuf>) -> ExitCode {
+fn run_gui(files: Vec<PathBuf>) -> ExitCode {
     if !display_available() {
         eprintln!("Error: no graphical server found (DISPLAY and WAYLAND_DISPLAY are unset).");
         eprintln!("Command-line mode is available: json_viewer --help");
@@ -62,8 +63,8 @@ fn run_gui(file: Option<PathBuf>) -> ExitCode {
         "JSON Viewer",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(json_viewer::app::JsonViewerApp::new_with_file(
-                cc, file,
+            Ok(Box::new(json_viewer::app::JsonViewerApp::new_with_files(
+                cc, files,
             )))
         }),
     );

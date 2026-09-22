@@ -14,6 +14,11 @@ pub enum Command {
         /// Файл, который нужно открыть при старте.
         file: Option<PathBuf>,
     },
+    /// Запустить графический интерфейс и сравнить несколько файлов.
+    GuiCompare {
+        /// Файлы, которые нужно загрузить в режим сравнения.
+        files: Vec<PathBuf>,
+    },
     /// Отформатировать структурированные данные.
     Format {
         /// Источник данных.
@@ -36,6 +41,11 @@ pub enum Command {
         input: Source,
         /// Параметры поиска.
         options: SearchOptions,
+    },
+    /// Сравнить два или более источника данных.
+    Diff {
+        /// Источники данных в порядке отображения результата.
+        inputs: Vec<Source>,
     },
     /// Вывести справку.
     Help,
@@ -71,6 +81,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, St
         "format" => return parse_format(&args[1..]),
         "validate" => return parse_validate(&args[1..]),
         "find" => return parse_find(&args[1..]),
+        "diff" | "compare" => return parse_diff(&args[1..]),
         _ => {}
     }
 
@@ -78,11 +89,41 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, St
         return Err(format!("Unknown option: {}", first));
     }
     if args.len() > 1 {
-        return Err("GUI accepts at most one file".to_string());
+        if args.iter().any(|arg| arg.starts_with('-')) {
+            return Err("GUI accepts file paths only".to_string());
+        }
+        return Ok(Command::GuiCompare {
+            files: args.into_iter().map(PathBuf::from).collect(),
+        });
     }
     Ok(Command::Gui {
         file: Some(PathBuf::from(first)),
     })
+}
+
+/// Разобрать аргументы подкоманды `diff`.
+fn parse_diff(args: &[String]) -> Result<Command, String> {
+    if args.len() < 2 {
+        return Err("The diff command requires at least two files".to_string());
+    }
+
+    let mut inputs = Vec::with_capacity(args.len());
+    let mut stdin_seen = false;
+    for arg in args {
+        if arg == "-" {
+            if stdin_seen {
+                return Err("The diff command accepts at most one stdin source".to_string());
+            }
+            stdin_seen = true;
+            inputs.push(Source::Stdin);
+        } else if arg.starts_with('-') {
+            return Err(format!("Unknown option for diff: {}", arg));
+        } else {
+            inputs.push(Source::File(PathBuf::from(arg)));
+        }
+    }
+
+    Ok(Command::Diff { inputs })
 }
 
 /// Разобрать аргументы подкоманды `format`.
@@ -203,6 +244,17 @@ mod tests {
     }
 
     #[test]
+    fn multiple_positional_files_start_gui_comparison() {
+        let cmd = parse_args(["a.json".to_string(), "b.yaml".to_string()]).unwrap();
+        assert_eq!(
+            cmd,
+            Command::GuiCompare {
+                files: [PathBuf::from("a.json"), PathBuf::from("b.yaml")].to_vec(),
+            }
+        );
+    }
+
+    #[test]
     fn format_parses_options() {
         let cmd = parse_args(
             ["format", "a.json", "--minify", "-o", "b.json"]
@@ -262,6 +314,27 @@ mod tests {
                     case_sensitive: true,
                     exact_match: true,
                 },
+            }
+        );
+    }
+
+    #[test]
+    fn diff_requires_at_least_two_files() {
+        assert!(parse_args(["diff", "a.json"].map(String::from).to_vec()).is_err());
+    }
+
+    #[test]
+    fn diff_parses_multiple_sources() {
+        let command =
+            parse_args(["diff", "a.json", "-", "c.yaml"].map(String::from).to_vec()).unwrap();
+        assert_eq!(
+            command,
+            Command::Diff {
+                inputs: vec![
+                    Source::File(PathBuf::from("a.json")),
+                    Source::Stdin,
+                    Source::File(PathBuf::from("c.yaml")),
+                ],
             }
         );
     }
