@@ -13,17 +13,25 @@ headless commands for formatting, validation, search, and comparison.
 - interactive object and array tree with expandable and collapsible nodes;
 - full-text search across keys and values;
 - search filters for keys/values, case sensitivity, and exact matching;
+- switchable tree, relationship graph, flattened table, and schema views;
+- graph links inferred from common entity identifiers and reference fields;
+- CSV export of table rows, respecting the active search filter;
+- JSON Schema and OpenAPI schema views, including component and inline path
+  schemas, with inferred sample structure for ordinary data documents;
+- native TOML date/time editing and round-tripping;
 - editing mode for field values and primitive values;
 - creating a new empty JSON, YAML, TOML, or JSON5 file directly in edit mode;
 - adding object fields and array elements;
 - a field constructor with explicit string, number, boolean, null, object, and
-  array types;
+  array types, plus TOML date/time values;
 - saving to the original or another supported format, with explicit conversion
   to every other supported format;
 - copying a node value, key, or path from the context menu;
 - selecting and copying multiple structures while preserving their hierarchy;
 - pasting copied structures into another open file;
 - comparing two or more structured files and showing changed paths;
+- side-by-side diff for any selected pair of compared files, with added,
+  removed, and changed values highlighted;
 - light and dark themes;
 - Russian and English GUI localization;
 - command-line operation without starting the GUI.
@@ -92,8 +100,18 @@ The interface provides:
 
 - a `File` menu for creating, opening, saving, converting to another format,
   saving to a new file, and closing a document;
-- a comparison view for two or more files, showing every changed JSON path and
-  the value from each file;
+- a view selector for the interactive tree, relationship graph, flattened
+  table, and schema diagram;
+- a relationship graph for objects with `id`, `_id`, or `$id` identifiers and
+  references such as `$ref`, `user_id`, and `depends_on`; ambiguous duplicate
+  identifiers are not linked;
+- a flattened path/value/type table that follows the search filter and can be
+  exported as CSV;
+- a schema diagram for JSON Schema and OpenAPI component/inline path schemas;
+  other documents show an inferred schema, clearly marked as sample-derived
+  rather than a contract;
+- a comparison table for all selected files and a side-by-side diff for any
+  selected pair, highlighting additions, removals, and changes;
 - controls for expanding and collapsing the whole tree;
 - search with previous and next match navigation;
 - search options for key/value scope, case sensitivity, and exact matching;
@@ -145,8 +163,28 @@ commas are not preserved.
 The comparison view parses every selected file using the same format detection
 as the regular viewer. Objects and arrays are compared recursively, so the
 table lists the deepest changed paths. A missing path is displayed separately
-from the JSON value `null`. The comparison is read-only; use `File -> Open…`
-or `File -> Close file` to return to the regular document view.
+from the JSON value `null`. Switch between the all-files comparison table and a
+side-by-side diff; when more than two files are loaded, choose either version
+from the diff selectors. The comparison is read-only; use `File -> Open…` or
+`File -> Close file` to return to the regular document view.
+
+### Format behavior and limitations
+
+TOML date and time values retain their native type when saved back to TOML;
+integer and floating-point values such as `1` and `1.0` remain distinct.
+When converted to JSON or another JSON-compatible view, they are represented
+as strings. TOML `nan` and infinity values can be saved as TOML, but cannot be converted to
+JSON, YAML, or JSON5 through the shared JSON-compatible data model. TOML does
+not support `null`.
+
+YAML streams with multiple documents are shown as an array of documents.
+Non-string YAML mapping keys are displayed using their compact JSON spelling;
+if two keys would become the same string, parsing fails instead of silently
+discarding one. Explicit YAML tags and non-finite YAML numbers are reported as
+unsupported because the viewer's shared data model cannot preserve them
+losslessly. Comments, anchors, and formatting are not preserved when saving.
+JSON5 comments and trailing commas are likewise normalized and are not
+preserved when saving.
 
 ### Copying structures between files
 

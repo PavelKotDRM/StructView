@@ -81,8 +81,8 @@ pub fn parse_data(
     format: Option<DataFormat>,
 ) -> Result<(JsonNode, DataFormat), ParseError> {
     if let Some(format) = format {
-        let value = parse_value(input, format)?;
-        return Ok((build_node(None, false, &value, String::new()), format));
+        let root = build_document(input, format)?;
+        return Ok((root, format));
     }
 
     let mut errors = Vec::new();
@@ -92,8 +92,8 @@ pub fn parse_data(
         DataFormat::Json5,
         DataFormat::Yaml,
     ] {
-        match parse_value(input, candidate) {
-            Ok(value) => return Ok((build_node(None, false, &value, String::new()), candidate)),
+        match build_document(input, candidate) {
+            Ok(root) => return Ok((root, candidate)),
             Err(error) => errors.push(format!("{}: {}", candidate, error.message)),
         }
     }
@@ -106,6 +106,45 @@ pub fn parse_data(
         line: None,
         column: None,
     })
+}
+
+enum ParsedDocument {
+    Json(Value),
+    Toml(toml::Value),
+}
+
+fn build_document(input: &str, format: DataFormat) -> Result<JsonNode, ParseError> {
+    match parse_document(input, format)? {
+        ParsedDocument::Json(value) => Ok(build_node(None, false, &value, String::new())),
+        ParsedDocument::Toml(value) => Ok(build_toml_node(None, false, &value, String::new())),
+    }
+}
+
+fn parse_document(input: &str, format: DataFormat) -> Result<ParsedDocument, ParseError> {
+    match format {
+        DataFormat::Json => serde_json::from_str(input)
+            .map(ParsedDocument::Json)
+            .map_err(|error| ParseError {
+                message: error.to_string(),
+                line: Some(error.line()),
+                column: Some(error.column()),
+            }),
+        DataFormat::Yaml => parse_yaml_documents(input).map(ParsedDocument::Json),
+        DataFormat::Toml => toml::from_str(input)
+            .map(ParsedDocument::Toml)
+            .map_err(|error| ParseError {
+                message: error.to_string(),
+                line: None,
+                column: None,
+            }),
+        DataFormat::Json5 => json5::from_str(input)
+            .map(ParsedDocument::Json)
+            .map_err(|error| ParseError {
+                message: error.to_string(),
+                line: None,
+                column: None,
+            }),
+    }
 }
 
 /// Сериализовать значение в выбранном формате.
@@ -132,24 +171,138 @@ pub fn serialize_data(value: &Value, format: DataFormat, compact: bool) -> Resul
     }
 }
 
-fn parse_value(input: &str, format: DataFormat) -> Result<Value, ParseError> {
-    match format {
-        DataFormat::Json => serde_json::from_str(input).map_err(|error| ParseError {
-            message: error.to_string(),
-            line: Some(error.line()),
-            column: Some(error.column()),
-        }),
-        DataFormat::Yaml => parse_yaml_documents(input),
-        DataFormat::Toml => toml::from_str(input).map_err(|error| ParseError {
-            message: error.to_string(),
-            line: None,
-            column: None,
-        }),
-        DataFormat::Json5 => json5::from_str(input).map_err(|error| ParseError {
-            message: error.to_string(),
-            line: None,
-            column: None,
-        }),
+/// Сериализовать дерево, сохраняя собственные типы TOML, например даты и время.
+///
+/// JSON-представления TOML-даты сериализуются как строки; при записи в TOML
+/// исходное значение сохраняется как незакавыченный datetime.
+pub fn serialize_node(
+    node: &JsonNode,
+    format: DataFormat,
+    compact: bool,
+) -> Result<String, String> {
+    if format == DataFormat::Toml {
+        let value = node_to_toml(node)?;
+        if !matches!(value, toml::Value::Table(_)) {
+            return Err("Корневое значение TOML должно быть таблицей".to_string());
+        }
+        if compact {
+            toml::to_string(&value)
+        } else {
+            toml::to_string_pretty(&value)
+        }
+        .map_err(|error| format!("Ошибка сериализации TOML: {error}"))
+    } else {
+        serialize_data(&node_to_value(node)?, format, compact)
+    }
+}
+
+/// Преобразовать узел дерева в JSON-совместимое значение.
+///
+/// TOML-дата и время представлены строкой при сравнении, копировании и
+/// сериализации в форматы без собственного типа datetime.
+pub(crate) fn node_to_value(node: &JsonNode) -> Result<Value, String> {
+    match node.value_type {
+        JsonValueType::Object => {
+            let mut map = serde_json::Map::new();
+            for child in &node.children {
+                let key = child.key.clone().unwrap_or_default();
+                map.insert(key, node_to_value(child)?);
+            }
+            Ok(Value::Object(map))
+        }
+        JsonValueType::Array => {
+            let mut values = Vec::with_capacity(node.children.len());
+            for child in &node.children {
+                values.push(node_to_value(child)?);
+            }
+            Ok(Value::Array(values))
+        }
+        JsonValueType::String => {
+            let text = serde_json::from_str::<String>(&node.display_value)
+                .map_err(|error| format!("Некорректная строка в {}: {error}", node.path))?;
+            Ok(Value::String(text))
+        }
+        JsonValueType::DateTime => Ok(Value::String(node.display_value.clone())),
+        JsonValueType::Number | JsonValueType::Float => {
+            let number = serde_json::from_str::<serde_json::Number>(&node.display_value)
+                .map_err(|error| format!("Некорректное число в {}: {error}", node.path))?;
+            Ok(Value::Number(number))
+        }
+        JsonValueType::Bool => {
+            let boolean = node
+                .display_value
+                .parse::<bool>()
+                .map_err(|error| format!("Некорректное bool в {}: {error}", node.path))?;
+            Ok(Value::Bool(boolean))
+        }
+        JsonValueType::Null => Ok(Value::Null),
+    }
+}
+
+fn node_to_toml(node: &JsonNode) -> Result<toml::Value, String> {
+    match node.value_type {
+        JsonValueType::Object => {
+            let mut table = toml::map::Map::new();
+            for child in &node.children {
+                let key = child
+                    .key
+                    .clone()
+                    .ok_or_else(|| format!("Отсутствует ключ TOML в {}", child.path))?;
+                if table.insert(key.clone(), node_to_toml(child)?).is_some() {
+                    return Err(format!("Ключ TOML «{key}» повторяется в {}", node.path));
+                }
+            }
+            Ok(toml::Value::Table(table))
+        }
+        JsonValueType::Array => node
+            .children
+            .iter()
+            .map(node_to_toml)
+            .collect::<Result<Vec<_>, _>>()
+            .map(toml::Value::Array),
+        JsonValueType::String => serde_json::from_str::<String>(&node.display_value)
+            .map(toml::Value::String)
+            .map_err(|error| format!("Некорректная строка в {}: {error}", node.path)),
+        JsonValueType::DateTime => node
+            .display_value
+            .parse::<toml::value::Datetime>()
+            .map(toml::Value::Datetime)
+            .map_err(|error| format!("Некорректная дата/время в {}: {error}", node.path)),
+        JsonValueType::Number => {
+            if let Ok(number) = serde_json::from_str::<serde_json::Number>(&node.display_value) {
+                if let Some(integer) = number.as_i64() {
+                    return Ok(toml::Value::Integer(integer));
+                }
+                if let Some(unsigned) = number.as_u64() {
+                    let integer = i64::try_from(unsigned).map_err(|_| {
+                        format!("Число в {} выходит за диапазон TOML Integer", node.path)
+                    })?;
+                    return Ok(toml::Value::Integer(integer));
+                }
+                if let Some(float) = number.as_f64() {
+                    return Ok(toml::Value::Float(float));
+                }
+            }
+
+            node.display_value
+                .parse::<f64>()
+                .map(toml::Value::Float)
+                .map_err(|error| format!("Некорректное число в {}: {error}", node.path))
+        }
+        JsonValueType::Float => node
+            .display_value
+            .parse::<f64>()
+            .map(toml::Value::Float)
+            .map_err(|error| format!("Некорректное число в {}: {error}", node.path)),
+        JsonValueType::Bool => node
+            .display_value
+            .parse::<bool>()
+            .map(toml::Value::Boolean)
+            .map_err(|error| format!("Некорректное bool в {}: {error}", node.path)),
+        JsonValueType::Null => Err(format!(
+            "TOML не поддерживает null-значения (путь {})",
+            node.path
+        )),
     }
 }
 
@@ -169,9 +322,12 @@ fn parse_yaml_documents(input: &str) -> Result<Value, ParseError> {
 
     match documents.as_slice() {
         [] => Ok(Value::Null),
-        [document] => Ok(yaml_value_to_json(document.clone())),
+        [document] => yaml_value_to_json(document.clone()),
         _ => Ok(Value::Array(
-            documents.into_iter().map(yaml_value_to_json).collect(),
+            documents
+                .into_iter()
+                .map(yaml_value_to_json)
+                .collect::<Result<Vec<_>, _>>()?,
         )),
     }
 }
@@ -179,45 +335,79 @@ fn parse_yaml_documents(input: &str) -> Result<Value, ParseError> {
 /// Преобразовать YAML-значение в представление дерева.
 ///
 /// JSON требует строковые ключи объектов, а YAML допускает значения любой
-/// структуры. Составные YAML-ключи представляются компактной JSON-строкой и
-/// остаются читаемыми в дереве, например `["name","age"]`.
-fn yaml_value_to_json(value: serde_yaml_ng::Value) -> Value {
+/// структуры. Составные YAML-ключи представляются компактной JSON-строкой.
+/// Если это преобразование приводит к совпадающим ключам или теряет тип YAML,
+/// документ отклоняется, а не преобразуется с потерей данных.
+fn yaml_value_to_json(value: serde_yaml_ng::Value) -> Result<Value, ParseError> {
     match value {
-        serde_yaml_ng::Value::Null => Value::Null,
-        serde_yaml_ng::Value::Bool(value) => Value::Bool(value),
-        serde_yaml_ng::Value::Number(value) => Value::Number(yaml_number_to_json(value)),
-        serde_yaml_ng::Value::String(value) => Value::String(value),
-        serde_yaml_ng::Value::Sequence(values) => {
-            Value::Array(values.into_iter().map(yaml_value_to_json).collect())
+        serde_yaml_ng::Value::Null => Ok(Value::Null),
+        serde_yaml_ng::Value::Bool(value) => Ok(Value::Bool(value)),
+        serde_yaml_ng::Value::Number(value) => yaml_number_to_json(value).map(Value::Number),
+        serde_yaml_ng::Value::String(value) => Ok(Value::String(value)),
+        serde_yaml_ng::Value::Sequence(values) => values
+            .into_iter()
+            .map(yaml_value_to_json)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        serde_yaml_ng::Value::Mapping(entries) => {
+            let mut mapping = serde_json::Map::new();
+            for (key, value) in entries {
+                let key = yaml_key_to_string(key)?;
+                if mapping.contains_key(&key) {
+                    return Err(ParseError {
+                        message: format!(
+                            "Ключи YAML после преобразования в строки совпадают: {key}"
+                        ),
+                        line: None,
+                        column: None,
+                    });
+                }
+                mapping.insert(key, yaml_value_to_json(value)?);
+            }
+            Ok(Value::Object(mapping))
         }
-        serde_yaml_ng::Value::Mapping(entries) => Value::Object(
-            entries
-                .into_iter()
-                .map(|(key, value)| (yaml_key_to_string(key), yaml_value_to_json(value)))
-                .collect(),
-        ),
-        serde_yaml_ng::Value::Tagged(tagged) => yaml_value_to_json(tagged.value),
+        serde_yaml_ng::Value::Tagged(_) => Err(ParseError {
+            message: "Явные теги YAML нельзя сохранить без потери их типа".to_string(),
+            line: None,
+            column: None,
+        }),
     }
 }
 
 /// Создать отображаемое имя YAML-ключа, включая составные ключи.
-fn yaml_key_to_string(key: serde_yaml_ng::Value) -> String {
+fn yaml_key_to_string(key: serde_yaml_ng::Value) -> Result<String, ParseError> {
     match key {
-        serde_yaml_ng::Value::String(value) => value,
-        other => serde_json::to_string(&yaml_value_to_json(other))
-            .unwrap_or_else(|_| "<неподдерживаемый ключ YAML>".to_string()),
+        serde_yaml_ng::Value::String(value) => Ok(value),
+        other => serde_json::to_string(&yaml_value_to_json(other)?).map_err(|error| ParseError {
+            message: format!("Не удалось преобразовать ключ YAML: {error}"),
+            line: None,
+            column: None,
+        }),
     }
 }
 
 /// Сохранить целочисленное YAML-число без промежуточного `f64`.
-fn yaml_number_to_json(value: serde_yaml_ng::Number) -> serde_json::Number {
+fn yaml_number_to_json(value: serde_yaml_ng::Number) -> Result<serde_json::Number, ParseError> {
     if let Some(value) = value.as_i64() {
-        serde_json::Number::from(value)
+        Ok(serde_json::Number::from(value))
     } else if let Some(value) = value.as_u64() {
-        serde_json::Number::from(value)
+        Ok(serde_json::Number::from(value))
+    } else if value.is_f64() {
+        value
+            .as_f64()
+            .and_then(serde_json::Number::from_f64)
+            .ok_or_else(|| ParseError {
+                message: "Числа YAML NaN и Infinity не поддерживаются JSON-представлением"
+                    .to_string(),
+                line: None,
+                column: None,
+            })
     } else {
-        serde_json::Number::from_f64(value.as_f64().unwrap_or_default())
-            .unwrap_or_else(|| serde_json::Number::from(0))
+        Err(ParseError {
+            message: "Целое число YAML выходит за диапазон JSON".to_string(),
+            line: None,
+            column: None,
+        })
     }
 }
 
@@ -299,9 +489,78 @@ fn build_node(key: Option<String>, is_index: bool, value: &Value, parent_path: S
             serde_json::Value::String(s.clone()).to_string(),
             path,
         ),
-        Value::Number(n) => leaf(key, JsonValueType::Number, n.to_string(), path),
+        Value::Number(n) => {
+            let value_type = if n.is_f64() {
+                JsonValueType::Float
+            } else {
+                JsonValueType::Number
+            };
+            leaf(key, value_type, n.to_string(), path)
+        }
         Value::Bool(b) => leaf(key, JsonValueType::Bool, b.to_string(), path),
         Value::Null => leaf(key, JsonValueType::Null, "null".to_string(), path),
+    }
+}
+
+fn build_toml_node(
+    key: Option<String>,
+    is_index: bool,
+    value: &toml::Value,
+    parent_path: String,
+) -> JsonNode {
+    let path = build_path(&parent_path, &key, is_index);
+    match value {
+        toml::Value::Table(table) => {
+            let children = table
+                .iter()
+                .map(|(key, value)| build_toml_node(Some(key.clone()), false, value, path.clone()))
+                .collect::<Vec<_>>();
+            let count = children.len();
+            JsonNode {
+                key,
+                value_type: JsonValueType::Object,
+                display_value: format!(
+                    "{{{}}} {}",
+                    count,
+                    plural_ru(count, "поле", "поля", "полей")
+                ),
+                children,
+                expanded: false,
+                path,
+            }
+        }
+        toml::Value::Array(values) => {
+            let children = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    build_toml_node(Some(index.to_string()), true, value, path.clone())
+                })
+                .collect::<Vec<_>>();
+            let count = children.len();
+            JsonNode {
+                key,
+                value_type: JsonValueType::Array,
+                display_value: format!(
+                    "[{}] {}",
+                    count,
+                    plural_ru(count, "элемент", "элемента", "элементов")
+                ),
+                children,
+                expanded: false,
+                path,
+            }
+        }
+        toml::Value::String(value) => leaf(
+            key,
+            JsonValueType::String,
+            serde_json::Value::String(value.clone()).to_string(),
+            path,
+        ),
+        toml::Value::Integer(value) => leaf(key, JsonValueType::Number, value.to_string(), path),
+        toml::Value::Float(value) => leaf(key, JsonValueType::Float, value.to_string(), path),
+        toml::Value::Boolean(value) => leaf(key, JsonValueType::Bool, value.to_string(), path),
+        toml::Value::Datetime(value) => leaf(key, JsonValueType::DateTime, value.to_string(), path),
     }
 }
 
@@ -544,5 +803,91 @@ women:
         let output = serialize_data(&value, DataFormat::Toml, false).unwrap();
         assert!(output.contains("[server]"));
         assert!(output.contains("port = 8080"));
+    }
+
+    #[test]
+    fn parses_and_roundtrips_native_toml_date_time_values() {
+        let source = r#"date = 1979-05-27
+time = 07:32:00
+timestamp = 1979-05-27T07:32:00Z
+timestamp_string = "1979-05-27T07:32:00Z"
+whole_float = 1.0
+
+[[services]]
+id = "api"
+depends_on = "database"
+
+[[services]]
+id = "database"
+"#;
+        let (root, format) = parse_data(source, None).unwrap();
+        assert_eq!(format, DataFormat::Toml);
+        let timestamp = root
+            .children
+            .iter()
+            .find(|child| child.key.as_deref() == Some("timestamp"))
+            .unwrap();
+        let timestamp_string = root
+            .children
+            .iter()
+            .find(|child| child.key.as_deref() == Some("timestamp_string"))
+            .unwrap();
+        let whole_float = root
+            .children
+            .iter()
+            .find(|child| child.key.as_deref() == Some("whole_float"))
+            .unwrap();
+
+        assert_eq!(timestamp.value_type, JsonValueType::DateTime);
+        assert_eq!(timestamp.display_value, "1979-05-27T07:32:00Z");
+        assert_eq!(timestamp_string.value_type, JsonValueType::String);
+        assert_eq!(whole_float.value_type, JsonValueType::Float);
+
+        let json_value = node_to_value(&root).unwrap();
+        assert_eq!(json_value["timestamp"], "1979-05-27T07:32:00Z");
+        let output = serialize_node(&root, DataFormat::Toml, false).unwrap();
+        assert!(output.contains("timestamp = 1979-05-27T07:32:00Z"));
+        assert!(output.contains("whole_float = 1.0"));
+        assert!(!output.contains("$__toml_private_datetime"));
+        let reparsed = parse_data(&output, Some(DataFormat::Toml)).unwrap().0;
+        assert_eq!(node_to_value(&reparsed).unwrap(), json_value);
+    }
+
+    #[test]
+    fn rejects_yaml_values_that_cannot_be_represented_without_loss() {
+        let non_finite = parse_data("value: .nan", Some(DataFormat::Yaml)).unwrap_err();
+        assert!(
+            non_finite
+                .message
+                .contains("не поддерживаются JSON-представлением")
+        );
+
+        let colliding_keys =
+            parse_data("1: numeric key\n'1': string key", Some(DataFormat::Yaml)).unwrap_err();
+        assert!(colliding_keys.message.contains("совпадают"));
+
+        let tagged = parse_data("value: !secret sample", Some(DataFormat::Yaml)).unwrap_err();
+        assert!(tagged.message.contains("теги YAML"));
+    }
+
+    #[test]
+    fn strict_json_roundtrips_nested_types_and_reports_invalid_input() {
+        let source = r#"{"text":"line\nbreak","items":[null,true,-4,2.5]}"#;
+        let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+        let output = serialize_node(&root, DataFormat::Json, false).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&output).unwrap(),
+            serde_json::from_str::<Value>(source).unwrap()
+        );
+        assert!(parse_data("{invalid}", Some(DataFormat::Json)).is_err());
+    }
+
+    #[test]
+    fn toml_non_finite_numbers_remain_toml_numbers() {
+        let root = parse_data("value = nan", Some(DataFormat::Toml)).unwrap().0;
+        assert_eq!(root.children[0].value_type, JsonValueType::Float);
+        let toml_output = serialize_node(&root, DataFormat::Toml, false).unwrap();
+        assert!(toml_output.contains("value = nan"));
+        assert!(serialize_node(&root, DataFormat::Json, false).is_err());
     }
 }

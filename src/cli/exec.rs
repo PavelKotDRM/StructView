@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::diff::{compare_values, format_value};
-use crate::parser::{DataFormat, parse_data, serialize_data};
+use crate::parser::{DataFormat, parse_data, serialize_node};
 use crate::search::SearchState;
 
 use super::args::Command;
@@ -109,12 +109,11 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
             return Ok(false);
         }
     };
-    let value = crate::app::node_to_value(&root)?;
     let output_format = output
         .and_then(DataFormat::from_path)
         .unwrap_or(input_format);
 
-    let formatted = serialize_data(&value, output_format, minify)?;
+    let formatted = serialize_node(&root, output_format, minify)?;
 
     match output {
         Some(path) => std::fs::write(path, formatted)

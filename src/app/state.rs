@@ -1,7 +1,7 @@
 //! Состояние приложения и жизненный цикл [`eframe::App`].
 //!
 //! Здесь хранится всё, что переживает отдельный кадр отрисовки: разобранное
-//! JSON-дерево, состояние поиска, метаданные файла и настройки темы.
+//! дерево данных, состояние поиска, метаданные файла и настройки темы.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -11,15 +11,18 @@ use crate::clipboard::{
     ClipboardEntry, copy_to_clipboard, decode_structures, encode_structures, read_from_clipboard,
 };
 use crate::diff::{Difference, compare_values};
-use crate::parser::{DataFormat, JsonNode, JsonValueType, ParseError, parse_data, serialize_data};
+use crate::parser::{
+    DataFormat, JsonNode, JsonValueType, ParseError, node_to_value, parse_data, serialize_node,
+};
 use crate::search::SearchState;
 
 use super::edit::{
-    add_typed_child_at_path, edit_child_at_path, find_node, is_object_child, node_to_value,
+    add_typed_child_at_path, edit_child_at_path, find_node, is_object_child,
     paste_structures_at_path, selected_structures,
 };
 use super::i18n::{Locale, TextKey};
 use super::tree::{AddChildRequest, EditFieldRequest, SelectionRequest, VisibleRows};
+use super::visualization::{VisualizationCache, VisualizationMode};
 
 /// Метаданные загруженного файла, отображаемые в статус-баре.
 #[derive(Debug, Default)]
@@ -54,6 +57,10 @@ pub(super) struct ComparisonState {
     pub(super) documents: Vec<ComparisonDocument>,
     /// Отличия между значениями документов.
     pub(super) differences: Vec<Difference>,
+    /// Индекс выбранной первой версии в парном diff.
+    pub(super) left_index: usize,
+    /// Индекс выбранной второй версии в парном diff.
+    pub(super) right_index: usize,
 }
 
 /// Режим работы приложения.
@@ -105,10 +112,10 @@ impl From<AddChildRequest> for FieldDialog {
 
 /// Основное состояние приложения JSON Viewer.
 ///
-/// Хранит разобранное JSON-дерево, параметры поиска, информацию о файле
+/// Хранит дерево структурированных данных, параметры поиска, информацию о файле
 /// и временные сообщения для пользователя (уведомления, ошибки).
 pub struct JsonViewerApp {
-    /// Корневой узел разобранного JSON-дерева. `None` если файл ещё не загружен.
+    /// Корневой узел разобранного документа. `None` если файл ещё не загружен.
     pub(super) root: Option<JsonNode>,
     /// Ошибка последнего парсинга. `None` если файл разобран успешно.
     pub(super) parse_error: Option<ParseError>,
@@ -132,6 +139,10 @@ pub struct JsonViewerApp {
     pub(super) mode: AppMode,
     /// Текущий язык интерфейса.
     pub(super) locale: Locale,
+    /// Выбранное представление документа.
+    pub(super) visualization: VisualizationMode,
+    /// Вычисляемые модели представлений текущего документа.
+    pub(super) visualization_cache: VisualizationCache,
     /// Открытый конструктор добавления или редактирования поля.
     pub(super) field_dialog: Option<FieldDialog>,
     /// Пути выбранных узлов дерева.
@@ -165,6 +176,8 @@ impl Default for JsonViewerApp {
             dark_mode: true,
             mode: AppMode::default(),
             locale: Locale::default(),
+            visualization: VisualizationMode::default(),
+            visualization_cache: VisualizationCache::default(),
             field_dialog: None,
             selected_paths: BTreeSet::new(),
             visible_rows: VisibleRows::default(),
@@ -240,6 +253,8 @@ impl JsonViewerApp {
     /// метод не возвращает `Result` — ошибки отображаются в UI.
     pub(super) fn load_file(&mut self, path: PathBuf) {
         self.comparison = None;
+        self.visualization = VisualizationMode::Tree;
+        self.visualization_cache = VisualizationCache::default();
         self.selected_paths.clear();
         self.visible_rows_dirty = true;
         self.file_state = FileState::default();
@@ -382,6 +397,8 @@ impl JsonViewerApp {
 
         self.root = None;
         self.comparison = None;
+        self.visualization = VisualizationMode::Comparison;
+        self.visualization_cache = VisualizationCache::default();
         self.parse_error = None;
         self.file_state = FileState::default();
         self.visible_rows = VisibleRows::default();
@@ -448,6 +465,8 @@ impl JsonViewerApp {
         self.comparison = Some(ComparisonState {
             documents,
             differences: compare_values(&values),
+            left_index: 0,
+            right_index: 1,
         });
     }
 
@@ -542,6 +561,8 @@ impl JsonViewerApp {
     pub(super) fn close_file(&mut self) {
         self.root = None;
         self.comparison = None;
+        self.visualization = VisualizationMode::Tree;
+        self.visualization_cache = VisualizationCache::default();
         self.visible_rows = VisibleRows::default();
         self.visible_rows_dirty = true;
         self.parse_error = None;
@@ -568,8 +589,7 @@ impl JsonViewerApp {
             .root
             .as_ref()
             .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())?;
-        let value = node_to_value(root)?;
-        let formatted = serialize_data(&value, format, false)?;
+        let formatted = serialize_node(root, format, false)?;
         let size_bytes = formatted.len() as u64;
         std::fs::write(path, formatted)
             .map_err(|error| self.locale.save_error(&error.to_string()))?;
@@ -700,6 +720,7 @@ impl JsonViewerApp {
             Ok(count) => {
                 self.retain_valid_selected_paths();
                 self.visible_rows_dirty = true;
+                self.invalidate_visualization_cache();
                 self.refresh_search();
                 self.show_toast(&self.locale.structures_pasted(count));
             }
@@ -729,6 +750,11 @@ impl JsonViewerApp {
         self.search.search(root, &query);
     }
 
+    /// Сбросить производные модели после изменения документа.
+    pub(super) fn invalidate_visualization_cache(&mut self) {
+        self.visualization_cache = VisualizationCache::default();
+    }
+
     /// Запланировать прокрутку к текущему совпадению, если оно существует.
     pub(super) fn request_search_scroll(&mut self) {
         self.search_scroll_target = self.search.current_match_path().map(str::to_owned);
@@ -752,6 +778,7 @@ impl JsonViewerApp {
             let value = match value_type {
                 JsonValueType::String => serde_json::from_str::<String>(&node.display_value)
                     .map_err(|error| format!("Некорректная строка: {}", error))?,
+                JsonValueType::DateTime => node.display_value.clone(),
                 _ => node.display_value.clone(),
             };
             Ok((
@@ -855,7 +882,16 @@ impl JsonViewerApp {
                                 .desired_rows(4),
                         );
                     }
-                    JsonValueType::Number => {
+                    JsonValueType::DateTime => {
+                        ui.label(locale.text(TextKey::Value));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut dialog.value)
+                                .desired_width(320.0)
+                                .font(egui::TextStyle::Monospace)
+                                .hint_text("1979-05-27T07:32:00Z"),
+                        );
+                    }
+                    JsonValueType::Number | JsonValueType::Float => {
                         ui.label(locale.text(TextKey::Value));
                         ui.add(
                             egui::TextEdit::singleline(&mut dialog.value)
@@ -949,6 +985,7 @@ impl JsonViewerApp {
                     self.retain_valid_selected_paths();
                 }
                 self.visible_rows_dirty = true;
+                self.invalidate_visualization_cache();
                 self.refresh_search();
                 let message = if is_edit {
                     TextKey::FieldUpdated
@@ -977,7 +1014,10 @@ fn field_value_types(format: DataFormat, is_toml_root: bool) -> Vec<JsonValueTyp
         JsonValueType::Object,
         JsonValueType::Array,
     ];
-    if format != DataFormat::Toml {
+    if format == DataFormat::Toml {
+        types.insert(1, JsonValueType::DateTime);
+        types.insert(3, JsonValueType::Float);
+    } else {
         types.insert(3, JsonValueType::Null);
     }
     types
@@ -986,7 +1026,9 @@ fn field_value_types(format: DataFormat, is_toml_root: bool) -> Vec<JsonValueTyp
 fn field_type_label(locale: Locale, value_type: &JsonValueType) -> &'static str {
     match value_type {
         JsonValueType::String => locale.text(TextKey::TypeString),
+        JsonValueType::DateTime => locale.text(TextKey::TypeDateTime),
         JsonValueType::Number => locale.text(TextKey::TypeNumber),
+        JsonValueType::Float => locale.text(TextKey::TypeFloat),
         JsonValueType::Bool => locale.text(TextKey::TypeBoolean),
         JsonValueType::Null => locale.text(TextKey::TypeNull),
         JsonValueType::Object => locale.text(TextKey::TypeObject),
@@ -998,7 +1040,9 @@ fn default_field_value(value_type: &JsonValueType) -> String {
     match value_type {
         JsonValueType::Bool => "true".to_string(),
         JsonValueType::String
+        | JsonValueType::DateTime
         | JsonValueType::Number
+        | JsonValueType::Float
         | JsonValueType::Null
         | JsonValueType::Object
         | JsonValueType::Array => String::new(),
@@ -1029,7 +1073,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        AppMode, JsonViewerApp, edit_child_at_path, paste_structures_at_path, with_format_extension,
+        AppMode, JsonViewerApp, VisualizationMode, edit_child_at_path, paste_structures_at_path,
+        with_format_extension,
     };
     use crate::clipboard::ClipboardEntry;
     use crate::parser::{DataFormat, JsonValueType, parse_data};
@@ -1190,6 +1235,9 @@ mod tests {
         assert_eq!(comparison.documents.len(), 2);
         assert_eq!(comparison.differences.len(), 1);
         assert_eq!(comparison.differences[0].path, "$.value");
+        assert_eq!(comparison.left_index, 0);
+        assert_eq!(comparison.right_index, 1);
+        assert_eq!(app.visualization, VisualizationMode::Comparison);
         assert!(app.root.is_none());
         assert!(app.parse_error.is_none());
 

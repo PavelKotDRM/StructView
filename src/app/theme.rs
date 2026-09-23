@@ -33,7 +33,9 @@ pub(super) const COLOR_SUCCESS: Color32 = Color32::from_rgb(100, 200, 100);
 pub(super) fn value_color(vtype: &JsonValueType) -> Color32 {
     match vtype {
         JsonValueType::String => COLOR_STRING,
+        JsonValueType::DateTime => COLOR_STRING,
         JsonValueType::Number => COLOR_NUMBER,
+        JsonValueType::Float => COLOR_NUMBER,
         JsonValueType::Bool => COLOR_BOOL,
         JsonValueType::Null => COLOR_NULL,
         JsonValueType::Object | JsonValueType::Array => COLOR_KEY,

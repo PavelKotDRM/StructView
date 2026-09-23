@@ -451,6 +451,7 @@ fn is_editable(node: &JsonNode, mode: AppMode) -> bool {
             node.value_type,
             JsonValueType::String
                 | JsonValueType::Number
+                | JsonValueType::Float
                 | JsonValueType::Bool
                 | JsonValueType::Null
         )

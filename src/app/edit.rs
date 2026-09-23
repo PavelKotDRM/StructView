@@ -6,54 +6,9 @@ use std::collections::{BTreeSet, HashSet};
 use serde_json::Value;
 
 use crate::clipboard::ClipboardEntry;
-use crate::parser::{DataFormat, JsonNode, JsonValueType, build_path, parse_data, plural_ru};
-
-/// Преобразовать JSON-узел обратно в [`serde_json::Value`].
-///
-/// Используется при сохранении файла: дерево хранит значения как строки,
-/// поэтому каждый лист заново разбирается в типизированное значение.
-///
-/// # Errors
-///
-/// Возвращает описание ошибки с путём узла, если отображаемое значение
-/// не является корректным JSON-литералом ожидаемого типа.
-pub(crate) fn node_to_value(node: &JsonNode) -> Result<Value, String> {
-    match node.value_type {
-        JsonValueType::Object => {
-            let mut map = serde_json::Map::new();
-            for child in &node.children {
-                let key = child.key.clone().unwrap_or_default();
-                map.insert(key, node_to_value(child)?);
-            }
-            Ok(Value::Object(map))
-        }
-        JsonValueType::Array => {
-            let mut values = Vec::with_capacity(node.children.len());
-            for child in &node.children {
-                values.push(node_to_value(child)?);
-            }
-            Ok(Value::Array(values))
-        }
-        JsonValueType::String => {
-            let text = serde_json::from_str::<String>(&node.display_value)
-                .map_err(|e| format!("Некорректная строка в {}: {}", node.path, e))?;
-            Ok(Value::String(text))
-        }
-        JsonValueType::Number => {
-            let number = serde_json::from_str::<serde_json::Number>(&node.display_value)
-                .map_err(|e| format!("Некорректное число в {}: {}", node.path, e))?;
-            Ok(Value::Number(number))
-        }
-        JsonValueType::Bool => {
-            let boolean = node
-                .display_value
-                .parse::<bool>()
-                .map_err(|e| format!("Некорректное bool в {}: {}", node.path, e))?;
-            Ok(Value::Bool(boolean))
-        }
-        JsonValueType::Null => Ok(Value::Null),
-    }
-}
+use crate::parser::{
+    DataFormat, JsonNode, JsonValueType, build_path, node_to_value, parse_data, plural_ru,
+};
 
 /// Собрать выбранные узлы для копирования, не дублируя вложенные выборы.
 ///
@@ -237,7 +192,12 @@ pub(super) fn apply_primitive_edit(node: &mut JsonNode, edited: &str) -> Result<
             .map_err(|e| format!("Ошибка сериализации строки: {}", e))?;
         (JsonValueType::String, normalized)
     } else if let Ok(number) = serde_json::from_str::<serde_json::Number>(trimmed) {
-        (JsonValueType::Number, number.to_string())
+        let value_type = if number.is_f64() {
+            JsonValueType::Float
+        } else {
+            JsonValueType::Number
+        };
+        (value_type, number.to_string())
     } else {
         return Err(
             "Некорректный JSON-литерал. Допустимо: строка в кавычках, число, true/false или null"
@@ -322,6 +282,13 @@ fn field_value_to_input(value_type: &JsonValueType, value: &str) -> Result<Strin
     match value_type {
         JsonValueType::String => serde_json::to_string(value)
             .map_err(|error| format!("Ошибка сериализации строки: {}", error)),
+        JsonValueType::DateTime => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err("Дата/время TOML не может быть пустым".to_string());
+            }
+            Ok(trimmed.to_string())
+        }
         JsonValueType::Number => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -330,6 +297,26 @@ fn field_value_to_input(value_type: &JsonValueType, value: &str) -> Result<Strin
             let number = serde_json::from_str::<serde_json::Number>(trimmed)
                 .map_err(|error| format!("Некорректное число: {}", error))?;
             Ok(number.to_string())
+        }
+        JsonValueType::Float => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err("Число не может быть пустым".to_string());
+            }
+            if let Ok(number) = serde_json::from_str::<serde_json::Number>(trimmed) {
+                if number.is_f64() {
+                    Ok(number.to_string())
+                } else {
+                    Ok(format!("{number}.0"))
+                }
+            } else if matches!(
+                trimmed.to_ascii_lowercase().as_str(),
+                "nan" | "+nan" | "-nan" | "inf" | "+inf" | "-inf"
+            ) {
+                Ok(trimmed.to_ascii_lowercase())
+            } else {
+                Err("Некорректное вещественное число".to_string())
+            }
         }
         JsonValueType::Bool => match value.trim() {
             "true" | "false" => Ok(value.trim().to_string()),
@@ -604,6 +591,49 @@ mod tests {
         )
         .unwrap();
         assert_eq!(node_to_value(&root).unwrap()["missing"], Value::Null);
+    }
+
+    #[test]
+    fn toml_datetime_fields_can_be_edited_without_becoming_strings() {
+        let (mut root, _) =
+            parse_data("created = 1979-05-27T07:32:00Z", Some(DataFormat::Toml)).unwrap();
+
+        edit_child_at_path(
+            &mut root,
+            "created",
+            None,
+            &JsonValueType::DateTime,
+            "1980-01-02T03:04:05Z",
+            DataFormat::Toml,
+        )
+        .unwrap();
+
+        assert_eq!(root.children[0].value_type, JsonValueType::DateTime);
+        assert_eq!(
+            node_to_value(&root).unwrap()["created"],
+            "1980-01-02T03:04:05Z"
+        );
+        let serialized = crate::parser::serialize_node(&root, DataFormat::Toml, false).unwrap();
+        assert!(serialized.contains("created = 1980-01-02T03:04:05Z"));
+    }
+
+    #[test]
+    fn typed_toml_float_constructor_preserves_float_type() {
+        let (mut root, _) = parse_data("{}", Some(DataFormat::Json)).unwrap();
+        add_typed_child_at_path(
+            &mut root,
+            "",
+            "ratio",
+            &JsonValueType::Float,
+            "1",
+            DataFormat::Toml,
+        )
+        .unwrap();
+
+        assert_eq!(root.children[0].value_type, JsonValueType::Float);
+        assert_eq!(node_to_value(&root).unwrap()["ratio"], 1.0);
+        let serialized = crate::parser::serialize_node(&root, DataFormat::Toml, false).unwrap();
+        assert!(serialized.contains("ratio = 1.0"));
     }
 
     #[test]

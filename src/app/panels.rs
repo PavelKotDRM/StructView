@@ -1,4 +1,4 @@
-//! Отрисовка панелей главного окна: меню и поиск, статус-бар, дерево данных.
+//! Отрисовка панелей главного окна, переключаемых представлений и статуса.
 
 use egui::{Color32, RichText, Ui};
 
@@ -13,6 +13,10 @@ use super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
 use super::tree::{
     RenderOptions, TreeOutcome, VisibleRows, focus_match_path, render_visible_rows,
     tree_row_height, visible_row_index,
+};
+use super::views::{export_table_csv as table_csv, show_diff, show_graph, show_schema, show_table};
+use super::visualization::{
+    VisualizationMode, build_relationship_graph, build_schema_diagram, build_table,
 };
 
 /// Время показа всплывающего уведомления в секундах.
@@ -42,6 +46,10 @@ impl JsonViewerApp {
                             self.show_mode_switch(ui);
                             ui.separator();
                             self.show_search_bar(ui);
+                        }
+                        if self.root.is_some() || self.comparison.is_some() {
+                            ui.separator();
+                            self.show_visualization_selector(ui);
                         }
                     });
                 });
@@ -217,6 +225,37 @@ impl JsonViewerApp {
         if ui.button(locale.text(TextKey::Close)).clicked() {
             self.close_file();
         }
+    }
+
+    /// Выбрать представление открытого документа или сравниваемой пары.
+    fn show_visualization_selector(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
+        let comparing = self.is_comparing();
+        let mut selected = self.visualization;
+        let label = visualization_label(selected, locale);
+        ui.label(locale.text(TextKey::Visualization));
+        egui::ComboBox::from_id_salt("visualization_mode")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                if comparing {
+                    for (mode, text_key) in [
+                        (VisualizationMode::Comparison, TextKey::ComparisonView),
+                        (VisualizationMode::Diff, TextKey::DiffView),
+                    ] {
+                        ui.selectable_value(&mut selected, mode, locale.text(text_key));
+                    }
+                } else {
+                    for (mode, text_key) in [
+                        (VisualizationMode::Tree, TextKey::TreeView),
+                        (VisualizationMode::Graph, TextKey::GraphView),
+                        (VisualizationMode::Table, TextKey::TableView),
+                        (VisualizationMode::Schema, TextKey::SchemaView),
+                    ] {
+                        ui.selectable_value(&mut selected, mode, locale.text(text_key));
+                    }
+                }
+            });
+        self.visualization = selected;
     }
 
     /// Отрисовать быстрые кнопки дерева и сохранения файла.
@@ -432,7 +471,13 @@ impl JsonViewerApp {
             let paste_requested = std::mem::take(&mut self.paste_requested);
 
             if self.comparison.is_some() {
-                self.show_comparison(ui);
+                if self.visualization == VisualizationMode::Diff {
+                    if let Some(comparison) = &mut self.comparison {
+                        show_diff(ui, comparison, self.locale);
+                    }
+                } else {
+                    self.show_comparison(ui);
+                }
                 return;
             }
 
@@ -446,7 +491,54 @@ impl JsonViewerApp {
                 return;
             }
 
-            let outcome = self.show_tree(ui);
+            let outcome = match self.visualization {
+                VisualizationMode::Tree => self.show_tree(ui),
+                VisualizationMode::Graph => {
+                    if self.visualization_cache.graph.is_none()
+                        && let Some(root) = &self.root
+                    {
+                        self.visualization_cache.graph = Some(build_relationship_graph(root));
+                    }
+                    if let Some(graph) = &self.visualization_cache.graph {
+                        show_graph(ui, graph, &self.search, self.locale);
+                    }
+                    TreeOutcome::default()
+                }
+                VisualizationMode::Table => {
+                    if self.visualization_cache.table.is_none()
+                        && let Some(root) = &self.root
+                    {
+                        self.visualization_cache.table = Some(build_table(root));
+                    }
+                    let export_requested = self
+                        .visualization_cache
+                        .table
+                        .as_ref()
+                        .is_some_and(|table| show_table(ui, table, &self.search, self.locale));
+                    if export_requested {
+                        self.save_table_csv();
+                    }
+                    TreeOutcome::default()
+                }
+                VisualizationMode::Schema => {
+                    if self.visualization_cache.schema.is_none()
+                        && let Some(root) = &self.root
+                    {
+                        self.visualization_cache.schema = Some(build_schema_diagram(root));
+                    }
+                    match self.visualization_cache.schema.as_ref() {
+                        Some(Ok(diagram)) => {
+                            show_schema(ui, diagram, &self.search, self.locale);
+                        }
+                        Some(Err(error)) => {
+                            ui.colored_label(COLOR_ERROR, error);
+                        }
+                        None => {}
+                    }
+                    TreeOutcome::default()
+                }
+                VisualizationMode::Comparison | VisualizationMode::Diff => self.show_tree(ui),
+            };
 
             if let Some(request) = outcome.selection_request {
                 self.apply_selection_request(request);
@@ -458,35 +550,61 @@ impl JsonViewerApp {
                 self.open_edit_field_dialog(request);
             }
             if outcome.tree_changed {
+                self.invalidate_visualization_cache();
                 self.refresh_search();
             }
+            if let Some(error) = outcome.edit_error {
+                self.show_toast(&error);
+            }
+            if let Some(text) = outcome.copy_request {
+                self.clipboard_payload = None;
+                match copy_to_clipboard(&text) {
+                    Ok(()) => self.show_toast(self.locale.text(TextKey::Copied)),
+                    Err(error) => self.show_toast(&self.locale.copy_error(&error)),
+                }
+            }
+            if let Some(paths) = outcome.copy_structure_paths {
+                self.copy_structures_at_paths(paths);
+            }
+            if let Some(path) = outcome.paste_target_path {
+                self.paste_into_path(path);
+            }
+
             if save_requested {
                 self.save_current();
             }
             if copy_structures_requested {
                 self.copy_structures_at_paths(self.selected_paths.iter().cloned().collect());
             }
-            if let Some(paths) = outcome.copy_structure_paths {
-                self.copy_structures_at_paths(paths);
-            }
             if paste_requested {
                 self.paste_into_selected();
             }
-            if let Some(path) = outcome.paste_target_path {
-                self.paste_into_path(path);
-            }
-            if let Some(text) = outcome.copy_request {
-                self.clipboard_payload = None;
-                match copy_to_clipboard(&text) {
-                    Ok(_) => self.show_toast(self.locale.text(TextKey::Copied)),
-                    Err(e) => self.show_toast(&self.locale.copy_error(&e)),
-                }
-            }
-            if let Some(err) = outcome.edit_error {
-                self.show_toast(&err);
-            }
             self.show_field_dialog(ui.ctx());
         });
+    }
+
+    fn save_table_csv(&mut self) {
+        let Some(table) = self.visualization_cache.table.as_ref() else {
+            return;
+        };
+        let content = table_csv(table, &self.search);
+        if let Some(mut path) = rfd::FileDialog::new()
+            .add_filter("CSV", &["csv"])
+            .set_file_name("table.csv")
+            .save_file()
+        {
+            if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_none_or(|extension| !extension.eq_ignore_ascii_case("csv"))
+            {
+                path.set_extension("csv");
+            }
+            match std::fs::write(&path, content) {
+                Ok(()) => self.show_toast(self.locale.text(TextKey::TableExported)),
+                Err(error) => self.show_toast(&self.locale.save_error(&error.to_string())),
+            }
+        }
     }
 
     /// Отрисовать таблицу отличий по всем загруженным документам.
@@ -640,6 +758,18 @@ impl JsonViewerApp {
             _ => self.load_comparison(dropped_paths),
         }
     }
+}
+
+fn visualization_label(mode: VisualizationMode, locale: Locale) -> &'static str {
+    let key = match mode {
+        VisualizationMode::Tree => TextKey::TreeView,
+        VisualizationMode::Graph => TextKey::GraphView,
+        VisualizationMode::Table => TextKey::TableView,
+        VisualizationMode::Schema => TextKey::SchemaView,
+        VisualizationMode::Comparison => TextKey::ComparisonView,
+        VisualizationMode::Diff => TextKey::DiffView,
+    };
+    locale.text(key)
 }
 
 /// Отрисовать подсказку, показываемую, пока файл не открыт.
