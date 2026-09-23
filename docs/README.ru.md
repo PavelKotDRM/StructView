@@ -65,6 +65,9 @@ cargo build --release
 сервер X11 или Wayland. Если графический сервер недоступен, используйте
 командный режим.
 
+Предварительно собранные архивы версий доступны в
+[GitHub Releases](https://github.com/PavelKotDRM/json_viewer/releases).
+
 ## Графический интерфейс
 
 Запуск без аргументов открывает пустое окно приложения:
@@ -312,6 +315,11 @@ cargo fmt --check
 cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+Workflow `Quality checks` в GitHub Actions можно запустить вручную во вкладке
+Actions. Отправка тега версии, совпадающей с версией в `Cargo.toml` (например,
+`v0.1.0`), запускает сборку для Linux, Windows и macOS и публикацию архивов в
+GitHub Release.
 
 Основные части исходного кода:
 

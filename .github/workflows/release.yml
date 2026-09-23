@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: Validate version tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check tag matches Cargo.toml
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "json_viewer") | .version')"
+          expected_tag="v${version}"
+          if [[ "${RELEASE_TAG}" != "${expected_tag}" ]]; then
+            echo "Tag '${RELEASE_TAG}' must match the package version in Cargo.toml: '${expected_tag}'." >&2
+            exit 1
+          fi
+
+  build:
+    name: Build for ${{ matrix.platform }}
+    needs: validate-tag
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            pkg-config \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libxcb-randr0-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xinput-dev \
+            libxcb-xinerama0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Package Linux or macOS binary
+        if: runner.os != 'Windows'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_ARCH: ${{ runner.arch }}
+        run: |
+          mkdir -p dist
+          tar -C target/release -czf "dist/json_viewer-${RELEASE_TAG}-${RELEASE_PLATFORM}-${RELEASE_ARCH}.tar.gz" json_viewer
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_ARCH: ${{ runner.arch }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path target\release\json_viewer.exe -DestinationPath "dist\json_viewer-$env:RELEASE_TAG-$env:RELEASE_PLATFORM-$env:RELEASE_ARCH.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}-${{ runner.arch }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" release-assets/* --verify-tag --generate-notes

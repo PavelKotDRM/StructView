@@ -59,6 +59,9 @@ After the build, the executable is located in `target/release`:
 On Linux, graphical mode requires an available X11 or Wayland display server.
 If no graphical server is available, use command-line mode.
 
+Prebuilt archives for tagged versions are available on
+[GitHub Releases](https://github.com/PavelKotDRM/json_viewer/releases).
+
 ## Graphical interface
 
 Starting the application without arguments opens an empty window:
@@ -299,6 +302,11 @@ cargo fmt --check
 cargo test
 cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+GitHub Actions can run the `Quality checks` workflow manually from the Actions
+tab. Pushing a version tag that matches `Cargo.toml`, for example `v0.1.0`,
+builds binaries for Linux, Windows, and macOS and publishes them as a GitHub
+Release.
 
 Main source tree:
 
