@@ -484,7 +484,14 @@ fn render_value_editor(
                     outcome.tree_changed = true;
                 }
             }
-            Err(err) => outcome.edit_error = Some(err),
+            Err(err) => {
+                // Откатываем поле ввода, поскольку `apply_primitive_edit` не изменяет
+                // узел при ошибке, а `TextEdit` уже записал невалидный текст напрямую
+                // в `node.display_value`.
+                node.value_type = previous_type;
+                node.display_value = previous_display;
+                outcome.edit_error = Some(err);
+            }
         }
     }
 

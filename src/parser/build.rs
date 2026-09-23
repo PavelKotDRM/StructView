@@ -82,7 +82,7 @@ pub fn parse_data(
 ) -> Result<(JsonNode, DataFormat), ParseError> {
     if let Some(format) = format {
         let value = parse_value(input, format)?;
-        return Ok((build_node(None, &value, String::new()), format));
+        return Ok((build_node(None, false, &value, String::new()), format));
     }
 
     let mut errors = Vec::new();
@@ -93,7 +93,7 @@ pub fn parse_data(
         DataFormat::Yaml,
     ] {
         match parse_value(input, candidate) {
-            Ok(value) => return Ok((build_node(None, &value, String::new()), candidate)),
+            Ok(value) => return Ok((build_node(None, false, &value, String::new()), candidate)),
             Err(error) => errors.push(format!("{}: {}", candidate, error.message)),
         }
     }
@@ -247,15 +247,17 @@ pub fn parse_json(input: &str) -> Result<JsonNode, ParseError> {
 /// # Arguments
 ///
 /// * `key` — ключ текущего узла (имя поля или индекс массива).
+/// * `is_index` — `true`, если `key` — индекс родительского массива, а не
+///   имя поля родительского объекта.
 /// * `value` — разобранное значение JSON.
 /// * `parent_path` — путь родительского узла.
-fn build_node(key: Option<String>, value: &Value, parent_path: String) -> JsonNode {
-    let path = build_path(&parent_path, &key);
+fn build_node(key: Option<String>, is_index: bool, value: &Value, parent_path: String) -> JsonNode {
+    let path = build_path(&parent_path, &key, is_index);
     match value {
         Value::Object(map) => {
             let children = map
                 .iter()
-                .map(|(k, v)| build_node(Some(k.clone()), v, path.clone()))
+                .map(|(k, v)| build_node(Some(k.clone()), false, v, path.clone()))
                 .collect::<Vec<_>>();
             let count = children.len();
             JsonNode {
@@ -275,7 +277,7 @@ fn build_node(key: Option<String>, value: &Value, parent_path: String) -> JsonNo
             let children = arr
                 .iter()
                 .enumerate()
-                .map(|(i, v)| build_node(Some(i.to_string()), v, path.clone()))
+                .map(|(i, v)| build_node(Some(i.to_string()), true, v, path.clone()))
                 .collect::<Vec<_>>();
             let count = children.len();
             JsonNode {
@@ -322,34 +324,78 @@ fn leaf(
 
 /// Построить путь к узлу из пути родителя и ключа текущего узла.
 ///
-/// Индексы массивов оборачиваются в квадратные скобки: `arr[0]`.
-/// Ключи объектов разделяются точкой: `obj.field`.
+/// Индексы массивов оборачиваются в квадратные скобки: `arr[0]`. Ключи
+/// объектов, являющиеся простым идентификатором, разделяются точкой:
+/// `obj.field`. Остальные ключи объектов (пустая строка, число, содержащие
+/// `.`/`[`/`]` и т. п.) оборачиваются в квадратные скобки с JSON-строкой:
+/// `obj["0"]`, `obj["a.b"]`. Это исключает совпадение пути поля объекта
+/// с путём индекса массива или с путём вложенного объекта.
+///
+/// `is_index` указывает, что `key` — индекс контейнера-массива, а не имя
+/// поля объекта; вызывающий код определяет это по типу родительского узла,
+/// а не по содержимому строки ключа.
 ///
 /// # Examples
 ///
 /// ```
 /// use json_viewer::parser::build_path;
 ///
-/// assert_eq!(build_path("store.book", &Some("2".to_string())), "store.book[2]");
-/// assert_eq!(build_path("store", &Some("title".to_string())), "store.title");
-/// assert_eq!(build_path("", &Some("root".to_string())), "root");
-/// assert_eq!(build_path("root", &None), "root");
+/// assert_eq!(build_path("store.book", &Some("2".to_string()), true), "store.book[2]");
+/// assert_eq!(build_path("store", &Some("title".to_string()), false), "store.title");
+/// assert_eq!(build_path("", &Some("root".to_string()), false), "root");
+/// assert_eq!(build_path("root", &None, false), "root");
+/// // Ключ объекта, совпадающий по написанию с индексом массива, экранируется.
+/// assert_eq!(build_path("store", &Some("0".to_string()), false), "store[\"0\"]");
 /// ```
-pub fn build_path(parent: &str, key: &Option<String>) -> String {
+pub fn build_path(parent: &str, key: &Option<String>, is_index: bool) -> String {
     match key {
         None => parent.to_string(),
         Some(k) => {
-            // Если ключ — число, считаем его индексом массива
-            let is_index = k.parse::<usize>().is_ok();
-            if parent.is_empty() {
-                k.clone()
-            } else if is_index {
-                format!("{}[{}]", parent, k)
+            if is_index {
+                if parent.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{}[{}]", parent, k)
+                }
             } else {
-                format!("{}.{}", parent, k)
+                object_path_segment(parent, k)
             }
         }
     }
+}
+
+/// Построить путь к полю объекта, экранируя ключи, которые иначе были бы
+/// неотличимы от индекса массива или от разделителя вложенности.
+fn object_path_segment(parent: &str, key: &str) -> String {
+    if is_plain_identifier(key) {
+        if parent.is_empty() {
+            key.to_string()
+        } else {
+            format!("{}.{}", parent, key)
+        }
+    } else {
+        let quoted = serde_json::to_string(key)
+            .unwrap_or_else(|error| format!("\"<key serialization error: {error}>\""));
+        if parent.is_empty() {
+            format!("[{}]", quoted)
+        } else {
+            format!("{}[{}]", parent, quoted)
+        }
+    }
+}
+
+/// Проверить, что ключ можно безопасно записать через точку без экранирования.
+///
+/// Ключ должен начинаться с буквы или `_` и состоять только из букв, цифр и
+/// `_`. Это, в частности, отсекает ключи, которые целиком состоят из цифр
+/// (совпадают по написанию с индексом массива) и ключи с `.`, `[`, `]`.
+fn is_plain_identifier(key: &str) -> bool {
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 /// Вспомогательная функция для русских форм множественного числа.
@@ -413,6 +459,39 @@ mod tests {
         let (root, format) = parse_data("{ // comment\n key: true,\n}", None).unwrap();
         assert_eq!(format, DataFormat::Json5);
         assert_eq!(root.children[0].key.as_deref(), Some("key"));
+    }
+
+    #[test]
+    fn object_keys_that_look_like_array_indices_are_escaped_in_the_path() {
+        // Объект с числовым ключом "0" не должен получить тот же path, что и
+        // первый элемент массива (`arr[0]`), иначе find_node/selected_paths
+        // не смогут различить эти узлы.
+        let root = parse_json(r#"{"0": "object field"}"#).unwrap();
+        assert_eq!(root.children[0].key.as_deref(), Some("0"));
+        assert_eq!(root.children[0].path, "[\"0\"]");
+
+        let array_root = parse_json(r#"["array element"]"#).unwrap();
+        assert_eq!(array_root.children[0].path, "0");
+        assert_ne!(root.children[0].path, array_root.children[0].path);
+    }
+
+    #[test]
+    fn object_keys_with_dots_or_brackets_are_escaped_in_the_path() {
+        let root = parse_json(r#"{"a": {"b.c": 1, "d[e]": 2}}"#).unwrap();
+        let nested = &root.children[0];
+        assert_eq!(nested.path, "a");
+        let b_c = nested
+            .children
+            .iter()
+            .find(|c| c.key.as_deref() == Some("b.c"))
+            .unwrap();
+        assert_eq!(b_c.path, "a[\"b.c\"]");
+        let d_e = nested
+            .children
+            .iter()
+            .find(|c| c.key.as_deref() == Some("d[e]"))
+            .unwrap();
+        assert_eq!(d_e.path, "a[\"d[e]\"]");
     }
 
     #[test]

@@ -152,7 +152,7 @@ fn paste_into_object(parent: &mut JsonNode, entries: &[ClipboardEntry]) -> Resul
     let parent_path = parent.path.clone();
     let nodes = candidates
         .into_iter()
-        .map(|(key, value)| value_to_node(Some(key), &value, &parent_path))
+        .map(|(key, value)| value_to_node(Some(key), false, &value, &parent_path))
         .collect::<Result<Vec<_>, _>>()?;
     let count = nodes.len();
     parent.children.extend(nodes);
@@ -183,6 +183,7 @@ fn paste_into_array(parent: &mut JsonNode, entries: &[ClipboardEntry]) -> Result
         .map(|(offset, value)| {
             value_to_node(
                 Some((first_index + offset).to_string()),
+                true,
                 &value,
                 &parent_path,
             )
@@ -196,6 +197,7 @@ fn paste_into_array(parent: &mut JsonNode, entries: &[ClipboardEntry]) -> Result
 
 fn value_to_node(
     key: Option<String>,
+    is_index: bool,
     value: &Value,
     parent_path: &str,
 ) -> Result<JsonNode, String> {
@@ -204,7 +206,7 @@ fn value_to_node(
     let (mut node, _) = parse_data(&source, Some(DataFormat::Json))
         .map_err(|error| format!("Не удалось подготовить структуру к вставке: {}", error))?;
     node.key = key;
-    update_paths(&mut node, parent_path);
+    update_paths(&mut node, parent_path, is_index);
     Ok(node)
 }
 
@@ -278,13 +280,16 @@ pub(super) fn edit_child_at_path(
     let input = field_value_to_input(value_type, value)?;
     let replacement = parse_child_value(&input, format)?;
 
+    let parent = find_parent(root, path);
+    let is_index = parent.is_some_and(|parent| parent.value_type == JsonValueType::Array);
+
     if let Some(new_key) = new_key {
         let new_key = new_key.trim();
         if new_key.is_empty() {
             return Err("Имя поля не может быть пустым".to_string());
         }
-        let parent = find_parent(root, path)
-            .ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?;
+        let parent =
+            parent.ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?;
         if parent.value_type != JsonValueType::Object {
             return Err("Имя можно изменить только у поля объекта".to_string());
         }
@@ -297,7 +302,7 @@ pub(super) fn edit_child_at_path(
         }
     }
 
-    if replace_node_at_path(root, path, &replacement, new_key, "") {
+    if replace_node_at_path(root, path, &replacement, new_key, "", is_index) {
         Ok(())
     } else {
         Err("Не удалось найти поле для редактирования".to_string())
@@ -347,7 +352,7 @@ pub(super) fn add_child(
     input: &str,
     format: DataFormat,
 ) -> Result<(), String> {
-    let key = match parent.value_type {
+    let (key, is_index) = match parent.value_type {
         JsonValueType::Object => {
             let key = key.trim();
             if key.is_empty() {
@@ -360,15 +365,15 @@ pub(super) fn add_child(
             {
                 return Err(format!("Поле «{}» уже существует", key));
             }
-            Some(key.to_string())
+            (Some(key.to_string()), false)
         }
-        JsonValueType::Array => Some(parent.children.len().to_string()),
+        JsonValueType::Array => (Some(parent.children.len().to_string()), true),
         _ => return Err("Добавлять данные можно только в объект или массив".to_string()),
     };
 
     let mut child = parse_child_value(input, format)?;
     child.key = key;
-    update_paths(&mut child, &parent.path);
+    update_paths(&mut child, &parent.path, is_index);
     parent.children.push(child);
     update_container_label(parent);
     Ok(())
@@ -437,6 +442,7 @@ fn replace_node_at_path(
     replacement: &JsonNode,
     new_key: Option<&str>,
     parent_path: &str,
+    is_index: bool,
 ) -> bool {
     if node.path == path {
         let mut updated = replacement.clone();
@@ -452,14 +458,14 @@ fn replace_node_at_path(
             updated.display_value = node.display_value.clone();
         }
         updated.expanded = node.expanded;
-        update_paths(&mut updated, parent_path);
+        update_paths(&mut updated, parent_path, is_index);
         *node = updated;
         return true;
     }
 
     let current_path = node.path.clone();
     for child in &mut node.children {
-        if replace_node_at_path(child, path, replacement, new_key, &current_path) {
+        if replace_node_at_path(child, path, replacement, new_key, &current_path, is_index) {
             update_container_label(node);
             return true;
         }
@@ -467,14 +473,15 @@ fn replace_node_at_path(
     false
 }
 
-fn update_paths(node: &mut JsonNode, parent_path: &str) {
-    node.path = build_path(parent_path, &node.key);
+fn update_paths(node: &mut JsonNode, parent_path: &str, is_index: bool) {
+    node.path = build_path(parent_path, &node.key, is_index);
     let path = node.path.clone();
+    let child_is_index = node.value_type == JsonValueType::Array;
     for (index, child) in node.children.iter_mut().enumerate() {
-        if node.value_type == JsonValueType::Array {
+        if child_is_index {
             child.key = Some(index.to_string());
         }
-        update_paths(child, &path);
+        update_paths(child, &path, child_is_index);
     }
 }
 

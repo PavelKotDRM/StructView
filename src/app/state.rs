@@ -244,6 +244,9 @@ impl JsonViewerApp {
         self.visible_rows_dirty = true;
         self.file_state = FileState::default();
         self.field_dialog = None;
+        self.save_requested = false;
+        self.copy_structures_requested = false;
+        self.paste_requested = false;
         let t0 = Instant::now();
         match std::fs::read_to_string(&path) {
             Err(e) => {
@@ -695,12 +698,21 @@ impl JsonViewerApp {
 
         match result {
             Ok(count) => {
-                self.selected_paths.clear();
+                self.retain_valid_selected_paths();
                 self.visible_rows_dirty = true;
                 self.refresh_search();
                 self.show_toast(&self.locale.structures_pasted(count));
             }
             Err(error) => self.show_toast(&self.locale.paste_error(&error)),
+        }
+    }
+
+    fn retain_valid_selected_paths(&mut self) {
+        if let Some(root) = &self.root {
+            self.selected_paths
+                .retain(|path| find_node(root, path).is_some());
+        } else {
+            self.selected_paths.clear();
         }
     }
 
@@ -934,7 +946,7 @@ impl JsonViewerApp {
         match result {
             Ok(()) => {
                 if is_edit {
-                    self.selected_paths.clear();
+                    self.retain_valid_selected_paths();
                 }
                 self.visible_rows_dirty = true;
                 self.refresh_search();
@@ -1014,8 +1026,71 @@ fn with_format_extension(mut path: PathBuf, format: DataFormat) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppMode, JsonViewerApp, with_format_extension};
+    use std::collections::BTreeSet;
+
+    use super::{
+        AppMode, JsonViewerApp, edit_child_at_path, paste_structures_at_path, with_format_extension,
+    };
+    use crate::clipboard::ClipboardEntry;
     use crate::parser::{DataFormat, JsonValueType, parse_data};
+
+    #[test]
+    fn selection_survives_paste_and_edits_when_paths_remain_valid() {
+        let (root, _) = parse_data(
+            r#"{"target":{"value":1},"other":true}"#,
+            Some(DataFormat::Json),
+        )
+        .unwrap();
+        let mut app = JsonViewerApp {
+            root: Some(root),
+            selected_paths: BTreeSet::from([
+                "target".to_string(),
+                "target.value".to_string(),
+                "other".to_string(),
+            ]),
+            ..JsonViewerApp::default()
+        };
+        let selected_before_change = app.selected_paths.clone();
+
+        paste_structures_at_path(
+            app.root.as_mut().unwrap(),
+            "target",
+            &[ClipboardEntry {
+                key: Some("added".to_string()),
+                value: serde_json::json!(2),
+            }],
+        )
+        .unwrap();
+        app.retain_valid_selected_paths();
+        assert_eq!(app.selected_paths, selected_before_change);
+
+        edit_child_at_path(
+            app.root.as_mut().unwrap(),
+            "target.value",
+            None,
+            &JsonValueType::Number,
+            "3",
+            DataFormat::Json,
+        )
+        .unwrap();
+        app.retain_valid_selected_paths();
+        assert_eq!(app.selected_paths, selected_before_change);
+
+        edit_child_at_path(
+            app.root.as_mut().unwrap(),
+            "target",
+            None,
+            &JsonValueType::Number,
+            "4",
+            DataFormat::Json,
+        )
+        .unwrap();
+        app.retain_valid_selected_paths();
+        assert_eq!(
+            app.selected_paths,
+            BTreeSet::from(["other".to_string(), "target".to_string()])
+        );
+    }
 
     #[test]
     fn save_current_writes_updated_document_to_loaded_path() {

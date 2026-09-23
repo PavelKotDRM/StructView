@@ -614,7 +614,13 @@ impl JsonViewerApp {
         );
 
         if outcome.expansion_changed {
-            self.visible_rows_dirty = true;
+            self.visible_rows = self
+                .root
+                .as_ref()
+                .map(VisibleRows::from_root)
+                .unwrap_or_default();
+            self.visible_rows_dirty = false;
+            ui.ctx().request_discard("Tree expansion changed");
         }
         outcome
     }
