@@ -423,7 +423,7 @@ fn yaml_number_to_json(value: serde_yaml_ng::Number) -> Result<serde_json::Numbe
 /// # Examples
 ///
 /// ```
-/// use json_viewer::parser::parse_json;
+/// use struct_view::parser::parse_json;
 ///
 /// let node = parse_json(r#"{"name": "Alice", "age": 30}"#).unwrap();
 /// assert_eq!(node.children.len(), 2);
@@ -597,7 +597,7 @@ fn leaf(
 /// # Examples
 ///
 /// ```
-/// use json_viewer::parser::build_path;
+/// use struct_view::parser::build_path;
 ///
 /// assert_eq!(build_path("store.book", &Some("2".to_string()), true), "store.book[2]");
 /// assert_eq!(build_path("store", &Some("title".to_string()), false), "store.title");
@@ -664,7 +664,7 @@ fn is_plain_identifier(key: &str) -> bool {
 /// # Examples
 ///
 /// ```
-/// use json_viewer::parser::plural_ru;
+/// use struct_view::parser::plural_ru;
 ///
 /// assert_eq!(plural_ru(1, "поле", "поля", "полей"), "поле");
 /// assert_eq!(plural_ru(3, "поле", "поля", "полей"), "поля");

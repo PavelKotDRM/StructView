@@ -8,7 +8,7 @@ use crate::diff::format_value;
 use crate::parser::{DataFormat, set_expanded_all};
 
 use super::i18n::{Locale, TextKey};
-use super::state::{AppMode, JsonViewerApp};
+use super::state::{AppMode, StructViewApp};
 use super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
 use super::tree::{
     RenderOptions, TreeOutcome, VisibleRows, focus_match_path, render_visible_rows,
@@ -24,7 +24,7 @@ const TOAST_LIFETIME_SECS: u64 = 3;
 /// Минимальная ширина поля поиска, достаточная для отображения подсказки.
 const SEARCH_FIELD_MIN_WIDTH: f32 = 260.0;
 
-impl JsonViewerApp {
+impl StructViewApp {
     /// Отрисовать верхнюю панель с меню, переключателем режима и строкой поиска.
     pub(super) fn show_top_panel(&mut self, ui: &mut Ui) {
         self.handle_shortcuts(ui.ctx());
@@ -181,7 +181,7 @@ impl JsonViewerApp {
         });
 
         ui.menu_button(locale.text(TextKey::HelpMenu), |ui| {
-            ui.label(format!("JSON Viewer {}", build_info::VERSION));
+            ui.label(format!("StructView {}", build_info::VERSION));
             ui.separator();
             egui::Grid::new("about_build_info")
                 .num_columns(2)

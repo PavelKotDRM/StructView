@@ -23,7 +23,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "json_viewer") | .version')"
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "struct_view") | .version')"
           expected_tag="v${version}"
           if [[ "${RELEASE_TAG}" != "${expected_tag}" ]]; then
             echo "Tag '${RELEASE_TAG}' must match the package version in Cargo.toml: '${expected_tag}'." >&2
@@ -84,7 +84,7 @@ jobs:
           RELEASE_ARCH: ${{ runner.arch }}
         run: |
           mkdir -p dist
-          tar -C target/release -czf "dist/json_viewer-${RELEASE_TAG}-${RELEASE_PLATFORM}-${RELEASE_ARCH}.tar.gz" json_viewer
+          tar -C target/release -czf "dist/struct_view-${RELEASE_TAG}-${RELEASE_PLATFORM}-${RELEASE_ARCH}.tar.gz" struct_view
 
       - name: Package Windows binary
         if: runner.os == 'Windows'
@@ -94,7 +94,7 @@ jobs:
           RELEASE_ARCH: ${{ runner.arch }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path target\release\json_viewer.exe -DestinationPath "dist\json_viewer-$env:RELEASE_TAG-$env:RELEASE_PLATFORM-$env:RELEASE_ARCH.zip"
+          Compress-Archive -Path target\release\struct_view.exe -DestinationPath "dist\struct_view-$env:RELEASE_TAG-$env:RELEASE_PLATFORM-$env:RELEASE_ARCH.zip"
 
       - name: Upload release archive
         uses: actions/upload-artifact@v7

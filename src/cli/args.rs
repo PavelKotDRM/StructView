@@ -63,7 +63,7 @@ pub enum Command {
 /// # Examples
 ///
 /// ```
-/// use json_viewer::cli::{parse_args, Command};
+/// use struct_view::cli::{parse_args, Command};
 ///
 /// let cmd = parse_args(["validate".to_string(), "a.json".to_string()]).unwrap();
 /// assert!(matches!(cmd, Command::Validate { .. }));

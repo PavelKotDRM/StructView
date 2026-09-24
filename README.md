@@ -1,4 +1,4 @@
-# JSON Viewer
+# StructView
 
 A fast, cross-platform viewer and editor for structured data. The application
 displays JSON, YAML, TOML, and JSON5 as an interactive tree and also provides
@@ -54,40 +54,40 @@ the format is detected from the content.
 Building requires Rust with `edition 2024` support and Cargo.
 
 ```sh
-git clone https://github.com/PavelKotDRM/json_viewer.git
-cd json_viewer
+git clone https://github.com/PavelKotDRM/structview.git
+cd structview
 cargo build --release
 ```
 
 After the build, the executable is located in `target/release`:
 
-- Windows: `target\release\json_viewer.exe`;
-- Linux and macOS: `target/release/json_viewer`.
+- Windows: `target\release\struct_view.exe`;
+- Linux and macOS: `target/release/struct_view`.
 
 On Linux, graphical mode requires an available X11 or Wayland display server.
 If no graphical server is available, use command-line mode.
 
 Prebuilt archives for tagged versions are available on
-[GitHub Releases](https://github.com/PavelKotDRM/json_viewer/releases).
+[GitHub Releases](https://github.com/PavelKotDRM/structview/releases).
 
 ## Graphical interface
 
 Starting the application without arguments opens an empty window:
 
 ```sh
-json_viewer
+struct_view
 ```
 
 Open a file directly at startup:
 
 ```sh
-json_viewer data.json
+struct_view data.json
 ```
 
 Open several files directly in the comparison view:
 
 ```sh
-json_viewer first.json second.yaml third.toml
+struct_view first.json second.yaml third.toml
 ```
 
 You can also choose a file through `File -> Open…` or drop it onto the window.
@@ -228,25 +228,25 @@ option names are language-independent.
 Print formatted data to stdout:
 
 ```sh
-json_viewer format data.json
+struct_view format data.json
 ```
 
 Write the result to a file:
 
 ```sh
-json_viewer format data.json --output normalized.json
+struct_view format data.json --output normalized.json
 ```
 
 Compact output without indentation:
 
 ```sh
-json_viewer format data.json --minify
+struct_view format data.json --minify
 ```
 
 Read the source from stdin by using `-` or omitting the input file:
 
 ```sh
-json_viewer format - < data.json
+struct_view format - < data.json
 ```
 
 The output format is determined from the extension of the file passed to
@@ -255,13 +255,13 @@ The output format is determined from the extension of the file passed to
 ### Syntax validation
 
 ```sh
-json_viewer validate data.yaml
+struct_view validate data.yaml
 ```
 
 Validate data from stdin:
 
 ```sh
-json_viewer validate - < data.toml
+struct_view validate - < data.toml
 ```
 
 On success, the command reports the detected format. It returns a non-zero
@@ -272,7 +272,7 @@ exit code when parsing fails.
 Search keys and values and print the paths of matching nodes:
 
 ```sh
-json_viewer find user data.json
+struct_view find user data.json
 ```
 
 Additional options:
@@ -287,9 +287,9 @@ Additional options:
 Examples:
 
 ```sh
-json_viewer find --keys name data.json
-json_viewer find --values --case-sensitive ADMIN config.json
-json_viewer find --keys --exact id data.json
+struct_view find --keys name data.json
+struct_view find --values --case-sensitive ADMIN config.json
+struct_view find --keys --exact id data.json
 ```
 
 If no matches are found, the command exits with a non-zero code.
@@ -300,14 +300,14 @@ Compare two or more files and print every changed path with the value found in
 each input:
 
 ```sh
-json_viewer diff first.json second.json
-json_viewer diff base.yaml candidate.yaml generated.json
+struct_view diff first.json second.json
+struct_view diff base.yaml candidate.yaml generated.json
 ```
 
 The command also accepts stdin as one input by using `-`:
 
 ```sh
-json_viewer diff reference.json - < candidate.json
+struct_view diff reference.json - < candidate.json
 ```
 
 Objects and arrays are compared recursively. The command prints `<missing>`
@@ -319,8 +319,8 @@ alias for `diff`.
 ### Common options
 
 ```sh
-json_viewer --help
-json_viewer --version
+struct_view --help
+struct_view --version
 ```
 
 Exit codes:

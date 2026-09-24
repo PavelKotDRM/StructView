@@ -42,7 +42,7 @@ pub const HOST_TRIPLE: &str = env_or_unknown!("VERGEN_RUSTC_HOST_TRIPLE");
 #[must_use]
 pub fn detailed() -> String {
     format!(
-        "json_viewer {VERSION}\n\
+        "StructView {VERSION}\n\
          \n\
          Build time:          {BUILD_TIMESTAMP}\n\
          Target platform:     {TARGET_TRIPLE}\n\

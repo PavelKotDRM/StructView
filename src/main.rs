@@ -1,16 +1,16 @@
-//! Точка входа приложения JSON Viewer.
+//! Точка входа приложения StructView.
 //!
 //! Разбирает аргументы командной строки: headless-команды выполняются через
-//! [`json_viewer::cli`], иначе инициализируется [`eframe`] окно и запускается
-//! [`json_viewer::app::JsonViewerApp`].
+//! [`struct_view::cli`], иначе инициализируется [`eframe`] окно и запускается
+//! [`struct_view::app::StructViewApp`].
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use eframe::NativeOptions;
-use json_viewer::cli::{self, Command};
-use json_viewer::console::attach_parent_console;
+use struct_view::cli::{self, Command};
+use struct_view::console::attach_parent_console;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,7 +24,7 @@ fn main() -> ExitCode {
         Ok(command) => command,
         Err(err) => {
             eprintln!("Error: {}", err);
-            eprintln!("Hint: json_viewer --help");
+            eprintln!("Hint: struct_view --help");
             return ExitCode::from(2);
         }
     };
@@ -47,23 +47,23 @@ fn main() -> ExitCode {
 fn run_gui(files: Vec<PathBuf>) -> ExitCode {
     if !display_available() {
         eprintln!("Error: no graphical server found (DISPLAY and WAYLAND_DISPLAY are unset).");
-        eprintln!("Command-line mode is available: json_viewer --help");
+        eprintln!("Command-line mode is available: struct_view --help");
         return ExitCode::FAILURE;
     }
 
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("JSON Viewer")
+            .with_title("StructView")
             .with_inner_size([1024.0, 720.0])
             .with_drag_and_drop(true),
         ..Default::default()
     };
 
     let result = eframe::run_native(
-        "JSON Viewer",
+        "StructView",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(json_viewer::app::JsonViewerApp::new_with_files(
+            Ok(Box::new(struct_view::app::StructViewApp::new_with_files(
                 cc, files,
             )))
         }),

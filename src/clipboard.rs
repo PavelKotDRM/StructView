@@ -19,6 +19,7 @@ pub struct ClipboardEntry {
     pub value: Value,
 }
 
+// Keep the clipboard envelope key stable for interoperability with older releases.
 const CLIPBOARD_MARKER: &str = "$json_viewer_selection";
 const CLIPBOARD_VERSION: u64 = 1;
 
@@ -35,7 +36,7 @@ const CLIPBOARD_VERSION: u64 = 1;
 /// # Examples
 ///
 /// ```no_run
-/// use json_viewer::clipboard::copy_to_clipboard;
+/// use struct_view::clipboard::copy_to_clipboard;
 ///
 /// copy_to_clipboard("Hello, clipboard!").expect("clipboard unavailable");
 /// ```

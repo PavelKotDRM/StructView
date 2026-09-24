@@ -6,12 +6,12 @@
 //! ## Поддерживаемые вызовы
 //!
 //! ```text
-//! json_viewer                      # открыть GUI
-//! json_viewer data.json            # открыть GUI с файлом
-//! json_viewer format data.json     # pretty-print в stdout
-//! json_viewer validate data.json   # проверить синтаксис
-//! json_viewer find name data.json  # вывести пути совпадений
-//! json_viewer diff one.json two.json # сравнить файлы
+//! struct_view                      # открыть GUI
+//! struct_view data.json            # открыть GUI с файлом
+//! struct_view format data.json     # pretty-print в stdout
+//! struct_view validate data.json   # проверить синтаксис
+//! struct_view find name data.json  # вывести пути совпадений
+//! struct_view diff one.json two.json # сравнить файлы
 //! ```
 //!
 //! ## Состав подмодулей
@@ -32,17 +32,17 @@ pub use source::Source;
 
 /// Текст справки, выводимый по `--help`.
 pub const HELP: &str = concat!(
-    "JSON Viewer ",
+    "StructView ",
     env!("CARGO_PKG_VERSION"),
     " — view and process JSON, YAML, TOML, and JSON5\n",
     "\n",
     "USAGE:\n",
-    "    json_viewer [FILE]                      start the GUI (optionally with a file)\n",
-    "    json_viewer FILE...                       start the GUI and compare files\n",
-    "    json_viewer format [FILE] [OPTIONS]     format data\n",
-    "    json_viewer validate [FILE]             validate syntax\n",
-    "    json_viewer find [OPTIONS] <QUERY> [FILE] find matching node paths\n",
-    "    json_viewer diff <FILE> <FILE> [FILE...] compare files\n",
+    "    struct_view [FILE]                      start the GUI (optionally with a file)\n",
+    "    struct_view FILE...                       start the GUI and compare files\n",
+    "    struct_view format [FILE] [OPTIONS]     format data\n",
+    "    struct_view validate [FILE]             validate syntax\n",
+    "    struct_view find [OPTIONS] <QUERY> [FILE] find matching node paths\n",
+    "    struct_view diff <FILE> <FILE> [FILE...] compare files\n",
     "\n",
     "format OPTIONS:\n",
     "    -o, --output <FILE>    write the result to a file instead of stdout\n",

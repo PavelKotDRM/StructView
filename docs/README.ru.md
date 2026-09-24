@@ -1,4 +1,4 @@
-# JSON Viewer
+# StructView
 
 Быстрый кроссплатформенный просмотрщик и редактор структурированных данных.
 Приложение показывает JSON, YAML, TOML и JSON5 в виде интерактивного дерева, а
@@ -60,41 +60,41 @@ stdin формат определяется по содержимому.
 Для сборки требуется Rust с поддержкой `edition 2024` и Cargo.
 
 ```sh
-git clone https://github.com/PavelKotDRM/json_viewer.git
-cd json_viewer
+git clone https://github.com/PavelKotDRM/structview.git
+cd structview
 cargo build --release
 ```
 
 После сборки исполняемый файл находится в `target/release`:
 
-- Windows: `target\release\json_viewer.exe`;
-- Linux и macOS: `target/release/json_viewer`.
+- Windows: `target\release\struct_view.exe`;
+- Linux и macOS: `target/release/struct_view`.
 
 На Linux для запуска графического режима необходим доступный графический
 сервер X11 или Wayland. Если графический сервер недоступен, используйте
 командный режим.
 
 Предварительно собранные архивы версий доступны в
-[GitHub Releases](https://github.com/PavelKotDRM/json_viewer/releases).
+[GitHub Releases](https://github.com/PavelKotDRM/structview/releases).
 
 ## Графический интерфейс
 
 Запуск без аргументов открывает пустое окно приложения:
 
 ```sh
-json_viewer
+struct_view
 ```
 
 Файл можно открыть сразу при запуске:
 
 ```sh
-json_viewer data.json
+struct_view data.json
 ```
 
 Открыть сразу несколько файлов в режиме сравнения:
 
 ```sh
-json_viewer first.json second.yaml third.toml
+struct_view first.json second.yaml third.toml
 ```
 
 Также файл можно выбрать через меню `Файл -> Открыть…` или перетащить его в
@@ -240,25 +240,25 @@ TOML не поддерживает `null`.
 Вывести отформатированные данные в stdout:
 
 ```sh
-json_viewer format data.json
+struct_view format data.json
 ```
 
 Записать результат в файл:
 
 ```sh
-json_viewer format data.json --output normalized.json
+struct_view format data.json --output normalized.json
 ```
 
 Компактное представление без отступов:
 
 ```sh
-json_viewer format data.json --minify
+struct_view format data.json --minify
 ```
 
 Источник можно передать через stdin, используя `-` или не указывая файл:
 
 ```sh
-json_viewer format - < data.json
+struct_view format - < data.json
 ```
 
 Формат результата определяется по расширению файла, указанного в `--output`.
@@ -267,13 +267,13 @@ json_viewer format - < data.json
 ### Проверка синтаксиса
 
 ```sh
-json_viewer validate data.yaml
+struct_view validate data.yaml
 ```
 
 Проверка данных из stdin:
 
 ```sh
-json_viewer validate - < data.toml
+struct_view validate - < data.toml
 ```
 
 Команда сообщает распознанный формат при успешной проверке и возвращает
@@ -284,7 +284,7 @@ json_viewer validate - < data.toml
 Поиск выполняется по ключам и значениям и выводит пути найденных узлов:
 
 ```sh
-json_viewer find user data.json
+struct_view find user data.json
 ```
 
 Дополнительные параметры:
@@ -299,9 +299,9 @@ json_viewer find user data.json
 Примеры:
 
 ```sh
-json_viewer find --keys name data.json
-json_viewer find --values --case-sensitive ADMIN config.json
-json_viewer find --keys --exact id data.json
+struct_view find --keys name data.json
+struct_view find --values --case-sensitive ADMIN config.json
+struct_view find --keys --exact id data.json
 ```
 
 Если совпадений нет, команда завершается с ненулевым кодом.
@@ -312,14 +312,14 @@ json_viewer find --keys --exact id data.json
 из всех входных файлов:
 
 ```sh
-json_viewer diff first.json second.json
-json_viewer diff base.yaml candidate.yaml generated.json
+struct_view diff first.json second.json
+struct_view diff base.yaml candidate.yaml generated.json
 ```
 
 Один источник можно прочитать из stdin через `-`:
 
 ```sh
-json_viewer diff reference.json - < candidate.json
+struct_view diff reference.json - < candidate.json
 ```
 
 Объекты и массивы сравниваются рекурсивно. Для отсутствующего пути выводится
@@ -331,8 +331,8 @@ json_viewer diff reference.json - < candidate.json
 ### Общие параметры
 
 ```sh
-json_viewer --help
-json_viewer --version
+struct_view --help
+struct_view --version
 ```
 
 Коды возврата:

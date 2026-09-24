@@ -79,7 +79,7 @@ impl std::fmt::Display for ParseError {
 /// # Examples
 ///
 /// ```
-/// use json_viewer::parser::{parse_json, set_expanded_all};
+/// use struct_view::parser::{parse_json, set_expanded_all};
 ///
 /// let mut root = parse_json(r#"{"a": {"b": 1}}"#).unwrap();
 /// set_expanded_all(&mut root, false);

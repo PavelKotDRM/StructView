@@ -1,12 +1,12 @@
 [package]
-name = "json_viewer"
+name = "struct_view"
 version = "0.1.0"
 edition = "2024"
-description = "A fast, cross-platform desktop viewer for JSON, YAML, TOML, and JSON5"
+description = "A fast, cross-platform structured data explorer and editor for JSON, YAML, TOML, and JSON5"
 build = "build.rs"
 
 [[bin]]
-name = "json_viewer"
+name = "struct_view"
 path = "src/main.rs"
 
 [dependencies]

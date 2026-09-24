@@ -110,11 +110,11 @@ impl From<AddChildRequest> for FieldDialog {
     }
 }
 
-/// Основное состояние приложения JSON Viewer.
+/// Основное состояние приложения StructView.
 ///
 /// Хранит дерево структурированных данных, параметры поиска, информацию о файле
 /// и временные сообщения для пользователя (уведомления, ошибки).
-pub struct JsonViewerApp {
+pub struct StructViewApp {
     /// Корневой узел разобранного документа. `None` если файл ещё не загружен.
     pub(super) root: Option<JsonNode>,
     /// Ошибка последнего парсинга. `None` если файл разобран успешно.
@@ -161,7 +161,7 @@ pub struct JsonViewerApp {
     pub(super) paste_requested: bool,
 }
 
-impl Default for JsonViewerApp {
+impl Default for StructViewApp {
     fn default() -> Self {
         Self {
             root: None,
@@ -189,7 +189,7 @@ impl Default for JsonViewerApp {
     }
 }
 
-impl JsonViewerApp {
+impl StructViewApp {
     /// Создать новый экземпляр приложения.
     ///
     /// Инициализирует тему оформления на основе системных предпочтений,
@@ -1049,7 +1049,7 @@ fn default_field_value(value_type: &JsonValueType) -> String {
     }
 }
 
-impl eframe::App for JsonViewerApp {
+impl eframe::App for StructViewApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Принудительное обновление, если показано уведомление (чтобы оно исчезло вовремя)
         if self.toast.is_some() {
@@ -1073,7 +1073,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        AppMode, JsonViewerApp, VisualizationMode, edit_child_at_path, paste_structures_at_path,
+        AppMode, StructViewApp, VisualizationMode, edit_child_at_path, paste_structures_at_path,
         with_format_extension,
     };
     use crate::clipboard::ClipboardEntry;
@@ -1086,14 +1086,14 @@ mod tests {
             Some(DataFormat::Json),
         )
         .unwrap();
-        let mut app = JsonViewerApp {
+        let mut app = StructViewApp {
             root: Some(root),
             selected_paths: BTreeSet::from([
                 "target".to_string(),
                 "target.value".to_string(),
                 "other".to_string(),
             ]),
-            ..JsonViewerApp::default()
+            ..StructViewApp::default()
         };
         let selected_before_change = app.selected_paths.clone();
 
@@ -1140,10 +1140,10 @@ mod tests {
     #[test]
     fn save_current_writes_updated_document_to_loaded_path() {
         let path =
-            std::env::temp_dir().join(format!("json_viewer-save-test-{}.json", std::process::id()));
+            std::env::temp_dir().join(format!("struct_view-save-test-{}.json", std::process::id()));
         std::fs::write(&path, r#"{"value":1}"#).unwrap();
 
-        let mut app = JsonViewerApp::default();
+        let mut app = StructViewApp::default();
         app.load_file(path.clone());
         app.root
             .as_mut()
@@ -1164,12 +1164,12 @@ mod tests {
     #[test]
     fn open_document_can_be_converted_to_every_other_format() {
         let input = std::env::temp_dir().join(format!(
-            "json_viewer-convert-test-{}.json",
+            "struct_view-convert-test-{}.json",
             std::process::id()
         ));
         std::fs::write(&input, r#"{"server":{"port":8080},"enabled":true}"#).unwrap();
 
-        let mut app = JsonViewerApp::default();
+        let mut app = StructViewApp::default();
         app.load_file(input.clone());
 
         for (index, format) in DataFormat::ALL.into_iter().enumerate() {
@@ -1178,7 +1178,7 @@ mod tests {
             }
 
             let requested_path = std::env::temp_dir().join(format!(
-                "json_viewer-convert-test-{}-{}.output",
+                "struct_view-convert-test-{}-{}.output",
                 std::process::id(),
                 index
             ));
@@ -1200,12 +1200,12 @@ mod tests {
     #[test]
     fn close_file_clears_document_state() {
         let path = std::env::temp_dir().join(format!(
-            "json_viewer-close-test-{}.json",
+            "struct_view-close-test-{}.json",
             std::process::id()
         ));
         std::fs::write(&path, r#"{"value":1}"#).unwrap();
 
-        let mut app = JsonViewerApp::default();
+        let mut app = StructViewApp::default();
         app.load_file(path.clone());
         app.search_query_buf = "value".to_string();
         app.save_requested = true;
@@ -1222,13 +1222,13 @@ mod tests {
     #[test]
     fn comparison_loads_all_documents_and_changed_paths() {
         let prefix =
-            std::env::temp_dir().join(format!("json_viewer-compare-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("struct_view-compare-test-{}", std::process::id()));
         let first = prefix.with_extension("first.json");
         let second = prefix.with_extension("second.json");
         std::fs::write(&first, r#"{"value":1,"same":true}"#).unwrap();
         std::fs::write(&second, r#"{"value":2,"same":true}"#).unwrap();
 
-        let mut app = JsonViewerApp::default();
+        let mut app = StructViewApp::default();
         app.load_comparison(vec![first.clone(), second.clone()]);
 
         let comparison = app.comparison.as_ref().unwrap();
@@ -1256,12 +1256,12 @@ mod tests {
 
         for (index, format) in formats.into_iter().enumerate() {
             let path = std::env::temp_dir().join(format!(
-                "json_viewer-create-test-{}-{}.{}",
+                "struct_view-create-test-{}-{}.{}",
                 std::process::id(),
                 index,
                 format.extension()
             ));
-            let mut app = JsonViewerApp::default();
+            let mut app = StructViewApp::default();
             app.create_new_file(path.clone(), format);
 
             assert_eq!(app.mode, AppMode::Edit);
