@@ -88,8 +88,24 @@ impl StructViewApp {
         self.save_requested = true;
     }
 
-    /// Закрыть текущий документ и очистить связанные с ним состояния.
+    /// Закрыть сравнение или текущий документ и очистить связанные состояния.
+    ///
+    /// Если сравнение было открыто из документа, вместо очистки восстанавливает
+    /// этот документ.
     pub(in crate::app) fn close_file(&mut self) {
+        if let Some(previous_document) = self
+            .comparison
+            .take()
+            .and_then(|comparison| comparison.previous_document)
+        {
+            self.restore_previous_document(previous_document);
+            return;
+        }
+
+        self.clear_document_state();
+    }
+
+    pub(super) fn clear_document_state(&mut self) {
         self.clear_history();
         self.root = None;
         self.comparison = None;
@@ -106,6 +122,29 @@ impl StructViewApp {
         self.field_dialog = None;
         self.mode = AppMode::View;
         self.selected_paths.clear();
+        self.copy_structures_requested = false;
+        self.paste_requested = false;
+    }
+
+    fn restore_previous_document(&mut self, previous_document: PreviousDocumentState) {
+        self.clear_history();
+        self.root = Some(previous_document.root);
+        self.file_state = previous_document.file_state;
+        self.comparison = None;
+        self.visualization = previous_document.visualization;
+        self.visualization_cache = VisualizationCache::default();
+        self.visible_rows = VisibleRows::default();
+        self.visible_rows_dirty = true;
+        self.parse_error = None;
+        self.search = previous_document.search;
+        self.search_query_buf = previous_document.search_query_buf;
+        self.search_scroll_target = previous_document.search_scroll_target;
+        self.save_requested = false;
+        self.field_dialog = None;
+        self.mode = previous_document.mode;
+        self.selected_paths = previous_document.selected_paths;
+        self.undo_history = previous_document.undo_history;
+        self.redo_history = previous_document.redo_history;
         self.copy_structures_requested = false;
         self.paste_requested = false;
     }

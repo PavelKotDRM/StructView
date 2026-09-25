@@ -62,6 +62,21 @@ pub(super) struct ComparisonDocument {
     pub(super) format: DataFormat,
 }
 
+/// Состояние открытого документа, временно скрытого режимом сравнения.
+#[derive(Debug)]
+pub(super) struct PreviousDocumentState {
+    pub(super) root: JsonNode,
+    pub(super) file_state: FileState,
+    pub(super) search: SearchState,
+    pub(super) search_query_buf: String,
+    pub(super) search_scroll_target: Option<String>,
+    pub(super) mode: AppMode,
+    pub(super) visualization: VisualizationMode,
+    pub(super) selected_paths: BTreeSet<String>,
+    pub(super) undo_history: Vec<JsonNode>,
+    pub(super) redo_history: Vec<JsonNode>,
+}
+
 /// Состояние отображения отличий нескольких документов.
 #[derive(Debug)]
 pub(super) struct ComparisonState {
@@ -73,6 +88,8 @@ pub(super) struct ComparisonState {
     pub(super) left_index: usize,
     /// Индекс выбранной второй версии в парном diff.
     pub(super) right_index: usize,
+    /// Документ, который нужно восстановить после закрытия сравнения.
+    pub(super) previous_document: Option<PreviousDocumentState>,
 }
 
 /// Режим работы приложения.

@@ -343,6 +343,10 @@ fn comparison_loads_all_documents_and_changed_paths() {
     assert!(app.root.is_none());
     assert!(app.parse_error.is_none());
 
+    app.close_file();
+    assert!(app.comparison.is_none());
+    assert!(app.root.is_none());
+
     std::fs::remove_file(first).unwrap();
     std::fs::remove_file(second).unwrap();
 }
@@ -373,6 +377,90 @@ fn comparing_one_selected_file_uses_the_open_document_as_the_first_version() {
 
     std::fs::remove_file(open_path).unwrap();
     std::fs::remove_file(selected_path).unwrap();
+}
+
+#[test]
+fn closing_pair_diff_restores_the_previous_document() {
+    let prefix =
+        std::env::temp_dir().join(format!("struct_view-close-diff-{}", std::process::id()));
+    let open_path = prefix.with_extension("open.json");
+    let selected_document_path = prefix.with_extension("selected.json");
+    std::fs::write(&open_path, r#"{"value":1}"#).unwrap();
+    std::fs::write(&selected_document_path, r#"{"value":2}"#).unwrap();
+
+    let mut app = StructViewApp::default();
+    app.load_file(open_path.clone());
+    app.mode = AppMode::Edit;
+    app.visualization = VisualizationMode::Table;
+    let original = app.root.as_ref().unwrap().clone();
+    app.root.as_mut().unwrap().children[0].display_value = "3".to_string();
+    app.undo_history.push(original.clone());
+    app.redo_history.push(original);
+    app.search_query_buf = "value".to_string();
+    app.search
+        .search(app.root.as_ref().unwrap(), &app.search_query_buf);
+    let selected_node_path = app.root.as_ref().unwrap().children[0].path.clone();
+    app.selected_paths.insert(selected_node_path.clone());
+
+    app.load_comparison(vec![selected_document_path.clone()]);
+
+    let comparison = app.comparison.as_ref().unwrap();
+    assert_eq!(comparison.documents.len(), 2);
+    assert_eq!(app.visualization, VisualizationMode::Diff);
+    assert!(app.root.is_none());
+
+    app.close_file();
+
+    assert!(app.comparison.is_none());
+    assert_eq!(app.file_state.path, Some(open_path.clone()));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        serde_json::json!(3)
+    );
+    assert_eq!(app.mode, AppMode::Edit);
+    assert_eq!(app.visualization, VisualizationMode::Table);
+    assert_eq!(app.search.query, "value");
+    assert_eq!(app.search_query_buf, "value");
+    assert_eq!(app.selected_paths, BTreeSet::from([selected_node_path]));
+    assert!(app.can_undo());
+    assert!(app.can_redo());
+
+    app.close_file();
+    assert!(app.root.is_none());
+    assert!(app.file_state.path.is_none());
+
+    std::fs::remove_file(open_path).unwrap();
+    std::fs::remove_file(selected_document_path).unwrap();
+}
+
+#[test]
+fn creating_new_file_from_diff_does_not_restore_the_previous_document() {
+    let prefix =
+        std::env::temp_dir().join(format!("struct_view-new-from-diff-{}", std::process::id()));
+    let open_path = prefix.with_extension("open.json");
+    let selected_path = prefix.with_extension("selected.json");
+    let new_path = prefix.with_extension("new.json");
+    std::fs::write(&open_path, r#"{"value":1}"#).unwrap();
+    std::fs::write(&selected_path, r#"{"value":2}"#).unwrap();
+
+    let mut app = StructViewApp::default();
+    app.load_file(open_path.clone());
+    app.load_comparison(vec![selected_path.clone()]);
+    app.create_new_file(new_path.clone(), DataFormat::Json);
+
+    assert!(app.comparison.is_none());
+    assert_eq!(app.file_state.path, Some(new_path.clone()));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap(),
+        serde_json::json!({})
+    );
+
+    app.close_file();
+    assert!(app.root.is_none());
+
+    std::fs::remove_file(open_path).unwrap();
+    std::fs::remove_file(selected_path).unwrap();
+    std::fs::remove_file(new_path).unwrap();
 }
 
 #[test]
