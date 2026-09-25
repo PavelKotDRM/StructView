@@ -33,13 +33,13 @@ pub fn compare_values(values: &[Value]) -> Vec<Difference> {
     differences
 }
 
-/// Преобразовать значение отличия в компактное человекочитаемое представление.
+/// Преобразовать значение отличия в форматированный JSON.
 ///
 /// Отсутствующий путь отображается отдельно от JSON-значения `null`.
 pub fn format_value(value: Option<&Value>) -> String {
     match value {
         None => "<missing>".to_string(),
-        Some(value) => serde_json::to_string(value)
+        Some(value) => serde_json::to_string_pretty(value)
             .unwrap_or_else(|error| format!("<serialization error: {error}>")),
     }
 }
@@ -182,6 +182,16 @@ mod tests {
     fn formats_missing_and_null_differently() {
         assert_eq!(format_value(None), "<missing>");
         assert_eq!(format_value(Some(&Value::Null)), "null");
+    }
+
+    #[test]
+    fn formats_nested_values_with_indentation() {
+        let value = json!({"profile": {"age": 30}});
+
+        assert_eq!(
+            format_value(Some(&value)),
+            "{\n  \"profile\": {\n    \"age\": 30\n  }\n}"
+        );
     }
 
     #[test]

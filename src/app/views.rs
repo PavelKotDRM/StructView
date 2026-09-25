@@ -420,9 +420,11 @@ fn draw_arrow_head(painter: &egui::Painter, tip: Pos2, direction: Vec2, stroke: 
 pub(super) fn show_diff(ui: &mut egui::Ui, comparison: &mut ComparisonState, locale: Locale) {
     let mut left_index = comparison.left_index;
     let mut right_index = comparison.right_index;
-    ui.horizontal(|ui| {
+    let selector_width = (ui.available_width() / 2.0 - 100.0).clamp(120.0, 360.0);
+    ui.horizontal_wrapped(|ui| {
         ui.label(locale.text(TextKey::DiffLeft));
         egui::ComboBox::from_id_salt("diff_left_document")
+            .width(selector_width)
             .selected_text(document_label(comparison, left_index))
             .show_ui(ui, |ui| {
                 for (index, document) in comparison.documents.iter().enumerate() {
@@ -435,6 +437,7 @@ pub(super) fn show_diff(ui: &mut egui::Ui, comparison: &mut ComparisonState, loc
             });
         ui.label(locale.text(TextKey::DiffRight));
         egui::ComboBox::from_id_salt("diff_right_document")
+            .width(selector_width)
             .selected_text(document_label(comparison, right_index))
             .show_ui(ui, |ui| {
                 for (index, document) in comparison.documents.iter().enumerate() {
@@ -467,72 +470,114 @@ pub(super) fn show_diff(ui: &mut egui::Ui, comparison: &mut ComparisonState, loc
         return;
     }
 
-    egui::ScrollArea::both().show(ui, |ui| {
-        egui::Grid::new("pair_diff_grid")
-            .striped(true)
-            .min_col_width(140.0)
-            .spacing([12.0, 4.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new(locale.text(TextKey::ComparisonPath)).strong());
-                ui.label(RichText::new(locale.text(TextKey::DiffChangeType)).strong());
-                ui.label(
-                    RichText::new(document_label(comparison, left_index))
-                        .strong()
-                        .monospace(),
-                );
-                ui.label(
-                    RichText::new(document_label(comparison, right_index))
-                        .strong()
-                        .monospace(),
-                );
-                ui.end_row();
-
-                for difference in pair_differences {
-                    let left = difference.values.get(left_index).and_then(Option::as_ref);
-                    let right = difference.values.get(right_index).and_then(Option::as_ref);
-                    let (change_type, left_color, right_color) = match pair_change(left, right) {
-                        Some(PairChange::Added) => (
-                            locale.text(TextKey::DiffAdded),
-                            Color32::GRAY,
-                            COLOR_SUCCESS,
-                        ),
-                        Some(PairChange::Removed) => (
-                            locale.text(TextKey::DiffRemoved),
-                            COLOR_ERROR,
-                            Color32::GRAY,
-                        ),
-                        Some(PairChange::Changed) => {
-                            (locale.text(TextKey::DiffChanged), COLOR_MATCH, COLOR_MATCH)
-                        }
-                        None => continue,
-                    };
+    show_difference_legend(ui, locale, None);
+    let column_count = 4;
+    let column_width = comparison_column_width(ui.available_width(), column_count);
+    egui::ScrollArea::both()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Grid::new("pair_diff_grid")
+                .num_columns(column_count)
+                .striped(true)
+                .min_col_width(column_width)
+                .max_col_width(column_width)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new(locale.text(TextKey::ComparisonPath)).strong());
+                    ui.label(RichText::new(locale.text(TextKey::DiffChangeType)).strong());
                     ui.label(
-                        RichText::new(&difference.path)
-                            .color(COLOR_MATCH)
+                        RichText::new(document_label(comparison, left_index))
+                            .strong()
                             .monospace(),
                     );
-                    ui.label(change_type);
                     ui.label(
-                        RichText::new(
-                            left.map(|value| format_value(Some(value)))
-                                .unwrap_or_else(|| locale.text(TextKey::MissingValue).to_string()),
-                        )
-                        .color(left_color)
-                        .monospace(),
-                    );
-                    ui.label(
-                        RichText::new(
-                            right
-                                .map(|value| format_value(Some(value)))
-                                .unwrap_or_else(|| locale.text(TextKey::MissingValue).to_string()),
-                        )
-                        .color(right_color)
-                        .monospace(),
+                        RichText::new(document_label(comparison, right_index))
+                            .strong()
+                            .monospace(),
                     );
                     ui.end_row();
-                }
-            });
+
+                    for difference in pair_differences {
+                        let left = difference.values.get(left_index).and_then(Option::as_ref);
+                        let right = difference.values.get(right_index).and_then(Option::as_ref);
+                        let (change_type, left_color, right_color) = match pair_change(left, right)
+                        {
+                            Some(PairChange::Added) => (
+                                locale.text(TextKey::DiffAdded),
+                                Color32::GRAY,
+                                COLOR_SUCCESS,
+                            ),
+                            Some(PairChange::Removed) => (
+                                locale.text(TextKey::DiffRemoved),
+                                COLOR_ERROR,
+                                Color32::GRAY,
+                            ),
+                            Some(PairChange::Changed) => {
+                                (locale.text(TextKey::DiffChanged), COLOR_MATCH, COLOR_MATCH)
+                            }
+                            None => continue,
+                        };
+                        ui.label(
+                            RichText::new(&difference.path)
+                                .color(COLOR_MATCH)
+                                .monospace(),
+                        );
+                        ui.label(change_type);
+                        ui.label(
+                            RichText::new(
+                                left.map(|value| format_value(Some(value)))
+                                    .unwrap_or_else(|| {
+                                        locale.text(TextKey::MissingValue).to_string()
+                                    }),
+                            )
+                            .color(left_color)
+                            .monospace(),
+                        );
+                        ui.label(
+                            RichText::new(
+                                right
+                                    .map(|value| format_value(Some(value)))
+                                    .unwrap_or_else(|| {
+                                        locale.text(TextKey::MissingValue).to_string()
+                                    }),
+                            )
+                            .color(right_color)
+                            .monospace(),
+                        );
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
+pub(super) fn comparison_column_width(available_width: f32, column_count: usize) -> f32 {
+    let column_count = column_count.max(1);
+    let spacing = 12.0 * column_count.saturating_sub(1) as f32;
+    ((available_width - spacing) / column_count as f32).max(96.0)
+}
+
+pub(super) fn show_difference_legend(ui: &mut egui::Ui, locale: Locale, context: Option<&str>) {
+    ui.horizontal_wrapped(|ui| {
+        if let Some(context) = context {
+            ui.label(context);
+        }
+        ui.label(RichText::new(locale.text(TextKey::DiffAdded)).color(COLOR_SUCCESS));
+        ui.label(RichText::new(locale.text(TextKey::DiffRemoved)).color(COLOR_ERROR));
+        ui.label(RichText::new(locale.text(TextKey::DiffChanged)).color(COLOR_MATCH));
     });
+}
+
+pub(super) fn comparison_value_color(
+    reference: Option<&Value>,
+    value: Option<&Value>,
+    unchanged_color: Color32,
+) -> Color32 {
+    match pair_change(reference, value) {
+        Some(PairChange::Added) => COLOR_SUCCESS,
+        Some(PairChange::Removed) => COLOR_ERROR,
+        Some(PairChange::Changed) => COLOR_MATCH,
+        None => unchanged_color,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -613,9 +658,14 @@ pub(super) fn export_table_csv(table: &TableData, search: &SearchState) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{PairChange, document_label_for_path, pair_change};
+    use super::{
+        PairChange, comparison_column_width, comparison_value_color, document_label_for_path,
+        pair_change,
+    };
 
+    use super::super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
     use crate::parser::DataFormat;
+    use egui::Color32;
     use serde_json::json;
 
     #[test]
@@ -639,5 +689,35 @@ mod tests {
         );
         assert_eq!(pair_change(Some(&json!(null)), Some(&json!(null))), None);
         assert_eq!(pair_change(None, None), None);
+    }
+
+    #[test]
+    fn comparison_colors_reflect_added_removed_and_changed_values() {
+        let original = json!(1);
+        let updated = json!(2);
+        let unchanged_color = Color32::WHITE;
+
+        assert_eq!(
+            comparison_value_color(None, Some(&updated), unchanged_color),
+            COLOR_SUCCESS
+        );
+        assert_eq!(
+            comparison_value_color(Some(&original), None, unchanged_color),
+            COLOR_ERROR
+        );
+        assert_eq!(
+            comparison_value_color(Some(&original), Some(&updated), unchanged_color),
+            COLOR_MATCH
+        );
+        assert_eq!(
+            comparison_value_color(Some(&original), Some(&original), unchanged_color),
+            unchanged_color
+        );
+    }
+
+    #[test]
+    fn comparison_column_width_tracks_the_available_window_width() {
+        assert_eq!(comparison_column_width(612.0, 4), 144.0);
+        assert_eq!(comparison_column_width(200.0, 4), 96.0);
     }
 }

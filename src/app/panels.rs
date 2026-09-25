@@ -14,7 +14,10 @@ use super::tree::{
     RenderOptions, TreeOutcome, VisibleRows, focus_match_path, render_visible_rows,
     tree_row_height, visible_row_index,
 };
-use super::views::{export_table_csv as table_csv, show_diff, show_graph, show_schema, show_table};
+use super::views::{
+    comparison_column_width, comparison_value_color, export_table_csv as table_csv, show_diff,
+    show_difference_legend, show_graph, show_schema, show_table,
+};
 use super::visualization::{
     VisualizationMode, build_relationship_graph, build_schema_diagram, build_table,
 };
@@ -700,42 +703,61 @@ impl StructViewApp {
             return;
         }
 
-        egui::ScrollArea::both().show(ui, |ui| {
-            egui::Grid::new("comparison_grid")
-                .striped(true)
-                .min_col_width(140.0)
-                .spacing([12.0, 4.0])
-                .show(ui, |ui| {
-                    ui.label(RichText::new(locale.text(TextKey::ComparisonPath)).strong());
-                    for document in &comparison.documents {
-                        let header = format!(
-                            "{} ({}, {:.1} KB, {} ms)",
-                            document.path.display(),
-                            document.format,
-                            document.size_bytes as f64 / 1024.0,
-                            document.load_time_ms
-                        );
-                        ui.label(RichText::new(header).strong().monospace());
-                    }
-                    ui.end_row();
-
-                    for difference in &comparison.differences {
-                        ui.label(
-                            RichText::new(&difference.path)
-                                .color(COLOR_MATCH)
-                                .monospace(),
-                        );
-                        for value in &difference.values {
-                            let text = value
-                                .as_ref()
-                                .map(|value| format_value(Some(value)))
-                                .unwrap_or_else(|| locale.text(TextKey::MissingValue).to_string());
-                            ui.label(RichText::new(text).monospace());
+        show_difference_legend(
+            ui,
+            locale,
+            Some(locale.text(TextKey::ComparisonColorLegend)),
+        );
+        let column_count = comparison.documents.len() + 1;
+        let column_width = comparison_column_width(ui.available_width(), column_count);
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Grid::new("comparison_grid")
+                    .num_columns(column_count)
+                    .striped(true)
+                    .min_col_width(column_width)
+                    .max_col_width(column_width)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(locale.text(TextKey::ComparisonPath)).strong());
+                        for document in &comparison.documents {
+                            let header = format!(
+                                "{} ({}, {:.1} KB, {} ms)",
+                                document.path.display(),
+                                document.format,
+                                document.size_bytes as f64 / 1024.0,
+                                document.load_time_ms
+                            );
+                            ui.label(RichText::new(header).strong().monospace());
                         }
                         ui.end_row();
-                    }
-                });
-        });
+
+                        for difference in &comparison.differences {
+                            ui.label(
+                                RichText::new(&difference.path)
+                                    .color(COLOR_MATCH)
+                                    .monospace(),
+                            );
+                            let reference = difference.values.first().and_then(Option::as_ref);
+                            for value in &difference.values {
+                                let text = value
+                                    .as_ref()
+                                    .map(|value| format_value(Some(value)))
+                                    .unwrap_or_else(|| {
+                                        locale.text(TextKey::MissingValue).to_string()
+                                    });
+                                let color = comparison_value_color(
+                                    reference,
+                                    value.as_ref(),
+                                    ui.visuals().text_color(),
+                                );
+                                ui.label(RichText::new(text).color(color).monospace());
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
     }
 
     /// Отрисовать виртуализированную область с деревом и вернуть отложенные действия.

@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use crate::diff::{compare_values, format_value};
+use crate::diff::{Difference, compare_values, format_value};
 use crate::parser::{DataFormat, parse_data, serialize_node};
 use crate::search::SearchState;
 
@@ -84,12 +84,21 @@ fn run_diff(inputs: &[Source]) -> Result<bool, String> {
 
     println!("{} difference(s) found", differences.len());
     for difference in differences {
-        println!("{}:", difference.path);
-        for (input, value) in inputs.iter().zip(difference.values.iter()) {
-            println!("  {}: {}", source_name(input), format_value(value.as_ref()));
+        for line in difference_lines(&difference, inputs) {
+            println!("{line}");
         }
     }
     Ok(false)
+}
+
+fn difference_lines(difference: &Difference, inputs: &[Source]) -> Vec<String> {
+    let mut lines = vec![format!("{}:", difference.path)];
+    for (input, value) in inputs.iter().zip(&difference.values) {
+        lines.push(format!("  {}:", source_name(input)));
+        let formatted_value = format_value(value.as_ref());
+        lines.extend(formatted_value.lines().map(|line| format!("    {line}")));
+    }
+    lines
 }
 
 fn source_name(source: &Source) -> String {
@@ -178,4 +187,39 @@ fn write_lines<'a, I: IntoIterator<Item = &'a str>>(lines: I) -> Result<(), Stri
         writeln!(lock, "{}", line).map_err(|e| format!("Output error: {}", e))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::difference_lines;
+    use crate::cli::Source;
+    use crate::diff::compare_values;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    #[test]
+    fn groups_pretty_values_under_each_changed_path_and_source() {
+        let inputs = [
+            Source::File(PathBuf::from("before.json")),
+            Source::File(PathBuf::from("after.json")),
+        ];
+        let values = [
+            json!({"settings": {"enabled": true}}),
+            json!({"settings": false}),
+        ];
+        let differences = compare_values(&values);
+
+        assert_eq!(
+            difference_lines(&differences[0], &inputs),
+            vec![
+                "$.settings:".to_string(),
+                "  before.json:".to_string(),
+                "    {".to_string(),
+                "      \"enabled\": true".to_string(),
+                "    }".to_string(),
+                "  after.json:".to_string(),
+                "    false".to_string(),
+            ]
+        );
+    }
 }

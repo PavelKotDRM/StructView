@@ -610,17 +610,52 @@ impl StructViewApp {
         }
     }
 
-    /// Загрузить два или более файла и показать отличия между ними.
+    /// Загрузить файлы и показать отличия между ними.
+    ///
+    /// Если выбран ровно один файл и документ уже открыт, открытый документ
+    /// сравнивается с выбранным и сразу показывается парный diff.
     pub(super) fn load_comparison(&mut self, paths: Vec<PathBuf>) {
-        if paths.len() < 2 {
+        let mut open_document = None;
+        if paths.len() == 1 {
+            self.finalize_pending_inline_edit();
+            if let (Some(path), Some(format), Some(root)) = (
+                self.file_state.path.as_ref(),
+                self.file_state.format,
+                self.root.as_ref(),
+            ) {
+                let value = match node_to_value(root) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.show_toast(&format!("{}: {}", path.display(), error));
+                        return;
+                    }
+                };
+                open_document = Some((
+                    ComparisonDocument {
+                        path: path.clone(),
+                        size_bytes: self.file_state.size_bytes,
+                        load_time_ms: self.file_state.load_time_ms,
+                        format,
+                    },
+                    value,
+                ));
+            }
+        }
+
+        if paths.len() + usize::from(open_document.is_some()) < 2 {
             self.show_toast(self.locale.text(TextKey::ComparisonRequiresFiles));
             return;
         }
 
+        let visualization = if open_document.is_some() {
+            VisualizationMode::Diff
+        } else {
+            VisualizationMode::Comparison
+        };
         self.clear_history();
         self.root = None;
         self.comparison = None;
-        self.visualization = VisualizationMode::Comparison;
+        self.visualization = visualization;
         self.visualization_cache = VisualizationCache::default();
         self.parse_error = None;
         self.file_state = FileState::default();
@@ -637,8 +672,13 @@ impl StructViewApp {
         self.paste_requested = false;
 
         let locale = self.locale;
-        let mut documents = Vec::with_capacity(paths.len());
-        let mut values = Vec::with_capacity(paths.len());
+        let capacity = paths.len() + usize::from(open_document.is_some());
+        let mut documents = Vec::with_capacity(capacity);
+        let mut values = Vec::with_capacity(capacity);
+        if let Some((document, value)) = open_document {
+            documents.push(document);
+            values.push(value);
+        }
         for path in paths {
             let started_at = Instant::now();
             let content = match std::fs::read_to_string(&path) {
@@ -1776,6 +1816,34 @@ mod tests {
 
         std::fs::remove_file(first).unwrap();
         std::fs::remove_file(second).unwrap();
+    }
+
+    #[test]
+    fn comparing_one_selected_file_uses_the_open_document_as_the_first_version() {
+        let prefix =
+            std::env::temp_dir().join(format!("struct_view-open-compare-{}", std::process::id()));
+        let open_path = prefix.with_extension("open.json");
+        let selected_path = prefix.with_extension("selected.json");
+        std::fs::write(&open_path, r#"{"value":1}"#).unwrap();
+        std::fs::write(&selected_path, r#"{"value":2}"#).unwrap();
+
+        let mut app = StructViewApp::default();
+        app.load_file(open_path.clone());
+        app.root.as_mut().unwrap().children[0].display_value = "3".to_string();
+        app.load_comparison(vec![selected_path.clone()]);
+
+        let comparison = app.comparison.as_ref().unwrap();
+        assert_eq!(comparison.documents.len(), 2);
+        assert_eq!(comparison.documents[0].path, open_path);
+        assert_eq!(comparison.documents[1].path, selected_path);
+        assert_eq!(
+            comparison.differences[0].values,
+            vec![Some(serde_json::json!(3)), Some(serde_json::json!(2))]
+        );
+        assert_eq!(app.visualization, VisualizationMode::Diff);
+
+        std::fs::remove_file(open_path).unwrap();
+        std::fs::remove_file(selected_path).unwrap();
     }
 
     #[test]

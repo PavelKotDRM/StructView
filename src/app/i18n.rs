@@ -226,6 +226,7 @@ pub(super) enum TextKey {
     DeleteEditOnly,
     ComparisonPath,
     ComparisonNoDifferences,
+    ComparisonColorLegend,
     MissingValue,
     ComparisonRequiresFiles,
     UnsupportedFileExtension,
@@ -424,6 +425,7 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::DeleteEditOnly => "Удаление доступно только в режиме редактирования",
         TextKey::ComparisonPath => "Путь",
         TextKey::ComparisonNoDifferences => "Файлы не отличаются",
+        TextKey::ComparisonColorLegend => "Относительно первого файла:",
         TextKey::MissingValue => "<отсутствует>",
         TextKey::ComparisonRequiresFiles => "Для сравнения выберите минимум два файла",
         TextKey::UnsupportedFileExtension => {
@@ -577,6 +579,7 @@ fn english_text(key: TextKey) -> &'static str {
         TextKey::DeleteEditOnly => "Deleting is available only in edit mode",
         TextKey::ComparisonPath => "Path",
         TextKey::ComparisonNoDifferences => "Files are identical",
+        TextKey::ComparisonColorLegend => "Relative to the first file:",
         TextKey::MissingValue => "<missing>",
         TextKey::ComparisonRequiresFiles => "Select at least two files to compare",
         TextKey::UnsupportedFileExtension => "Use a .json, .yaml, .yml, .toml, or .json5 extension",
