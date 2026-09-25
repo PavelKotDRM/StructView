@@ -220,8 +220,10 @@ The GUI language can be switched without restarting the application through
 
 The translation covers menus, the toolbar, search, the status bar, tree
 context menus, dialogs, and object/array item counts. Open document content,
-JSON keys, and data values are not translated. The translation catalog is
-located in [src/app/i18n.rs](src/app/i18n.rs).
+JSON keys, and data values are not translated. The locale and message keys are
+in [locale.rs](crates/struct-view-ui/src/app/i18n/locale.rs) and
+[text_key.rs](crates/struct-view-ui/src/app/i18n/text_key.rs); the English and
+Russian catalogs are maintained separately.
 
 ## Command-line interface
 
@@ -344,9 +346,9 @@ Exit codes:
 Check formatting, run tests, and perform static analysis:
 
 ```sh
-cargo fmt --check
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+cargo test --workspace --all-targets
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 GitHub Actions can run the `Quality checks` workflow manually from the Actions
@@ -354,22 +356,23 @@ tab. Pushing a version tag that matches `Cargo.toml`, for example `v0.1.0`,
 builds binaries for Linux, Windows, and macOS and publishes them as a GitHub
 Release.
 
-Main source tree:
+Cargo workspace crates:
 
 ```text
+crates/
+  struct-view-core/       parsing, document trees, search, and comparison
+  struct-view-cli/        command-line parsing and headless commands
+  struct-view-ui/         native GUI, editing, views, and clipboard
+  struct-view-build-info/ shared compile-time build metadata
 src/
-  app/       application state, localization, and GUI rendering;
-  cli/       CLI argument parsing and command execution;
-  parser/    format parsing and tree construction;
-  diff.rs    recursive comparison of normalized document values;
-  search.rs  node search;
-  clipboard.rs
-             system clipboard integration.
+  lib.rs                  compatibility facade over the workspace crates
+  main.rs                 executable entry point
+  console.rs              platform-specific console integration
 ```
 
-The `build.rs` script embeds build information such as the Rust version,
-target platform, build time, and optimization mode. This information is
-available through `--version` and the `Help` menu.
+The `struct-view-build-info` crate embeds the Rust version, target platform,
+build time, and optimization mode. This information is available through
+`--version` and the `Help` menu.
 
 ## License
 

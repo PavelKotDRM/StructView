@@ -1,14 +1,13 @@
 //! Точка входа приложения StructView.
 //!
 //! Разбирает аргументы командной строки: headless-команды выполняются через
-//! [`struct_view::cli`], иначе инициализируется [`eframe`] окно и запускается
+//! [`struct_view::cli`], иначе GUI-крейт запускает окно с
 //! [`struct_view::app::StructViewApp`].
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use eframe::NativeOptions;
 use struct_view::cli::{self, Command};
 use struct_view::console::attach_parent_console;
 
@@ -51,25 +50,7 @@ fn run_gui(files: Vec<PathBuf>) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let options = NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("StructView")
-            .with_inner_size([1024.0, 720.0])
-            .with_drag_and_drop(true),
-        ..Default::default()
-    };
-
-    let result = eframe::run_native(
-        "StructView",
-        options,
-        Box::new(move |cc| {
-            Ok(Box::new(struct_view::app::StructViewApp::new_with_files(
-                cc, files,
-            )))
-        }),
-    );
-
-    match result {
+    match struct_view::run_native_gui(files) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("Error starting GUI: {}", err);

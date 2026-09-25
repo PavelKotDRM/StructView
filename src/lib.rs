@@ -1,48 +1,23 @@
-//! # StructView — библиотека
+//! # StructView
 //!
-//! Быстрое, кроссплатформенное десктопное приложение для чтения и навигации
-//! по JSON, YAML, TOML и JSON5.
+//! Cross-platform desktop application and command-line tools for structured
+//! JSON, YAML, TOML, and JSON5 data.
 //!
-//! ## Архитектура
+//! This crate is the compatibility facade and executable entry point.
+//! Functionality is implemented by the workspace crates:
 //!
-//! ```text
-//! ┌──────────────────────────────────────────────┐
-//! │  Top Panel: меню + строка поиска             │
-//! ├──────────────────────────────────────────────┤
-//! │  Central Panel: активная визуализация        │
-//! ├──────────────────────────────────────────────┤
-//! │  Bottom Panel (Status Bar): имя/размер файла │
-//! └──────────────────────────────────────────────┘
-//! ```
-//!
-//! | Модуль | Назначение |
-//! |--------|-----------|
-//! | [`app`] | Главное состояние приложения, реализация [`eframe::App`], вся логика UI |
-//! | [`build_info`] | Сведения о сборке (время, платформа, компилятор) |
-//! | [`cli`] | Разбор аргументов командной строки и headless-команды |
-//! | [`console`] | Подключение к консоли родительского процесса (Windows) |
-//! | [`parser`] | Парсинг поддерживаемых форматов в дерево [`parser::JsonNode`] |
-//! | [`diff`] | Сравнение нескольких нормализованных документов |
-//! | [`search`] | Полнотекстовый поиск по узлам дерева, навигация Next/Prev |
-//! | [`clipboard`] | Копирование текста и структур в системный буфер обмена |
-//!
-//! ## Структура исходников
-//!
-//! ```text
-//! src/
-//!   app/      state.rs · panels.rs · tree.rs · edit.rs · theme.rs
-//!   cli/      args.rs · exec.rs · source.rs
-//!   parser/   node.rs · build.rs
-//!   diff.rs · search.rs · clipboard.rs · console.rs · build_info.rs
-//! ```
+//! | Crate | Responsibility |
+//! |-------|----------------|
+//! | `struct-view-core` | Parsing, document trees, search, and comparison |
+//! | `struct-view-cli` | Command-line parsing and headless commands |
+//! | `struct-view-ui` | Native GUI, views, editing, and clipboard |
+//! | `struct-view-build-info` | Shared compile-time build metadata |
 
 #![deny(warnings)]
 
-pub mod app;
-pub mod build_info;
-pub mod cli;
-pub mod clipboard;
 pub mod console;
-pub mod diff;
-pub mod parser;
-pub mod search;
+
+pub use struct_view_build_info as build_info;
+pub use struct_view_cli::cli;
+pub use struct_view_core::{diff, parser, search};
+pub use struct_view_ui::{app, clipboard, run_native_gui};

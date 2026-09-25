@@ -1,0 +1,37 @@
+[package]
+name = "struct-view-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native graphical interface for StructView"
+
+[dependencies]
+arboard.workspace = true
+egui.workspace = true
+rfd.workspace = true
+serde_json.workspace = true
+struct-view-build-info = { path = "../struct-view-build-info" }
+struct-view-core = { path = "../struct-view-core" }
+
+# Native clipboard support without XWayland on Wayland.
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))'.dependencies]
+arboard = { workspace = true, features = ["wayland-data-control"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { workspace = true, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "links",
+] }
+
+[target.'cfg(not(windows))'.dependencies]
+eframe = { workspace = true, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "links",
+    "wgpu",
+    "x11",
+    "wayland",
+] }

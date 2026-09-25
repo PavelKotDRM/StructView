@@ -1,30 +1,45 @@
-[package]
-name = "struct_view"
+[workspace]
+members = [
+    ".",
+    "crates/struct-view-build-info",
+    "crates/struct-view-cli",
+    "crates/struct-view-core",
+    "crates/struct-view-ui",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.1"
 edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+arboard = "3"
+eframe = { version = "0.36", default-features = false }
+egui = "0.36"
+json5 = "1"
+rfd = "0.17"
+serde = "1"
+serde_json = "1"
+serde_yaml_ng = "0.10"
+toml = "1"
+vergen = { version = "10", features = ["build", "cargo", "rustc"] }
+
+[package]
+name = "struct_view"
+version.workspace = true
+edition.workspace = true
 description = "A fast, cross-platform structured data explorer and editor for JSON, YAML, TOML, and JSON5"
-build = "build.rs"
 
 [[bin]]
 name = "struct_view"
 path = "src/main.rs"
 
 [dependencies]
-egui = "0.36"
-serde = "1"
-serde_json = "1"
-serde_yaml_ng = "0.10"
-toml = "1"
-json5 = "1"
-rfd = "0.17"
-arboard = "3"
-
-[build-dependencies]
-vergen = { version = "10", features = ["build", "cargo", "rustc"] }
-
-# Нативный буфер обмена Wayland (без него на Wayland требуется XWayland).
-[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))'.dependencies]
-arboard = { version = "3", features = ["wayland-data-control"] }
+struct-view-build-info = { path = "crates/struct-view-build-info" }
+struct-view-cli = { path = "crates/struct-view-cli" }
+struct-view-core = { path = "crates/struct-view-core" }
+struct-view-ui = { path = "crates/struct-view-ui" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -32,23 +47,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
-] }
-eframe = { version = "0.36", default-features = false, features = [
-    "accesskit",
-    "default_fonts",
-    "glow",
-    "links",
-] }
-
-[target.'cfg(not(windows))'.dependencies]
-eframe = { version = "0.36", default-features = false, features = [
-    "accesskit",
-    "default_fonts",
-    "glow",
-    "links",
-    "wgpu",
-    "x11",
-    "wayland",
 ] }
 
 [profile.release]

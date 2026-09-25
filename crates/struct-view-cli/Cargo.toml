@@ -1,0 +1,13 @@
+[package]
+name = "struct-view-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless commands and argument parsing for StructView"
+
+[dependencies]
+struct-view-build-info = { path = "../struct-view-build-info" }
+struct-view-core = { path = "../struct-view-core" }
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "struct-view-build-info"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Build metadata shared by StructView application crates"
+build = "build.rs"
+
+[build-dependencies]
+vergen.workspace = true
