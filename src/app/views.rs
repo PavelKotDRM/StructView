@@ -9,7 +9,9 @@ use crate::search::SearchState;
 
 use super::i18n::{Locale, TextKey};
 use super::state::ComparisonState;
-use super::theme::{COLOR_ACTIVE_MATCH, COLOR_ERROR, COLOR_KEY, COLOR_MATCH, COLOR_SUCCESS};
+use super::theme::{
+    COLOR_ACTIVE_MATCH, COLOR_ERROR, COLOR_KEY, COLOR_MATCH, COLOR_SUCCESS, value_color,
+};
 use super::visualization::{
     RelationshipGraph, SchemaDiagram, SchemaSource, TableData, schema_visible_indices,
     table_to_csv, table_visible_indices,
@@ -595,20 +597,12 @@ fn value_type_label(locale: Locale, value_type: &JsonValueType) -> &'static str 
         JsonValueType::Array => locale.text(TextKey::TypeArray),
         JsonValueType::String => locale.text(TextKey::TypeString),
         JsonValueType::DateTime => locale.text(TextKey::TypeDateTime),
+        JsonValueType::Comment => locale.text(TextKey::TypeComment),
+        JsonValueType::Metadata => locale.text(TextKey::TypeMetadata),
         JsonValueType::Number => locale.text(TextKey::TypeNumber),
         JsonValueType::Float => locale.text(TextKey::TypeFloat),
         JsonValueType::Bool => locale.text(TextKey::TypeBoolean),
         JsonValueType::Null => locale.text(TextKey::TypeNull),
-    }
-}
-
-fn value_color(value_type: &JsonValueType) -> Color32 {
-    match value_type {
-        JsonValueType::String | JsonValueType::DateTime => super::theme::COLOR_STRING,
-        JsonValueType::Number | JsonValueType::Float => super::theme::COLOR_NUMBER,
-        JsonValueType::Bool => super::theme::COLOR_BOOL,
-        JsonValueType::Null => super::theme::COLOR_NULL,
-        JsonValueType::Object | JsonValueType::Array => COLOR_KEY,
     }
 }
 

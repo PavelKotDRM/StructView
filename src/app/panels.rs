@@ -119,6 +119,28 @@ impl StructViewApp {
         });
 
         ui.menu_button(locale.text(TextKey::EditMenu), |ui| {
+            if ui
+                .add_enabled(
+                    self.can_undo(),
+                    egui::Button::new(locale.text(TextKey::Undo)),
+                )
+                .clicked()
+            {
+                self.undo_requested = true;
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.can_redo(),
+                    egui::Button::new(locale.text(TextKey::Redo)),
+                )
+                .clicked()
+            {
+                self.redo_requested = true;
+                ui.close();
+            }
+            ui.separator();
+
             let copy_enabled = !self.selected_paths.is_empty();
             if ui
                 .add_enabled(
@@ -140,6 +162,17 @@ impl StructViewApp {
                 .clicked()
             {
                 self.paste_requested = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(
+                    self.can_delete_selected(),
+                    egui::Button::new(locale.text(TextKey::DeleteSelectedStructures)),
+                )
+                .clicked()
+            {
+                self.delete_requested = true;
                 ui.close();
             }
         });
@@ -284,6 +317,15 @@ impl StructViewApp {
         }
         if ui
             .add_enabled(
+                self.can_delete_selected(),
+                egui::Button::new(locale.text(TextKey::Delete)),
+            )
+            .clicked()
+        {
+            self.delete_requested = true;
+        }
+        if ui
+            .add_enabled(
                 self.mode == AppMode::Edit && self.can_paste_into_selected(),
                 egui::Button::new(locale.text(TextKey::Paste)),
             )
@@ -296,20 +338,29 @@ impl StructViewApp {
         }
     }
 
-    /// Обработать горячие клавиши копирования и вставки структур.
+    /// Обработать горячие клавиши команд редактирования и работы со структурами.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
 
-        let (copy, paste) = ctx.input(|input| {
+        let (copy, paste, undo, redo, delete) = ctx.input(|input| {
+            let command = input.modifiers.command;
             (
-                input.modifiers.command && input.key_pressed(egui::Key::C),
-                input.modifiers.command && input.key_pressed(egui::Key::V),
+                command && input.key_pressed(egui::Key::C),
+                command && input.key_pressed(egui::Key::V),
+                command && input.key_pressed(egui::Key::Z) && !input.modifiers.shift,
+                command
+                    && (input.key_pressed(egui::Key::Y)
+                        || (input.modifiers.shift && input.key_pressed(egui::Key::Z))),
+                input.key_pressed(egui::Key::Delete),
             )
         });
         self.copy_structures_requested |= copy;
         self.paste_requested |= paste;
+        self.undo_requested |= undo && self.can_undo();
+        self.redo_requested |= redo && self.can_redo();
+        self.delete_requested |= delete && self.can_delete_selected();
     }
 
     /// Развернуть или свернуть все узлы дерева.
@@ -468,7 +519,10 @@ impl StructViewApp {
             self.handle_dropped_files(ui);
             let save_requested = std::mem::take(&mut self.save_requested);
             let copy_structures_requested = std::mem::take(&mut self.copy_structures_requested);
+            let delete_requested = std::mem::take(&mut self.delete_requested);
             let paste_requested = std::mem::take(&mut self.paste_requested);
+            let undo_requested = std::mem::take(&mut self.undo_requested);
+            let redo_requested = std::mem::take(&mut self.redo_requested);
 
             if self.comparison.is_some() {
                 if self.visualization == VisualizationMode::Diff {
@@ -489,6 +543,13 @@ impl StructViewApp {
             if let Some(err) = &self.parse_error {
                 show_parse_error(ui, &err.to_string(), self.locale);
                 return;
+            }
+
+            if self.mode != AppMode::Edit
+                || self.visualization != VisualizationMode::Tree
+                || self.field_dialog.is_some()
+            {
+                self.finalize_pending_inline_edit();
             }
 
             let outcome = match self.visualization {
@@ -540,6 +601,7 @@ impl StructViewApp {
                 VisualizationMode::Comparison | VisualizationMode::Diff => self.show_tree(ui),
             };
 
+            let inline_edit_restored = self.handle_inline_edit_events(outcome.inline_edit_events);
             if let Some(request) = outcome.selection_request {
                 self.apply_selection_request(request);
             }
@@ -549,7 +611,7 @@ impl StructViewApp {
             if let Some(request) = outcome.edit_field_request {
                 self.open_edit_field_dialog(request);
             }
-            if outcome.tree_changed {
+            if outcome.tree_changed || inline_edit_restored {
                 self.invalidate_visualization_cache();
                 self.refresh_search();
             }
@@ -570,6 +632,13 @@ impl StructViewApp {
                 self.paste_into_path(path);
             }
 
+            if undo_requested {
+                self.undo();
+            }
+            if redo_requested {
+                self.redo();
+            }
+
             if save_requested {
                 self.save_current();
             }
@@ -578,6 +647,12 @@ impl StructViewApp {
             }
             if paste_requested {
                 self.paste_into_selected();
+            }
+            if delete_requested {
+                self.delete_selected();
+            }
+            if self.field_dialog.is_some() {
+                self.finalize_pending_inline_edit();
             }
             self.show_field_dialog(ui.ctx());
         });
@@ -791,4 +866,35 @@ fn show_parse_error(ui: &mut Ui, message: &str, locale: Locale) {
     egui::ScrollArea::both().show(ui, |ui| {
         ui.label(RichText::new(message).monospace());
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppMode, StructViewApp};
+    use crate::parser::parse_json;
+
+    #[test]
+    fn delete_key_requests_deletion_of_selected_structure_in_edit_mode() {
+        let mut app = StructViewApp::default();
+        app.root = Some(parse_json(r#"{"value":1}"#).unwrap());
+        app.mode = AppMode::Edit;
+        app.selected_paths = std::collections::BTreeSet::from(["value".to_string()]);
+        let context = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Delete,
+                physical_key: Some(egui::Key::Delete),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            ..Default::default()
+        };
+
+        context
+            .run_ui(input, |ui| app.handle_shortcuts(ui.ctx()))
+            .drop_without_applying_deltas();
+
+        assert!(app.delete_requested);
+    }
 }

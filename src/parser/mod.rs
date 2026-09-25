@@ -19,8 +19,8 @@
 mod build;
 mod node;
 
-pub(crate) use build::node_to_value;
 pub use build::{
     DataFormat, build_path, parse_data, parse_json, plural_ru, serialize_data, serialize_node,
 };
+pub(crate) use build::{comment_input, format_comment_for_format, node_to_value};
 pub use node::{JsonNode, JsonValueType, ParseError, set_expanded_all};

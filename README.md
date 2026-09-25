@@ -116,8 +116,12 @@ The interface provides:
 - search with previous and next match navigation;
 - search options for key/value scope, case sensitivity, and exact matching;
 - `View` and `Edit` modes;
+- undo and redo for up to 100 document changes; inline edits are grouped into
+  one action (`Ctrl+Z` / `Ctrl+Y`, or `Cmd+Z` / `Cmd+Shift+Z` on macOS);
 - adding fields through a type-aware constructor; strings use plain text,
   numbers and booleans are validated, and objects/arrays start empty;
+- adding document comments in JSON5, YAML, and TOML, plus tagged YAML values
+  through the constructor;
 - editing any node through `Edit field…` in its context menu, including
   changing its type and renaming object fields;
 - node selection by clicking; hold `Ctrl`/`Cmd` while clicking to add nodes to
@@ -155,8 +159,8 @@ To convert an open document, choose `File -> Convert to` and select `JSON`,
 `YAML`, `TOML`, or `JSON5` (the current format is omitted). The conversion
 dialog suggests a filename with the target format's extension and writes a
 separate file, leaving the open document unchanged. `JSON5` output uses the
-same JSON-compatible data as the other serializers, so comments and trailing
-commas are not preserved.
+same JSON-compatible data as the other serializers; comments are retained only
+in formats that support them, while trailing commas are normalized.
 
 ### Comparing files
 
@@ -180,11 +184,15 @@ not support `null`.
 YAML streams with multiple documents are shown as an array of documents.
 Non-string YAML mapping keys are displayed using their compact JSON spelling;
 if two keys would become the same string, parsing fails instead of silently
-discarding one. Explicit YAML tags and non-finite YAML numbers are reported as
-unsupported because the viewer's shared data model cannot preserve them
-losslessly. Comments, anchors, and formatting are not preserved when saving.
-JSON5 comments and trailing commas are likewise normalized and are not
-preserved when saving.
+discarding one. YAML tags on values appear as `Metadata` nodes and are
+preserved when saving as YAML; conversion to a format that cannot represent a
+tag fails instead of dropping it. Tagged mapping keys and non-finite YAML
+numbers remain unsupported. Comments in JSON5, YAML, and TOML appear as
+separate nodes and are retained when saving to a format that supports them.
+Comments are normalized to standalone lines at the start of the output;
+original comment positions and styles, YAML anchors, and formatting are not
+preserved. Conversion to strict JSON drops comments, and trailing commas are
+normalized.
 
 ### Copying structures between files
 

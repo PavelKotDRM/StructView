@@ -12,17 +12,24 @@ use crate::clipboard::{
 };
 use crate::diff::{Difference, compare_values};
 use crate::parser::{
-    DataFormat, JsonNode, JsonValueType, ParseError, node_to_value, parse_data, serialize_node,
+    DataFormat, JsonNode, JsonValueType, ParseError, comment_input, node_to_value, parse_data,
+    serialize_node,
 };
 use crate::search::SearchState;
 
 use super::edit::{
-    add_typed_child_at_path, edit_child_at_path, find_node, is_object_child,
-    paste_structures_at_path, selected_structures,
+    DeleteError, add_typed_child_at_path, apply_primitive_edit, delete_selected_structures,
+    edit_child_at_path, find_node, find_node_mut, is_object_child, paste_structures_at_path,
+    selected_structures,
 };
 use super::i18n::{Locale, TextKey};
-use super::tree::{AddChildRequest, EditFieldRequest, SelectionRequest, VisibleRows};
+use super::theme::value_color;
+use super::tree::{
+    AddChildRequest, EditFieldRequest, InlineEditEvent, SelectionRequest, VisibleRows,
+};
 use super::visualization::{VisualizationCache, VisualizationMode};
+
+const HISTORY_LIMIT: usize = 100;
 
 /// Метаданные загруженного файла, отображаемые в статус-баре.
 #[derive(Debug, Default)]
@@ -95,6 +102,20 @@ pub(super) struct FieldDialog {
     error: Option<String>,
 }
 
+/// Полный снимок документа до незавершённого inline-редактирования.
+#[derive(Debug)]
+pub(super) struct PendingInlineEdit {
+    path: String,
+    root_before: JsonNode,
+}
+
+fn push_limited_snapshot(history: &mut Vec<JsonNode>, snapshot: JsonNode) {
+    if history.len() >= HISTORY_LIMIT {
+        history.remove(0);
+    }
+    history.push(snapshot);
+}
+
 impl From<AddChildRequest> for FieldDialog {
     fn from(request: AddChildRequest) -> Self {
         Self {
@@ -157,8 +178,20 @@ pub struct StructViewApp {
     pub(super) clipboard_payload: Option<Vec<ClipboardEntry>>,
     /// Отложенный запрос копирования выбранных структур.
     pub(super) copy_structures_requested: bool,
+    /// Отложенный запрос удаления выбранных структур.
+    pub(super) delete_requested: bool,
     /// Отложенный запрос вставки в выбранный контейнер.
     pub(super) paste_requested: bool,
+    /// История снимков до последних изменений документа.
+    undo_history: Vec<JsonNode>,
+    /// Снимки состояний, отменённых командой Undo.
+    redo_history: Vec<JsonNode>,
+    /// Снимок, собираемый для текущего inline-редактирования.
+    pending_inline_edit: Option<PendingInlineEdit>,
+    /// Отложенная команда Undo до завершения текущей отрисовки.
+    pub(super) undo_requested: bool,
+    /// Отложенная команда Redo до завершения текущей отрисовки.
+    pub(super) redo_requested: bool,
 }
 
 impl Default for StructViewApp {
@@ -184,7 +217,13 @@ impl Default for StructViewApp {
             visible_rows_dirty: true,
             clipboard_payload: None,
             copy_structures_requested: false,
+            delete_requested: false,
             paste_requested: false,
+            undo_history: Vec::new(),
+            redo_history: Vec::new(),
+            pending_inline_edit: None,
+            undo_requested: false,
+            redo_requested: false,
         }
     }
 }
@@ -242,6 +281,188 @@ impl StructViewApp {
         }
     }
 
+    fn clear_history(&mut self) {
+        self.undo_history.clear();
+        self.redo_history.clear();
+        self.pending_inline_edit = None;
+        self.delete_requested = false;
+        self.undo_requested = false;
+        self.redo_requested = false;
+    }
+
+    pub(super) fn can_undo(&self) -> bool {
+        self.mode == AppMode::Edit
+            && self.comparison.is_none()
+            && self.field_dialog.is_none()
+            && self.root.is_some()
+            && (!self.undo_history.is_empty() || self.pending_inline_edit.is_some())
+    }
+
+    pub(super) fn can_redo(&self) -> bool {
+        self.mode == AppMode::Edit
+            && self.comparison.is_none()
+            && self.field_dialog.is_none()
+            && self.root.is_some()
+            && self.pending_inline_edit.is_none()
+            && !self.redo_history.is_empty()
+    }
+
+    pub(super) fn undo(&mut self) {
+        if self.mode != AppMode::Edit || self.comparison.is_some() || self.field_dialog.is_some() {
+            return;
+        }
+        self.finalize_pending_inline_edit();
+        if !self.can_undo() {
+            return;
+        }
+        let Some(snapshot) = self.undo_history.pop() else {
+            return;
+        };
+        let Some(current) = self.root.replace(snapshot) else {
+            return;
+        };
+        push_limited_snapshot(&mut self.redo_history, current);
+        self.refresh_after_history_navigation(TextKey::ActionUndone);
+    }
+
+    pub(super) fn redo(&mut self) {
+        if !self.can_redo() {
+            return;
+        }
+        let Some(snapshot) = self.redo_history.pop() else {
+            return;
+        };
+        let Some(current) = self.root.replace(snapshot) else {
+            return;
+        };
+        push_limited_snapshot(&mut self.undo_history, current);
+        self.refresh_after_history_navigation(TextKey::ActionRedone);
+    }
+
+    fn push_undo_snapshot(&mut self, snapshot: JsonNode) {
+        push_limited_snapshot(&mut self.undo_history, snapshot);
+        self.redo_history.clear();
+    }
+
+    pub(super) fn handle_inline_edit_events(&mut self, events: Vec<InlineEditEvent>) -> bool {
+        let mut restored_invalid_edit = false;
+        let mut finished_paths = BTreeSet::new();
+
+        for event in &events {
+            if event.finished
+                && self
+                    .pending_inline_edit
+                    .as_ref()
+                    .is_some_and(|pending| pending.path == event.path)
+            {
+                restored_invalid_edit |= self.finish_pending_inline_edit(event.valid);
+                finished_paths.insert(event.path.clone());
+            }
+        }
+
+        for event in events {
+            if !event.changed || finished_paths.contains(&event.path) {
+                continue;
+            }
+            if self
+                .pending_inline_edit
+                .as_ref()
+                .is_some_and(|pending| pending.path != event.path)
+            {
+                restored_invalid_edit |= self.finish_pending_inline_edit(true);
+            }
+            if self.pending_inline_edit.is_none() {
+                self.begin_inline_edit(&event);
+            }
+            if event.finished {
+                restored_invalid_edit |= self.finish_pending_inline_edit(event.valid);
+            }
+        }
+
+        restored_invalid_edit
+    }
+
+    fn begin_inline_edit(&mut self, event: &InlineEditEvent) {
+        let Some(mut root_before) = self.root.clone() else {
+            return;
+        };
+        let Some(node) = find_node_mut(&mut root_before, &event.path) else {
+            return;
+        };
+        node.value_type = event.before_value_type.clone();
+        node.display_value = event.before_display_value.clone();
+        self.pending_inline_edit = Some(PendingInlineEdit {
+            path: event.path.clone(),
+            root_before,
+        });
+    }
+
+    fn finish_pending_inline_edit(&mut self, valid: bool) -> bool {
+        let Some(pending) = self.pending_inline_edit.take() else {
+            return false;
+        };
+        let mut valid = valid;
+        if valid {
+            let result = self
+                .root
+                .as_mut()
+                .and_then(|root| find_node_mut(root, &pending.path))
+                .ok_or_else(|| "Не удалось найти inline-правку для завершения".to_string())
+                .and_then(|node| {
+                    let edited = node.display_value.clone();
+                    apply_primitive_edit(node, &edited)
+                });
+            if let Err(error) = result {
+                self.show_toast(&error);
+                valid = false;
+            }
+        }
+        let Some(before_node) = find_node(&pending.root_before, &pending.path) else {
+            return false;
+        };
+
+        if !valid {
+            if let Some(root) = self.root.as_mut()
+                && let Some(node) = find_node_mut(root, &pending.path)
+            {
+                node.value_type = before_node.value_type.clone();
+                node.display_value = before_node.display_value.clone();
+            }
+            return true;
+        }
+
+        let changed = self
+            .root
+            .as_ref()
+            .and_then(|root| find_node(root, &pending.path))
+            .is_some_and(|after_node| {
+                after_node.value_type != before_node.value_type
+                    || after_node.display_value != before_node.display_value
+            });
+        if changed {
+            self.push_undo_snapshot(pending.root_before);
+        }
+        false
+    }
+
+    pub(super) fn finalize_pending_inline_edit(&mut self) {
+        if self.pending_inline_edit.is_some() {
+            self.finish_pending_inline_edit(true);
+            self.visible_rows_dirty = true;
+            self.invalidate_visualization_cache();
+            self.refresh_search();
+        }
+    }
+
+    fn refresh_after_history_navigation(&mut self, message: TextKey) {
+        self.pending_inline_edit = None;
+        self.selected_paths.clear();
+        self.visible_rows_dirty = true;
+        self.invalidate_visualization_cache();
+        self.refresh_search();
+        self.show_toast(self.locale.text(message));
+    }
+
     /// Загрузить файл поддерживаемого формата по указанному пути.
     ///
     /// Читает файл, измеряет время парсинга и сохраняет результат
@@ -252,6 +473,7 @@ impl StructViewApp {
     /// Ошибки чтения файла и парсинга записываются в `self.parse_error`;
     /// метод не возвращает `Result` — ошибки отображаются в UI.
     pub(super) fn load_file(&mut self, path: PathBuf) {
+        self.clear_history();
         self.comparison = None;
         self.visualization = VisualizationMode::Tree;
         self.visualization_cache = VisualizationCache::default();
@@ -395,6 +617,7 @@ impl StructViewApp {
             return;
         }
 
+        self.clear_history();
         self.root = None;
         self.comparison = None;
         self.visualization = VisualizationMode::Comparison;
@@ -559,6 +782,7 @@ impl StructViewApp {
 
     /// Закрыть текущий документ и очистить связанные с ним состояния.
     pub(super) fn close_file(&mut self) {
+        self.clear_history();
         self.root = None;
         self.comparison = None;
         self.visualization = VisualizationMode::Tree;
@@ -646,6 +870,62 @@ impl StructViewApp {
                 })
     }
 
+    /// Проверить, можно ли удалить текущий выбор.
+    pub(super) fn can_delete_selected(&self) -> bool {
+        self.mode == AppMode::Edit
+            && self.comparison.is_none()
+            && self.visualization == VisualizationMode::Tree
+            && self.field_dialog.is_none()
+            && self.root.is_some()
+            && !self.selected_paths.is_empty()
+    }
+
+    /// Удалить выбранные структуры с сохранением возможности отмены.
+    pub(super) fn delete_selected(&mut self) {
+        if self.mode != AppMode::Edit {
+            self.show_toast(self.locale.text(TextKey::DeleteEditOnly));
+            return;
+        }
+        if self.comparison.is_some()
+            || self.visualization != VisualizationMode::Tree
+            || self.field_dialog.is_some()
+        {
+            return;
+        }
+        if self.selected_paths.is_empty() {
+            self.show_toast(self.locale.text(TextKey::SelectStructure));
+            return;
+        }
+        self.finalize_pending_inline_edit();
+
+        let Some(root) = self.root.as_mut() else {
+            self.show_toast(self.locale.text(TextKey::NoDocument));
+            return;
+        };
+        let snapshot = root.clone();
+        let selected_paths = self.selected_paths.clone();
+        let result = delete_selected_structures(root, &selected_paths);
+
+        match result {
+            Ok(count) => {
+                self.push_undo_snapshot(snapshot);
+                self.selected_paths.clear();
+                self.visible_rows_dirty = true;
+                self.invalidate_visualization_cache();
+                self.refresh_search();
+                self.show_toast(&self.locale.structures_deleted(count));
+            }
+            Err(error) => {
+                let message = match error {
+                    DeleteError::EmptySelection => TextKey::SelectStructure,
+                    DeleteError::RootSelected => TextKey::CannotDeleteRoot,
+                    DeleteError::SelectionNotFound => TextKey::SelectedStructureNotFound,
+                };
+                self.show_toast(self.locale.text(message));
+            }
+        }
+    }
+
     /// Скопировать структуры по указанным путям в системный буфер обмена.
     pub(super) fn copy_structures_at_paths(&mut self, paths: Vec<String>) {
         let selected_paths = paths.into_iter().collect::<BTreeSet<_>>();
@@ -710,6 +990,7 @@ impl StructViewApp {
             }
         };
 
+        let history_before = self.root.clone();
         let result = self
             .root
             .as_mut()
@@ -718,6 +999,9 @@ impl StructViewApp {
 
         match result {
             Ok(count) => {
+                if let Some(snapshot) = history_before {
+                    self.push_undo_snapshot(snapshot);
+                }
                 self.retain_valid_selected_paths();
                 self.visible_rows_dirty = true;
                 self.invalidate_visualization_cache();
@@ -779,13 +1063,15 @@ impl StructViewApp {
                 JsonValueType::String => serde_json::from_str::<String>(&node.display_value)
                     .map_err(|error| format!("Некорректная строка: {}", error))?,
                 JsonValueType::DateTime => node.display_value.clone(),
+                JsonValueType::Comment => comment_input(&node.display_value),
+                JsonValueType::Metadata => serialize_node(node, DataFormat::Yaml, true)?,
                 _ => node.display_value.clone(),
             };
             Ok((
                 node.key.clone().unwrap_or_default(),
                 node.value_type.clone(),
                 value,
-                is_object_child(root, &request.path),
+                node.value_type != JsonValueType::Comment && is_object_child(root, &request.path),
             ))
         })();
 
@@ -822,10 +1108,11 @@ impl StructViewApp {
         let is_toml_root = format == DataFormat::Toml
             && matches!(&dialog.target, FieldDialogTarget::Edit { path, .. } if path.is_empty());
         let is_edit = matches!(&dialog.target, FieldDialogTarget::Edit { .. });
+        let is_comment_edit = is_edit && dialog.value_type == JsonValueType::Comment;
         let show_key_input = match &dialog.target {
             FieldDialogTarget::Add { is_object, .. } => *is_object,
             FieldDialogTarget::Edit { key_editable, .. } => *key_editable,
-        };
+        } && dialog.value_type != JsonValueType::Comment;
         let show_readonly_key = is_edit && !show_key_input && !dialog.key.is_empty();
         let title = match &dialog.target {
             FieldDialogTarget::Add {
@@ -860,7 +1147,9 @@ impl StructViewApp {
                     egui::ComboBox::from_id_salt("field_dialog_type")
                         .selected_text(field_type_label(locale, &dialog.value_type))
                         .show_ui(ui, |ui| {
-                            for value_type in field_value_types(format, is_toml_root) {
+                            for value_type in
+                                field_value_types(format, is_toml_root, is_comment_edit)
+                            {
                                 ui.selectable_value(
                                     &mut dialog.value_type,
                                     value_type.clone(),
@@ -879,7 +1168,28 @@ impl StructViewApp {
                         ui.add(
                             egui::TextEdit::multiline(&mut dialog.value)
                                 .desired_width(420.0)
-                                .desired_rows(4),
+                                .desired_rows(4)
+                                .text_color(value_color(&dialog.value_type)),
+                        );
+                    }
+                    JsonValueType::Comment => {
+                        ui.label(locale.text(TextKey::Value));
+                        ui.add(
+                            egui::TextEdit::multiline(&mut dialog.value)
+                                .desired_width(420.0)
+                                .desired_rows(4)
+                                .text_color(value_color(&dialog.value_type))
+                                .hint_text(locale.text(TextKey::CommentHint)),
+                        );
+                    }
+                    JsonValueType::Metadata => {
+                        ui.label(locale.text(TextKey::Value));
+                        ui.add(
+                            egui::TextEdit::multiline(&mut dialog.value)
+                                .desired_width(420.0)
+                                .desired_rows(4)
+                                .text_color(value_color(&dialog.value_type))
+                                .hint_text(locale.text(TextKey::MetadataHint)),
                         );
                     }
                     JsonValueType::DateTime => {
@@ -888,6 +1198,7 @@ impl StructViewApp {
                             egui::TextEdit::singleline(&mut dialog.value)
                                 .desired_width(320.0)
                                 .font(egui::TextStyle::Monospace)
+                                .text_color(value_color(&dialog.value_type))
                                 .hint_text("1979-05-27T07:32:00Z"),
                         );
                     }
@@ -896,36 +1207,51 @@ impl StructViewApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut dialog.value)
                                 .desired_width(320.0)
-                                .font(egui::TextStyle::Monospace),
+                                .font(egui::TextStyle::Monospace)
+                                .text_color(value_color(&dialog.value_type)),
                         );
                     }
                     JsonValueType::Bool => {
                         ui.horizontal(|ui| {
                             ui.label(locale.text(TextKey::Value));
                             egui::ComboBox::from_id_salt("field_dialog_bool")
-                                .selected_text(&dialog.value)
+                                .selected_text(
+                                    egui::RichText::new(&dialog.value)
+                                        .color(value_color(&dialog.value_type)),
+                                )
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(
                                         &mut dialog.value,
                                         "true".to_string(),
-                                        "true",
+                                        egui::RichText::new("true")
+                                            .color(value_color(&dialog.value_type)),
                                     );
                                     ui.selectable_value(
                                         &mut dialog.value,
                                         "false".to_string(),
-                                        "false",
+                                        egui::RichText::new("false")
+                                            .color(value_color(&dialog.value_type)),
                                     );
                                 });
                         });
                     }
                     JsonValueType::Null => {
-                        ui.label(format!("{}: null", locale.text(TextKey::Value)));
+                        ui.horizontal(|ui| {
+                            ui.label(locale.text(TextKey::Value));
+                            ui.colored_label(value_color(&dialog.value_type), "null");
+                        });
                     }
                     JsonValueType::Object => {
-                        ui.label(locale.text(TextKey::EmptyObject));
+                        ui.colored_label(
+                            value_color(&dialog.value_type),
+                            locale.text(TextKey::EmptyObject),
+                        );
                     }
                     JsonValueType::Array => {
-                        ui.label(locale.text(TextKey::EmptyArray));
+                        ui.colored_label(
+                            value_color(&dialog.value_type),
+                            locale.text(TextKey::EmptyArray),
+                        );
                     }
                 }
 
@@ -956,6 +1282,7 @@ impl StructViewApp {
         }
 
         let target = dialog.target.clone();
+        let history_before = self.root.clone();
         let result = self
             .root
             .as_mut()
@@ -981,6 +1308,9 @@ impl StructViewApp {
 
         match result {
             Ok(()) => {
+                if let Some(snapshot) = history_before {
+                    self.push_undo_snapshot(snapshot);
+                }
                 if is_edit {
                     self.retain_valid_selected_paths();
                 }
@@ -1002,7 +1332,14 @@ impl StructViewApp {
     }
 }
 
-fn field_value_types(format: DataFormat, is_toml_root: bool) -> Vec<JsonValueType> {
+fn field_value_types(
+    format: DataFormat,
+    is_toml_root: bool,
+    is_comment_edit: bool,
+) -> Vec<JsonValueType> {
+    if is_comment_edit {
+        return vec![JsonValueType::Comment];
+    }
     if is_toml_root {
         return vec![JsonValueType::Object];
     }
@@ -1020,6 +1357,12 @@ fn field_value_types(format: DataFormat, is_toml_root: bool) -> Vec<JsonValueTyp
     } else {
         types.insert(3, JsonValueType::Null);
     }
+    if format != DataFormat::Json {
+        types.push(JsonValueType::Comment);
+    }
+    if format == DataFormat::Yaml {
+        types.push(JsonValueType::Metadata);
+    }
     types
 }
 
@@ -1027,6 +1370,8 @@ fn field_type_label(locale: Locale, value_type: &JsonValueType) -> &'static str 
     match value_type {
         JsonValueType::String => locale.text(TextKey::TypeString),
         JsonValueType::DateTime => locale.text(TextKey::TypeDateTime),
+        JsonValueType::Comment => locale.text(TextKey::TypeComment),
+        JsonValueType::Metadata => locale.text(TextKey::TypeMetadata),
         JsonValueType::Number => locale.text(TextKey::TypeNumber),
         JsonValueType::Float => locale.text(TextKey::TypeFloat),
         JsonValueType::Bool => locale.text(TextKey::TypeBoolean),
@@ -1045,7 +1390,9 @@ fn default_field_value(value_type: &JsonValueType) -> String {
         | JsonValueType::Float
         | JsonValueType::Null
         | JsonValueType::Object
-        | JsonValueType::Array => String::new(),
+        | JsonValueType::Array
+        | JsonValueType::Comment
+        | JsonValueType::Metadata => String::new(),
     }
 }
 
@@ -1073,11 +1420,192 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        AppMode, StructViewApp, VisualizationMode, edit_child_at_path, paste_structures_at_path,
-        with_format_extension,
+        AppMode, HISTORY_LIMIT, InlineEditEvent, StructViewApp, VisualizationMode,
+        edit_child_at_path, field_value_types, paste_structures_at_path, with_format_extension,
     };
     use crate::clipboard::ClipboardEntry;
-    use crate::parser::{DataFormat, JsonValueType, parse_data};
+    use crate::parser::{DataFormat, JsonValueType, node_to_value, parse_data};
+
+    #[test]
+    fn constructor_offers_comments_and_metadata_only_for_supported_formats() {
+        assert!(
+            field_value_types(DataFormat::Json5, false, false).contains(&JsonValueType::Comment)
+        );
+        assert!(
+            field_value_types(DataFormat::Yaml, false, false).contains(&JsonValueType::Comment)
+        );
+        assert!(
+            field_value_types(DataFormat::Toml, false, false).contains(&JsonValueType::Comment)
+        );
+        assert!(
+            !field_value_types(DataFormat::Json, false, false).contains(&JsonValueType::Comment)
+        );
+        assert!(
+            field_value_types(DataFormat::Yaml, false, false).contains(&JsonValueType::Metadata)
+        );
+        assert!(
+            !field_value_types(DataFormat::Json5, false, false).contains(&JsonValueType::Metadata)
+        );
+        assert_eq!(
+            field_value_types(DataFormat::Json5, false, true),
+            vec![JsonValueType::Comment]
+        );
+    }
+
+    #[test]
+    fn undo_and_redo_restore_document_snapshots_and_new_changes_clear_redo() {
+        let root = parse_data(r#"{"value":1}"#, Some(DataFormat::Json))
+            .unwrap()
+            .0;
+        let mut app = StructViewApp {
+            root: Some(root),
+            mode: AppMode::Edit,
+            ..StructViewApp::default()
+        };
+
+        let before_edit = app.root.as_ref().unwrap().clone();
+        app.root.as_mut().unwrap().children[0].display_value = "2".to_string();
+        app.push_undo_snapshot(before_edit);
+        assert!(app.can_undo());
+
+        app.undo();
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+            1
+        );
+        assert!(app.can_redo());
+
+        app.redo();
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+            2
+        );
+
+        app.undo();
+        let before_new_edit = app.root.as_ref().unwrap().clone();
+        app.root.as_mut().unwrap().children[0].display_value = "3".to_string();
+        app.push_undo_snapshot(before_new_edit);
+        assert!(!app.can_redo());
+    }
+
+    #[test]
+    fn deleting_selected_structure_is_undoable() {
+        let root = parse_data("[1,2,3]", Some(DataFormat::Json)).unwrap().0;
+        let mut app = StructViewApp {
+            root: Some(root),
+            mode: AppMode::Edit,
+            selected_paths: BTreeSet::from(["1".to_string()]),
+            ..StructViewApp::default()
+        };
+
+        assert!(app.can_delete_selected());
+        app.delete_selected();
+
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap(),
+            serde_json::json!([1, 3])
+        );
+        assert!(app.selected_paths.is_empty());
+        assert!(app.can_undo());
+
+        app.undo();
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap(),
+            serde_json::json!([1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn inline_typing_is_grouped_into_one_history_step() {
+        let root = parse_data(r#"{"value":1}"#, Some(DataFormat::Json))
+            .unwrap()
+            .0;
+        let mut app = StructViewApp {
+            root: Some(root),
+            mode: AppMode::Edit,
+            ..StructViewApp::default()
+        };
+
+        app.root.as_mut().unwrap().children[0].display_value = "12".to_string();
+        app.handle_inline_edit_events(vec![InlineEditEvent {
+            path: "value".to_string(),
+            before_value_type: JsonValueType::Number,
+            before_display_value: "1".to_string(),
+            changed: true,
+            finished: false,
+            valid: true,
+        }]);
+
+        app.root.as_mut().unwrap().children[0].display_value = "123".to_string();
+        app.handle_inline_edit_events(vec![InlineEditEvent {
+            path: "value".to_string(),
+            before_value_type: JsonValueType::Number,
+            before_display_value: "12".to_string(),
+            changed: true,
+            finished: false,
+            valid: true,
+        }]);
+
+        app.handle_inline_edit_events(vec![InlineEditEvent {
+            path: "value".to_string(),
+            before_value_type: JsonValueType::Number,
+            before_display_value: "123".to_string(),
+            changed: false,
+            finished: true,
+            valid: true,
+        }]);
+
+        assert_eq!(app.undo_history.len(), 1);
+        app.undo();
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+            1
+        );
+    }
+
+    #[test]
+    fn invalid_inline_edit_is_rolled_back_without_history() {
+        let root = parse_data(r#"{"value":1}"#, Some(DataFormat::Json))
+            .unwrap()
+            .0;
+        let mut app = StructViewApp {
+            root: Some(root),
+            mode: AppMode::Edit,
+            ..StructViewApp::default()
+        };
+        app.root.as_mut().unwrap().children[0].display_value = "invalid".to_string();
+
+        assert!(app.handle_inline_edit_events(vec![InlineEditEvent {
+            path: "value".to_string(),
+            before_value_type: JsonValueType::Number,
+            before_display_value: "1".to_string(),
+            changed: true,
+            finished: true,
+            valid: false,
+        }]));
+
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+            1
+        );
+        assert!(app.undo_history.is_empty());
+    }
+
+    #[test]
+    fn history_is_limited_to_one_hundred_snapshots() {
+        let root = parse_data("{}", Some(DataFormat::Json)).unwrap().0;
+        let mut app = StructViewApp {
+            root: Some(root.clone()),
+            mode: AppMode::Edit,
+            ..StructViewApp::default()
+        };
+
+        for _ in 0..HISTORY_LIMIT + 1 {
+            app.push_undo_snapshot(root.clone());
+        }
+
+        assert_eq!(app.undo_history.len(), HISTORY_LIMIT);
+    }
 
     #[test]
     fn selection_survives_paste_and_edits_when_paths_remain_valid() {
@@ -1207,6 +1735,9 @@ mod tests {
 
         let mut app = StructViewApp::default();
         app.load_file(path.clone());
+        let snapshot = app.root.as_ref().unwrap().clone();
+        app.undo_history.push(snapshot.clone());
+        app.redo_history.push(snapshot);
         app.search_query_buf = "value".to_string();
         app.save_requested = true;
         app.close_file();
@@ -1215,6 +1746,8 @@ mod tests {
         assert!(app.file_state.path.is_none());
         assert!(app.search_query_buf.is_empty());
         assert!(!app.save_requested);
+        assert!(app.undo_history.is_empty());
+        assert!(app.redo_history.is_empty());
         assert_eq!(app.mode, super::AppMode::View);
         std::fs::remove_file(path).unwrap();
     }

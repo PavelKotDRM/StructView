@@ -54,6 +54,15 @@ fn collect_table_rows(
 ) {
     let path = match parent {
         None => "$".to_string(),
+        Some(_)
+            if matches!(
+                node.value_type,
+                JsonValueType::Comment | JsonValueType::Metadata
+            ) =>
+        {
+            node.path.clone()
+        }
+        Some((_, JsonValueType::Metadata)) => node.path.clone(),
         Some((parent_path, parent_type)) => {
             let is_index = *parent_type == JsonValueType::Array;
             build_path(parent_path, &node.key, is_index)
@@ -129,6 +138,8 @@ fn value_type_name(value_type: &JsonValueType) -> &'static str {
         JsonValueType::Array => "array",
         JsonValueType::String => "string",
         JsonValueType::DateTime => "datetime",
+        JsonValueType::Comment => "comment",
+        JsonValueType::Metadata => "metadata",
         JsonValueType::Number => "number",
         JsonValueType::Float => "float",
         JsonValueType::Bool => "boolean",
@@ -195,6 +206,18 @@ fn collect_graph_nodes(
     nodes_by_path: &mut HashMap<String, usize>,
     aliases: &mut HashMap<String, Vec<usize>>,
 ) {
+    if node.value_type == JsonValueType::Comment {
+        return;
+    }
+    if node.value_type == JsonValueType::Metadata {
+        for child in &node.children {
+            if child.value_type != JsonValueType::Comment {
+                collect_graph_nodes(child, pointer, is_definition, nodes, nodes_by_path, aliases);
+            }
+        }
+        return;
+    }
+
     if node.value_type == JsonValueType::Object {
         let identity = object_scalar(node, &["id", "_id", "$id"]);
         let name = object_scalar(node, &["name", "title", "label"]);
@@ -292,6 +315,14 @@ fn collect_graph_edges(
 
 fn collect_reference_values(node: &JsonNode, references: &mut Vec<String>) {
     match node.value_type {
+        JsonValueType::Comment => {}
+        JsonValueType::Metadata => {
+            for child in &node.children {
+                if child.value_type != JsonValueType::Comment {
+                    collect_reference_values(child, references);
+                }
+            }
+        }
         JsonValueType::String => {
             if let Ok(value) = serde_json::from_str::<String>(&node.display_value) {
                 references.push(value);
@@ -329,16 +360,26 @@ fn object_scalar(node: &JsonNode, keys: &[&str]) -> Option<String> {
                     .any(|candidate| key.eq_ignore_ascii_case(candidate))
             })
         })
-        .and_then(|child| match child.value_type {
-            JsonValueType::String => serde_json::from_str::<String>(&child.display_value).ok(),
-            JsonValueType::Number | JsonValueType::Float | JsonValueType::Bool => {
-                Some(child.display_value.clone())
-            }
-            JsonValueType::DateTime
-            | JsonValueType::Object
-            | JsonValueType::Array
-            | JsonValueType::Null => None,
-        })
+        .and_then(scalar_value)
+}
+
+fn scalar_value(node: &JsonNode) -> Option<String> {
+    match node.value_type {
+        JsonValueType::String => serde_json::from_str::<String>(&node.display_value).ok(),
+        JsonValueType::Number | JsonValueType::Float | JsonValueType::Bool => {
+            Some(node.display_value.clone())
+        }
+        JsonValueType::Metadata => node
+            .children
+            .iter()
+            .find(|child| child.value_type != JsonValueType::Comment)
+            .and_then(scalar_value),
+        JsonValueType::DateTime
+        | JsonValueType::Object
+        | JsonValueType::Array
+        | JsonValueType::Null
+        | JsonValueType::Comment => None,
+    }
 }
 
 fn is_reference_key(key: &str) -> bool {
@@ -904,6 +945,18 @@ fn collect_inferred_rows(
     rows: &mut BTreeMap<String, InferredRow>,
     object_counts: &mut HashMap<String, usize>,
 ) {
+    if node.value_type == JsonValueType::Comment {
+        return;
+    }
+    if node.value_type == JsonValueType::Metadata {
+        for child in &node.children {
+            if child.value_type != JsonValueType::Comment {
+                collect_inferred_rows(child, path, parent_path, rows, object_counts);
+            }
+        }
+        return;
+    }
+
     let row = rows.entry(path.to_string()).or_default();
     row.types
         .insert(schema_node_type(&node.value_type).to_string());
@@ -916,12 +969,18 @@ fn collect_inferred_rows(
         JsonValueType::Object => {
             *object_counts.entry(path.to_string()).or_default() += 1;
             for child in &node.children {
+                if child.value_type == JsonValueType::Comment {
+                    continue;
+                }
                 let child_path = build_path(path, &child.key, false);
                 collect_inferred_rows(child, &child_path, Some(path), rows, object_counts);
             }
         }
         JsonValueType::Array => {
             for child in &node.children {
+                if child.value_type == JsonValueType::Comment {
+                    continue;
+                }
                 let child_path = format!("{path}[*]");
                 collect_inferred_rows(child, &child_path, None, rows, object_counts);
             }
@@ -932,6 +991,7 @@ fn collect_inferred_rows(
         | JsonValueType::Float
         | JsonValueType::Bool
         | JsonValueType::Null => {}
+        JsonValueType::Comment | JsonValueType::Metadata => {}
     }
 }
 
@@ -945,6 +1005,7 @@ fn schema_node_type(value_type: &JsonValueType) -> &'static str {
         JsonValueType::Float => "number",
         JsonValueType::Bool => "boolean",
         JsonValueType::Null => "null",
+        JsonValueType::Comment | JsonValueType::Metadata => "any",
     }
 }
 

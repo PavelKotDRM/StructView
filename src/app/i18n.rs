@@ -103,6 +103,14 @@ impl Locale {
             Self::English => format!("Structures pasted: {count}"),
         }
     }
+
+    /// Сформировать уведомление о количестве удалённых структур.
+    pub(super) fn structures_deleted(self, count: usize) -> String {
+        match self {
+            Self::Russian => format!("Удалено структур: {count}"),
+            Self::English => format!("Structures deleted: {count}"),
+        }
+    }
 }
 
 /// Идентификаторы статических сообщений интерфейса.
@@ -118,6 +126,9 @@ pub(super) enum TextKey {
     CloseFile,
     Exit,
     EditMenu,
+    Undo,
+    Redo,
+    DeleteSelectedStructures,
     CopySelectedStructures,
     PasteSelectedContainer,
     ViewMenu,
@@ -145,6 +156,7 @@ pub(super) enum TextKey {
     ToolbarExpandAll,
     ToolbarCollapseAll,
     Copy,
+    Delete,
     Paste,
     Close,
     Mode,
@@ -179,6 +191,8 @@ pub(super) enum TextKey {
     FieldType,
     TypeString,
     TypeDateTime,
+    TypeComment,
+    TypeMetadata,
     TypeInteger,
     TypeNumber,
     TypeFloat,
@@ -188,6 +202,8 @@ pub(super) enum TextKey {
     TypeArray,
     EmptyObject,
     EmptyArray,
+    CommentHint,
+    MetadataHint,
     Value,
     Add,
     Apply,
@@ -197,11 +213,17 @@ pub(super) enum TextKey {
     FileConverted,
     FieldUpdated,
     DataAdded,
+    ActionUndone,
+    ActionRedone,
     Copied,
     NoDocument,
     SelectContainer,
     SelectOneContainer,
     PasteEditOnly,
+    SelectStructure,
+    CannotDeleteRoot,
+    SelectedStructureNotFound,
+    DeleteEditOnly,
     ComparisonPath,
     ComparisonNoDifferences,
     MissingValue,
@@ -300,6 +322,9 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::CloseFile => "✖  Закрыть файл",
         TextKey::Exit => "❌  Выход",
         TextKey::EditMenu => "Правка",
+        TextKey::Undo => "Отменить  Ctrl/Cmd+Z",
+        TextKey::Redo => "Повторить  Ctrl+Y / Cmd+Shift+Z",
+        TextKey::DeleteSelectedStructures => "🗑  Удалить выбранные структуры  Delete",
         TextKey::CopySelectedStructures => "📋  Копировать выбранные структуры  Ctrl+C",
         TextKey::PasteSelectedContainer => "📥  Вставить в выбранный контейнер  Ctrl+V",
         TextKey::ViewMenu => "Вид",
@@ -327,6 +352,7 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::ToolbarExpandAll => ">> Развернуть все",
         TextKey::ToolbarCollapseAll => "<< Свернуть все",
         TextKey::Copy => "📋 Копировать",
+        TextKey::Delete => "🗑 Удалить",
         TextKey::Paste => "📥 Вставить",
         TextKey::Close => "✖ Закрыть",
         TextKey::Mode => "Режим:",
@@ -363,6 +389,8 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::FieldType => "Тип",
         TextKey::TypeString => "Строка",
         TextKey::TypeDateTime => "Дата/время (TOML)",
+        TextKey::TypeComment => "Комментарий",
+        TextKey::TypeMetadata => "Metadata (YAML-тег)",
         TextKey::TypeInteger => "Целое число",
         TextKey::TypeNumber => "Число",
         TextKey::TypeFloat => "Вещественное число",
@@ -372,6 +400,8 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::TypeArray => "Массив",
         TextKey::EmptyObject => "Будет создан пустой объект",
         TextKey::EmptyArray => "Будет создан пустой массив",
+        TextKey::CommentHint => "Текст комментария без маркера # или //",
+        TextKey::MetadataHint => "Например: !custom value",
         TextKey::Value => "Значение",
         TextKey::Add => "Добавить",
         TextKey::Apply => "Применить",
@@ -381,11 +411,17 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::FileConverted => "Файл преобразован",
         TextKey::FieldUpdated => "Поле изменено",
         TextKey::DataAdded => "Данные добавлены",
+        TextKey::ActionUndone => "Действие отменено",
+        TextKey::ActionRedone => "Действие повторено",
         TextKey::Copied => "Скопировано в буфер обмена",
         TextKey::NoDocument => "Нет открытого документа",
         TextKey::SelectContainer => "Выберите контейнер для вставки",
         TextKey::SelectOneContainer => "Для вставки выберите ровно один контейнер",
         TextKey::PasteEditOnly => "Вставка доступна только в режиме редактирования",
+        TextKey::SelectStructure => "Выберите структуру для удаления",
+        TextKey::CannotDeleteRoot => "Корневую структуру нельзя удалить",
+        TextKey::SelectedStructureNotFound => "Выбранные структуры не найдены",
+        TextKey::DeleteEditOnly => "Удаление доступно только в режиме редактирования",
         TextKey::ComparisonPath => "Путь",
         TextKey::ComparisonNoDifferences => "Файлы не отличаются",
         TextKey::MissingValue => "<отсутствует>",
@@ -393,7 +429,7 @@ fn russian_text(key: TextKey) -> &'static str {
         TextKey::UnsupportedFileExtension => {
             "Укажите расширение .json, .yaml, .yml, .toml или .json5"
         }
-        TextKey::TableDescription => "Путь → значение → тип. Поиск фильтрует строки.",
+        TextKey::TableDescription => "Путь -> значение -> тип. Поиск фильтрует строки.",
         TextKey::ExportCsv => "Экспорт CSV…",
         TextKey::TableExported => "Таблица экспортирована",
         TextKey::SchemaType => "Тип",
@@ -439,6 +475,9 @@ fn english_text(key: TextKey) -> &'static str {
         TextKey::CloseFile => "✖  Close file",
         TextKey::Exit => "❌  Exit",
         TextKey::EditMenu => "Edit",
+        TextKey::Undo => "Undo  Ctrl/Cmd+Z",
+        TextKey::Redo => "Redo  Ctrl+Y / Cmd+Shift+Z",
+        TextKey::DeleteSelectedStructures => "🗑  Delete selected structures  Delete",
         TextKey::CopySelectedStructures => "📋  Copy selected structures  Ctrl+C",
         TextKey::PasteSelectedContainer => "📥  Paste into selected container  Ctrl+V",
         TextKey::ViewMenu => "View",
@@ -466,6 +505,7 @@ fn english_text(key: TextKey) -> &'static str {
         TextKey::ToolbarExpandAll => ">> Expand all",
         TextKey::ToolbarCollapseAll => "<< Collapse all",
         TextKey::Copy => "📋 Copy",
+        TextKey::Delete => "🗑 Delete",
         TextKey::Paste => "📥 Paste",
         TextKey::Close => "✖ Close",
         TextKey::Mode => "Mode:",
@@ -502,6 +542,8 @@ fn english_text(key: TextKey) -> &'static str {
         TextKey::FieldType => "Type",
         TextKey::TypeString => "String",
         TextKey::TypeDateTime => "Date/time (TOML)",
+        TextKey::TypeComment => "Comment",
+        TextKey::TypeMetadata => "Metadata (YAML tag)",
         TextKey::TypeInteger => "Integer",
         TextKey::TypeNumber => "Number",
         TextKey::TypeFloat => "Float",
@@ -511,6 +553,8 @@ fn english_text(key: TextKey) -> &'static str {
         TextKey::TypeArray => "Array",
         TextKey::EmptyObject => "An empty object will be created",
         TextKey::EmptyArray => "An empty array will be created",
+        TextKey::CommentHint => "Comment text without the # or // marker",
+        TextKey::MetadataHint => "For example: !custom value",
         TextKey::Value => "Value",
         TextKey::Add => "Add",
         TextKey::Apply => "Apply",
@@ -520,17 +564,23 @@ fn english_text(key: TextKey) -> &'static str {
         TextKey::FileConverted => "File converted",
         TextKey::FieldUpdated => "Field updated",
         TextKey::DataAdded => "Data added",
+        TextKey::ActionUndone => "Action undone",
+        TextKey::ActionRedone => "Action redone",
         TextKey::Copied => "Copied to clipboard",
         TextKey::NoDocument => "No document is open",
         TextKey::SelectContainer => "Select a container to paste into",
         TextKey::SelectOneContainer => "Select exactly one container to paste into",
         TextKey::PasteEditOnly => "Pasting is available only in edit mode",
+        TextKey::SelectStructure => "Select a structure to delete",
+        TextKey::CannotDeleteRoot => "The root structure cannot be deleted",
+        TextKey::SelectedStructureNotFound => "The selected structures were not found",
+        TextKey::DeleteEditOnly => "Deleting is available only in edit mode",
         TextKey::ComparisonPath => "Path",
         TextKey::ComparisonNoDifferences => "Files are identical",
         TextKey::MissingValue => "<missing>",
         TextKey::ComparisonRequiresFiles => "Select at least two files to compare",
         TextKey::UnsupportedFileExtension => "Use a .json, .yaml, .yml, .toml, or .json5 extension",
-        TextKey::TableDescription => "Path → value → type. Search filters the rows.",
+        TextKey::TableDescription => "Path -> value -> type. Search filters the rows.",
         TextKey::ExportCsv => "Export CSV…",
         TextKey::TableExported => "Table exported",
         TextKey::SchemaType => "Type",
@@ -593,6 +643,14 @@ mod tests {
             assert!(!locale.text(TextKey::FileMenu).is_empty());
             assert!(!locale.text(TextKey::SearchPlaceholder).is_empty());
             assert!(!locale.text(TextKey::CopyStructure).is_empty());
+            assert!(!locale.text(TextKey::TypeComment).is_empty());
+            assert!(!locale.text(TextKey::TypeMetadata).is_empty());
+            assert!(!locale.text(TextKey::CommentHint).is_empty());
+            assert!(!locale.text(TextKey::MetadataHint).is_empty());
+            assert!(!locale.text(TextKey::Undo).is_empty());
+            assert!(!locale.text(TextKey::Redo).is_empty());
+            assert!(!locale.text(TextKey::ActionUndone).is_empty());
+            assert!(!locale.text(TextKey::ActionRedone).is_empty());
         }
     }
 

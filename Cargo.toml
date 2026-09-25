@@ -1,6 +1,6 @@
 [package]
 name = "struct_view"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A fast, cross-platform structured data explorer and editor for JSON, YAML, TOML, and JSON5"
 build = "build.rs"

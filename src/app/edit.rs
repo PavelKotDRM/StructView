@@ -7,7 +7,8 @@ use serde_json::Value;
 
 use crate::clipboard::ClipboardEntry;
 use crate::parser::{
-    DataFormat, JsonNode, JsonValueType, build_path, node_to_value, parse_data, plural_ru,
+    DataFormat, JsonNode, JsonValueType, build_path, format_comment_for_format, node_to_value,
+    parse_data, plural_ru,
 };
 
 /// Собрать выбранные узлы для копирования, не дублируя вложенные выборы.
@@ -24,6 +25,69 @@ pub(super) fn selected_structures(
         return Err("Не выбрано ни одной структуры".to_string());
     }
     Ok(entries)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DeleteError {
+    EmptySelection,
+    RootSelected,
+    SelectionNotFound,
+}
+
+/// Удалить выбранные узлы дерева, не удаляя потомков выбранного узла повторно.
+pub(super) fn delete_selected_structures(
+    root: &mut JsonNode,
+    selected_paths: &BTreeSet<String>,
+) -> Result<usize, DeleteError> {
+    if selected_paths.is_empty() {
+        return Err(DeleteError::EmptySelection);
+    }
+    if selected_paths.contains(&root.path) {
+        return Err(DeleteError::RootSelected);
+    }
+
+    let mut targets = BTreeSet::new();
+    collect_selected_paths(root, selected_paths, &mut targets);
+    if targets.is_empty() {
+        return Err(DeleteError::SelectionNotFound);
+    }
+
+    Ok(remove_selected_children(root, &targets))
+}
+
+fn collect_selected_paths(
+    node: &JsonNode,
+    selected_paths: &BTreeSet<String>,
+    targets: &mut BTreeSet<String>,
+) {
+    for child in &node.children {
+        if selected_paths.contains(&child.path) {
+            targets.insert(child.path.clone());
+        } else {
+            collect_selected_paths(child, selected_paths, targets);
+        }
+    }
+}
+
+fn remove_selected_children(node: &mut JsonNode, selected_paths: &BTreeSet<String>) -> usize {
+    let mut removed = 0;
+    let mut retained = Vec::with_capacity(node.children.len());
+
+    for mut child in std::mem::take(&mut node.children) {
+        if selected_paths.contains(&child.path) {
+            removed += 1;
+        } else {
+            removed += remove_selected_children(&mut child, selected_paths);
+            retained.push(child);
+        }
+    }
+
+    node.children = retained;
+    if removed > 0 {
+        update_child_paths(node);
+        update_container_label(node);
+    }
+    removed
 }
 
 fn collect_selected_structures(
@@ -131,7 +195,7 @@ fn paste_into_array(parent: &mut JsonNode, entries: &[ClipboardEntry]) -> Result
     }
 
     let parent_path = parent.path.clone();
-    let first_index = parent.children.len();
+    let first_index = data_child_count(parent);
     let nodes = values
         .into_iter()
         .enumerate()
@@ -219,8 +283,55 @@ pub(super) fn add_typed_child_at_path(
     value: &str,
     format: DataFormat,
 ) -> Result<(), String> {
+    if *value_type == JsonValueType::Comment {
+        return add_comment_child_at_path(root, parent_path, value, format);
+    }
+
     let input = field_value_to_input(value_type, value)?;
-    add_child_at_path(root, parent_path, key, &input, format)
+    if *value_type != JsonValueType::Metadata {
+        return add_child_at_path(root, parent_path, key, &input, format);
+    }
+    if format != DataFormat::Yaml {
+        return Err("Metadata (YAML-теги) поддерживаются только в YAML".to_string());
+    }
+
+    let parent = find_node_mut(root, parent_path)
+        .ok_or_else(|| "Не удалось найти контейнер для добавления данных".to_string())?;
+    let (child_key, is_index) = child_key_for_insert(parent, key, false)?;
+    let mut child = parse_child_value(&input, format)?;
+    if child.value_type != JsonValueType::Metadata {
+        return Err("Для Metadata введите YAML-тег, например «!custom value»".to_string());
+    }
+
+    child.key = child_key;
+    update_paths(&mut child, &parent.path, is_index);
+    parent.children.push(child);
+    update_container_label(parent);
+    Ok(())
+}
+
+fn add_comment_child_at_path(
+    root: &mut JsonNode,
+    parent_path: &str,
+    value: &str,
+    format: DataFormat,
+) -> Result<(), String> {
+    let parent = find_node_mut(root, parent_path)
+        .ok_or_else(|| "Не удалось найти контейнер для добавления данных".to_string())?;
+    let display_value = format_comment_for_format(value, format)?;
+    child_key_for_insert(parent, "", true)?;
+    let mut child = JsonNode {
+        key: None,
+        value_type: JsonValueType::Comment,
+        display_value,
+        children: Vec::new(),
+        expanded: false,
+        path: String::new(),
+    };
+    child.path = next_comment_path(parent);
+    parent.children.push(child);
+    update_container_label(parent);
+    Ok(())
 }
 
 /// Изменить существующее поле или элемент через конструктор значения.
@@ -232,6 +343,22 @@ pub(super) fn edit_child_at_path(
     value: &str,
     format: DataFormat,
 ) -> Result<(), String> {
+    if *value_type == JsonValueType::Metadata && format != DataFormat::Yaml {
+        return Err("Metadata (YAML-теги) поддерживаются только в YAML".to_string());
+    }
+    if *value_type == JsonValueType::Comment {
+        if format == DataFormat::Json {
+            return Err("JSON не поддерживает комментарии".to_string());
+        }
+        let node = find_node_mut(root, path)
+            .ok_or_else(|| "Не удалось найти комментарий для редактирования".to_string())?;
+        if node.value_type != JsonValueType::Comment {
+            return Err("Редактировать комментарий можно только как комментарий".to_string());
+        }
+        node.display_value = format_comment_for_format(value, format)?;
+        return Ok(());
+    }
+
     if path.is_empty() && format == DataFormat::Toml && !matches!(value_type, JsonValueType::Object)
     {
         return Err("Корневое значение TOML должно быть объектом".to_string());
@@ -239,6 +366,9 @@ pub(super) fn edit_child_at_path(
 
     let input = field_value_to_input(value_type, value)?;
     let replacement = parse_child_value(&input, format)?;
+    if *value_type == JsonValueType::Metadata && replacement.value_type != JsonValueType::Metadata {
+        return Err("Для Metadata введите YAML-тег, например «!custom value»".to_string());
+    }
 
     let parent = find_parent(root, path);
     let is_index = parent.is_some_and(|parent| parent.value_type == JsonValueType::Array);
@@ -273,7 +403,10 @@ pub(super) fn edit_child_at_path(
 pub(super) fn is_object_child(root: &JsonNode, path: &str) -> bool {
     find_parent(root, path).is_some_and(|parent| {
         parent.value_type == JsonValueType::Object
-            && parent.children.iter().any(|child| child.path == path)
+            && parent
+                .children
+                .iter()
+                .any(|child| child.path == path && child.value_type != JsonValueType::Comment)
     })
 }
 
@@ -325,6 +458,7 @@ fn field_value_to_input(value_type: &JsonValueType, value: &str) -> Result<Strin
         JsonValueType::Null => Ok("null".to_string()),
         JsonValueType::Object => Ok("{}".to_string()),
         JsonValueType::Array => Ok("[]".to_string()),
+        JsonValueType::Comment | JsonValueType::Metadata => Ok(value.to_string()),
     }
 }
 
@@ -339,31 +473,49 @@ pub(super) fn add_child(
     input: &str,
     format: DataFormat,
 ) -> Result<(), String> {
-    let (key, is_index) = match parent.value_type {
-        JsonValueType::Object => {
-            let key = key.trim();
-            if key.is_empty() {
-                return Err("Имя поля не может быть пустым".to_string());
-            }
-            if parent
-                .children
-                .iter()
-                .any(|child| child.key.as_deref() == Some(key))
-            {
-                return Err(format!("Поле «{}» уже существует", key));
-            }
-            (Some(key.to_string()), false)
-        }
-        JsonValueType::Array => (Some(parent.children.len().to_string()), true),
-        _ => return Err("Добавлять данные можно только в объект или массив".to_string()),
-    };
-
+    let (key, is_index) = child_key_for_insert(parent, key, false)?;
     let mut child = parse_child_value(input, format)?;
     child.key = key;
     update_paths(&mut child, &parent.path, is_index);
     parent.children.push(child);
     update_container_label(parent);
     Ok(())
+}
+
+fn child_key_for_insert(
+    parent: &JsonNode,
+    key: &str,
+    is_comment: bool,
+) -> Result<(Option<String>, bool), String> {
+    match parent.value_type {
+        JsonValueType::Object => {
+            if is_comment {
+                return Ok((None, false));
+            }
+            let key = key.trim();
+            if key.is_empty() {
+                return Err("Имя поля не может быть пустым".to_string());
+            }
+            if parent.children.iter().any(|child| {
+                child.value_type != JsonValueType::Comment && child.key.as_deref() == Some(key)
+            }) {
+                return Err(format!("Поле «{}» уже существует", key));
+            }
+            Ok((Some(key.to_string()), false))
+        }
+        JsonValueType::Array => {
+            if is_comment {
+                return Ok((None, true));
+            }
+            let index = parent
+                .children
+                .iter()
+                .filter(|child| child.value_type != JsonValueType::Comment)
+                .count();
+            Ok((Some(index.to_string()), true))
+        }
+        _ => Err("Добавлять данные можно только в объект или массив".to_string()),
+    }
 }
 
 /// Найти узел по пути и добавить в него дочерний узел.
@@ -396,7 +548,7 @@ fn parse_child_value(input: &str, format: DataFormat) -> Result<JsonNode, String
     }
 }
 
-fn find_node_mut<'a>(node: &'a mut JsonNode, path: &str) -> Option<&'a mut JsonNode> {
+pub(super) fn find_node_mut<'a>(node: &'a mut JsonNode, path: &str) -> Option<&'a mut JsonNode> {
     if node.path == path {
         return Some(node);
     }
@@ -451,8 +603,20 @@ fn replace_node_at_path(
     }
 
     let current_path = node.path.clone();
+    let child_parent_path = if node.value_type == JsonValueType::Metadata {
+        format!("{current_path}::metadata-value")
+    } else {
+        current_path.clone()
+    };
     for child in &mut node.children {
-        if replace_node_at_path(child, path, replacement, new_key, &current_path, is_index) {
+        if replace_node_at_path(
+            child,
+            path,
+            replacement,
+            new_key,
+            &child_parent_path,
+            is_index,
+        ) {
             update_container_label(node);
             return true;
         }
@@ -462,18 +626,36 @@ fn replace_node_at_path(
 
 fn update_paths(node: &mut JsonNode, parent_path: &str, is_index: bool) {
     node.path = build_path(parent_path, &node.key, is_index);
+    update_child_paths(node);
+}
+
+fn update_child_paths(node: &mut JsonNode) {
     let path = node.path.clone();
     let child_is_index = node.value_type == JsonValueType::Array;
-    for (index, child) in node.children.iter_mut().enumerate() {
+    let mut data_index = 0;
+    let mut comment_index = 0;
+    for child in &mut node.children {
+        if child.value_type == JsonValueType::Comment {
+            child.key = None;
+            child.path = format!("{path}::comment[{comment_index}]");
+            comment_index += 1;
+            continue;
+        }
+        if node.value_type == JsonValueType::Metadata {
+            child.key = None;
+            update_paths(child, &format!("{path}::metadata-value"), false);
+            continue;
+        }
         if child_is_index {
-            child.key = Some(index.to_string());
+            child.key = Some(data_index.to_string());
+            data_index += 1;
         }
         update_paths(child, &path, child_is_index);
     }
 }
 
 fn update_container_label(node: &mut JsonNode) {
-    let count = node.children.len();
+    let count = data_child_count(node);
     node.display_value = match node.value_type {
         JsonValueType::Object => format!(
             "{{{}}} {}",
@@ -487,6 +669,22 @@ fn update_container_label(node: &mut JsonNode) {
         ),
         _ => return,
     };
+}
+
+fn data_child_count(node: &JsonNode) -> usize {
+    node.children
+        .iter()
+        .filter(|child| child.value_type != JsonValueType::Comment)
+        .count()
+}
+
+fn next_comment_path(parent: &JsonNode) -> String {
+    let index = parent
+        .children
+        .iter()
+        .filter(|child| child.value_type == JsonValueType::Comment)
+        .count();
+    format!("{}::comment[{index}]", parent.path)
 }
 
 #[cfg(test)]
@@ -591,6 +789,107 @@ mod tests {
         )
         .unwrap();
         assert_eq!(node_to_value(&root).unwrap()["missing"], Value::Null);
+    }
+
+    #[test]
+    fn typed_constructor_adds_comments_and_yaml_metadata() {
+        let mut json5_root = parse_data("{}", Some(DataFormat::Json)).unwrap().0;
+        add_typed_child_at_path(
+            &mut json5_root,
+            "",
+            "",
+            &JsonValueType::Comment,
+            "generated note",
+            DataFormat::Json5,
+        )
+        .unwrap();
+        assert_eq!(json5_root.children[0].value_type, JsonValueType::Comment);
+        assert_eq!(json5_root.children[0].display_value, "// generated note");
+        assert_eq!(node_to_value(&json5_root).unwrap(), serde_json::json!({}));
+        assert!(
+            crate::parser::serialize_node(&json5_root, DataFormat::Json5, false)
+                .unwrap()
+                .starts_with("// generated note")
+        );
+
+        let mut array_root = parse_data("[]", Some(DataFormat::Json5)).unwrap().0;
+        add_typed_child_at_path(
+            &mut array_root,
+            "",
+            "",
+            &JsonValueType::Comment,
+            "array note",
+            DataFormat::Json5,
+        )
+        .unwrap();
+        add_typed_child_at_path(
+            &mut array_root,
+            "",
+            "",
+            &JsonValueType::Number,
+            "2",
+            DataFormat::Json5,
+        )
+        .unwrap();
+        assert_eq!(array_root.children[0].path, "::comment[0]");
+        assert_eq!(array_root.children[1].path, "0");
+        assert_eq!(node_to_value(&array_root).unwrap(), serde_json::json!([2]));
+
+        for format in [DataFormat::Yaml, DataFormat::Toml] {
+            let mut root = parse_data("{}", Some(DataFormat::Json)).unwrap().0;
+            add_typed_child_at_path(
+                &mut root,
+                "",
+                "",
+                &JsonValueType::Comment,
+                "generated note",
+                format,
+            )
+            .unwrap();
+            let output = crate::parser::serialize_node(&root, format, false).unwrap();
+            assert!(output.starts_with("# generated note\n"));
+            let reparsed = parse_data(&output, Some(format)).unwrap().0;
+            assert_eq!(node_to_value(&reparsed).unwrap(), serde_json::json!({}));
+        }
+
+        let mut yaml_root = parse_data("{}", Some(DataFormat::Yaml)).unwrap().0;
+        add_typed_child_at_path(
+            &mut yaml_root,
+            "",
+            "secret",
+            &JsonValueType::Metadata,
+            "!custom value",
+            DataFormat::Yaml,
+        )
+        .unwrap();
+        assert_eq!(yaml_root.children[0].value_type, JsonValueType::Metadata);
+        assert_eq!(node_to_value(&yaml_root).unwrap()["secret"], "value");
+        edit_child_at_path(
+            &mut yaml_root,
+            "secret::metadata-value",
+            None,
+            &JsonValueType::String,
+            "updated",
+            DataFormat::Yaml,
+        )
+        .unwrap();
+        assert_eq!(node_to_value(&yaml_root).unwrap()["secret"], "updated");
+        assert!(
+            crate::parser::serialize_node(&yaml_root, DataFormat::Yaml, false)
+                .unwrap()
+                .contains("!custom")
+        );
+        assert!(
+            add_typed_child_at_path(
+                &mut yaml_root,
+                "",
+                "invalid",
+                &JsonValueType::Metadata,
+                "plain value",
+                DataFormat::Yaml,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -753,6 +1052,91 @@ mod tests {
                 .iter()
                 .any(|entry| entry.key.as_deref() == Some("enabled"))
         );
+    }
+
+    #[test]
+    fn deleting_selected_structures_skips_nested_duplicates() {
+        let mut root = parse_json(r#"{"profile":{"name":"Ada"},"enabled":true}"#).unwrap();
+        let selected_paths = BTreeSet::from([
+            "profile".to_string(),
+            "profile.name".to_string(),
+            "enabled".to_string(),
+        ]);
+
+        assert_eq!(
+            delete_selected_structures(&mut root, &selected_paths).unwrap(),
+            2
+        );
+        assert_eq!(node_to_value(&root).unwrap(), serde_json::json!({}));
+        assert!(root.children.is_empty());
+    }
+
+    #[test]
+    fn deleting_array_items_reindexes_remaining_nodes_and_comments() {
+        let mut root = parse_data("[]", Some(DataFormat::Json5)).unwrap().0;
+        add_typed_child_at_path(
+            &mut root,
+            "",
+            "",
+            &JsonValueType::Comment,
+            "first note",
+            DataFormat::Json5,
+        )
+        .unwrap();
+        add_typed_child_at_path(
+            &mut root,
+            "",
+            "",
+            &JsonValueType::Comment,
+            "second note",
+            DataFormat::Json5,
+        )
+        .unwrap();
+        add_typed_child_at_path(
+            &mut root,
+            "",
+            "",
+            &JsonValueType::Number,
+            "1",
+            DataFormat::Json5,
+        )
+        .unwrap();
+        add_typed_child_at_path(
+            &mut root,
+            "",
+            "",
+            &JsonValueType::Number,
+            "2",
+            DataFormat::Json5,
+        )
+        .unwrap();
+        let selected_paths = BTreeSet::from(["::comment[0]".to_string(), "0".to_string()]);
+
+        assert_eq!(
+            delete_selected_structures(&mut root, &selected_paths).unwrap(),
+            2
+        );
+        assert_eq!(node_to_value(&root).unwrap(), serde_json::json!([2]));
+        assert_eq!(root.children[0].path, "::comment[0]");
+        assert_eq!(root.children[0].display_value, "// second note");
+        assert_eq!(root.children[1].key.as_deref(), Some("0"));
+        assert_eq!(root.children[1].path, "0");
+    }
+
+    #[test]
+    fn deleting_root_or_missing_selection_is_rejected_without_changes() {
+        let mut root = parse_json(r#"{"value":1}"#).unwrap();
+        let original = node_to_value(&root).unwrap();
+
+        assert_eq!(
+            delete_selected_structures(&mut root, &BTreeSet::from(["".to_string()])),
+            Err(DeleteError::RootSelected)
+        );
+        assert_eq!(
+            delete_selected_structures(&mut root, &BTreeSet::from(["missing".to_string()])),
+            Err(DeleteError::SelectionNotFound)
+        );
+        assert_eq!(node_to_value(&root).unwrap(), original);
     }
 
     #[test]

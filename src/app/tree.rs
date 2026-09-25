@@ -41,6 +41,18 @@ pub(super) struct TreeOutcome {
     pub(super) add_child_request: Option<AddChildRequest>,
     /// Запрос на открытие конструктора существующего поля.
     pub(super) edit_field_request: Option<EditFieldRequest>,
+    /// События inline-редактирования для группировки в одну команду истории.
+    pub(super) inline_edit_events: Vec<InlineEditEvent>,
+}
+
+#[derive(Debug)]
+pub(super) struct InlineEditEvent {
+    pub(super) path: String,
+    pub(super) before_value_type: JsonValueType,
+    pub(super) before_display_value: String,
+    pub(super) changed: bool,
+    pub(super) finished: bool,
+    pub(super) valid: bool,
 }
 
 /// Запрос на выбор узла дерева.
@@ -226,15 +238,32 @@ fn render_node_row(
     let scroll_to_match = options.scroll_to_path.is_some_and(|path| path == node.path);
 
     match node.value_type {
-        JsonValueType::Object | JsonValueType::Array => render_container_row(
-            ui,
-            node,
-            depth,
-            options,
-            outcome,
-            highlight,
-            scroll_to_match,
-        ),
+        JsonValueType::Object | JsonValueType::Array | JsonValueType::Metadata => {
+            render_container_row(
+                ui,
+                node,
+                depth,
+                options,
+                outcome,
+                highlight,
+                scroll_to_match,
+            )
+        }
+        _ if node
+            .children
+            .iter()
+            .any(|child| child.value_type == JsonValueType::Comment) =>
+        {
+            render_container_row(
+                ui,
+                node,
+                depth,
+                options,
+                outcome,
+                highlight,
+                scroll_to_match,
+            )
+        }
         _ => render_leaf(
             ui,
             node,
@@ -465,35 +494,48 @@ fn render_value_editor(
     selected_paths: &BTreeSet<String>,
     outcome: &mut TreeOutcome,
 ) {
+    let before_value_type = node.value_type.clone();
+    let before_display_value = node.display_value.clone();
     let edit_resp = ui.add(
         egui::TextEdit::singleline(&mut node.display_value)
             .desired_width(EDIT_FIELD_WIDTH)
-            .font(egui::TextStyle::Monospace),
+            .font(egui::TextStyle::Monospace)
+            .text_color(value_color(&node.value_type)),
     );
 
     if edit_resp.changed() {
         outcome.tree_changed = true;
     }
 
+    let mut valid = true;
     if edit_resp.lost_focus() {
-        let previous_type = node.value_type.clone();
-        let previous_display = node.display_value.clone();
         let edited = node.display_value.clone();
         match apply_primitive_edit(node, &edited) {
             Ok(()) => {
-                if node.value_type != previous_type || node.display_value != previous_display {
+                if node.value_type != before_value_type
+                    || node.display_value != before_display_value
+                {
                     outcome.tree_changed = true;
                 }
             }
             Err(err) => {
-                // Откатываем поле ввода, поскольку `apply_primitive_edit` не изменяет
-                // узел при ошибке, а `TextEdit` уже записал невалидный текст напрямую
-                // в `node.display_value`.
-                node.value_type = previous_type;
-                node.display_value = previous_display;
+                node.value_type = before_value_type.clone();
+                node.display_value = before_display_value.clone();
+                valid = false;
                 outcome.edit_error = Some(err);
             }
         }
+    }
+
+    if edit_resp.changed() || edit_resp.lost_focus() {
+        outcome.inline_edit_events.push(InlineEditEvent {
+            path: node.path.clone(),
+            before_value_type,
+            before_display_value,
+            changed: edit_resp.changed(),
+            finished: edit_resp.lost_focus(),
+            valid,
+        });
     }
 
     if edit_resp.clicked() {
@@ -514,15 +556,15 @@ fn selection_request(ui: &Ui, path: &str) -> SelectionRequest {
 /// Сформировать текст заголовка для объекта/массива с учётом подсветки поиска.
 fn make_header_text(node: &JsonNode, highlight: Highlight, locale: Locale) -> RichText {
     let display_value = match node.value_type {
-        JsonValueType::Object => locale.object_count(node.children.len()),
-        JsonValueType::Array => locale.array_count(node.children.len()),
+        JsonValueType::Object => locale.object_count(data_child_count(node)),
+        JsonValueType::Array => locale.array_count(data_child_count(node)),
         _ => node.display_value.clone(),
     };
     let label = match &node.key {
         Some(k) => format!("{}: {}", k, display_value),
         None => display_value,
     };
-    highlight.apply(RichText::new(label), COLOR_KEY)
+    highlight.apply(RichText::new(label), value_color(&node.value_type))
 }
 
 /// Контекстное меню узла с опциями копирования значения, ключа, пути и структуры.
@@ -575,7 +617,12 @@ fn container_context_menu(
 ) {
     context_menu(ui, node, mode, locale, selected_paths, outcome);
 
-    if mode != AppMode::Edit {
+    if mode != AppMode::Edit
+        || !matches!(
+            node.value_type,
+            JsonValueType::Object | JsonValueType::Array
+        )
+    {
         return;
     }
 
@@ -597,6 +644,13 @@ fn container_context_menu(
         });
         ui.close();
     }
+}
+
+fn data_child_count(node: &JsonNode) -> usize {
+    node.children
+        .iter()
+        .filter(|child| child.value_type != JsonValueType::Comment)
+        .count()
 }
 
 #[cfg(test)]
