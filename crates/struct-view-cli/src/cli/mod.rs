@@ -56,6 +56,7 @@ pub const HELP: &str = concat!(
     "    --exact                require an exact match\n",
     "    --whole-word           require a whole-word match\n",
     "    --regex                interpret the query as a regular expression (incompatible with --exact and --whole-word)\n",
+    "    use `key: value` in a query to match both fields on one node\n",
     "\n",
     "diff:\n",
     "    compare two or more files; use `-` for one stdin input\n",

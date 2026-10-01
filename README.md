@@ -300,6 +300,12 @@ Search keys, values, and JSON paths and print the paths of matching nodes:
 struct_view find user data.json
 ```
 
+Use `key: value` to match both a field name and its value on the same node:
+
+```sh
+struct_view find 'name: Alice' data.json
+```
+
 Additional options:
 
 ```text

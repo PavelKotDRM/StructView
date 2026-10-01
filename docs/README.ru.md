@@ -317,6 +317,13 @@ struct_view validate - < data.toml
 struct_view find user data.json
 ```
 
+Чтобы найти узел по паре «ключ и значение» на одном узле, используйте
+`ключ: значение`:
+
+```sh
+struct_view find 'name: Alice' data.json
+```
+
 Дополнительные параметры:
 
 ```text

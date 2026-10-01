@@ -44,7 +44,7 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::Mode => "Режим",
         TextKey::ViewMode => "Просмотр",
         TextKey::EditMode => "Редактирование",
-        TextKey::SearchPlaceholder => "Поиск по ключам, значениям и путям…",
+        TextKey::SearchPlaceholder => "Ключи, значения, пути или ключ: значение…",
         TextKey::SearchWindow => "Расширенный поиск",
         TextKey::SearchIn => "Искать в:",
         TextKey::SearchPaths => "Искать в путях",

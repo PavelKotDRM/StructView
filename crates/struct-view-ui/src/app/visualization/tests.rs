@@ -311,3 +311,22 @@ fn schema_key_search_matches_field_names_not_entire_paths() {
         ["$.name", "$.profile.name"]
     );
 }
+
+#[test]
+fn schema_key_value_search_matches_the_same_field_and_type() {
+    let root = parse_data(r#"{"name":"Alice","role":1}"#, Some(DataFormat::Json))
+        .unwrap()
+        .0;
+    let diagram = build_schema_diagram(&root).unwrap();
+    let mut search = SearchState::default();
+    search.search(&root, "name: string");
+
+    let indices = schema_visible_indices(&diagram, &search).unwrap();
+    assert_eq!(
+        indices
+            .iter()
+            .map(|index| diagram.rows[*index].path.as_str())
+            .collect::<Vec<_>>(),
+        ["$.name"]
+    );
+}

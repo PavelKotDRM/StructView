@@ -75,22 +75,18 @@ enum SearchMatcher {
     Regex(Regex),
 }
 
-#[derive(Debug, Clone)]
-struct SearchPattern(SearchMatcher);
-
-impl SearchPattern {
+impl SearchMatcher {
     fn new(query: &str, options: SearchOptions) -> Result<Self, String> {
         if options.use_regex {
             let mut builder = RegexBuilder::new(query);
             builder.case_insensitive(!options.case_sensitive);
             return builder
                 .build()
-                .map(SearchMatcher::Regex)
-                .map(Self)
+                .map(Self::Regex)
                 .map_err(|error| error.to_string());
         }
 
-        Ok(Self(SearchMatcher::Literal {
+        Ok(Self::Literal {
             query: if options.case_sensitive {
                 query.to_string()
             } else {
@@ -99,11 +95,11 @@ impl SearchPattern {
             case_sensitive: options.case_sensitive,
             exact_match: options.exact_match,
             whole_word: options.whole_word,
-        }))
+        })
     }
 
     fn is_match(&self, text: &str) -> bool {
-        match &self.0 {
+        match self {
             SearchMatcher::Regex(regex) => regex.is_match(text),
             SearchMatcher::Literal {
                 query,
@@ -127,6 +123,74 @@ impl SearchPattern {
             }
         }
     }
+}
+
+#[derive(Debug, Clone)]
+enum SearchPattern {
+    Text(SearchMatcher),
+    KeyValue {
+        key: SearchMatcher,
+        value: SearchMatcher,
+    },
+}
+
+impl SearchPattern {
+    fn new(query: &str, options: SearchOptions) -> Result<Self, String> {
+        if let Some((key, value)) = split_key_value_query(query) {
+            return Ok(Self::KeyValue {
+                key: SearchMatcher::new(key, options)?,
+                value: SearchMatcher::new(value, options)?,
+            });
+        }
+
+        SearchMatcher::new(query, options).map(Self::Text)
+    }
+
+    fn matches_text(&self, text: &str) -> bool {
+        match self {
+            Self::Text(pattern) => pattern.is_match(text),
+            Self::KeyValue { .. } => false,
+        }
+    }
+
+    fn matches_fields(
+        &self,
+        key: Option<&str>,
+        value: &str,
+        path: &str,
+        options: SearchOptions,
+    ) -> bool {
+        match self {
+            Self::Text(pattern) => {
+                (options.search_keys && key.is_some_and(|key| pattern.is_match(key)))
+                    || (options.search_values && pattern.is_match(value))
+                    || (options.search_paths && pattern.is_match(path))
+            }
+            Self::KeyValue {
+                key: key_pattern,
+                value: value_pattern,
+            } => {
+                options.search_keys
+                    && options.search_values
+                    && key.is_some_and(|key| key_pattern.is_match(key))
+                    && value_pattern.is_match(value)
+            }
+        }
+    }
+}
+
+fn split_key_value_query(query: &str) -> Option<(&str, &str)> {
+    let (key, value) = query.split_once(':')?;
+    // Whitespace distinguishes this syntax from URLs and timestamps.
+    if !key.chars().next_back().is_some_and(char::is_whitespace)
+        && !value.chars().next().is_some_and(char::is_whitespace)
+    {
+        return None;
+    }
+
+    let key = key.trim();
+    let value = value.trim();
+    (!key.is_empty() && !value.is_empty()).then_some((key, value))
 }
 
 fn contains_whole_word(text: &str, query: &str) -> bool {
@@ -232,10 +296,18 @@ impl SearchState {
     }
 
     /// Проверить текст тем же поисковым запросом и параметрами.
+    /// Для запроса `ключ: значение` отдельный текст не может дать совпадение.
     pub fn matches_text(&self, text: &str) -> bool {
         self.pattern
             .as_ref()
-            .is_some_and(|pattern| pattern.is_match(text))
+            .is_some_and(|pattern| pattern.matches_text(text))
+    }
+
+    /// Проверить ключ, значение и путь записи текущим поисковым запросом.
+    pub fn matches_fields(&self, key: Option<&str>, value: &str, path: &str) -> bool {
+        self.pattern
+            .as_ref()
+            .is_some_and(|pattern| pattern.matches_fields(key, value, path, self.options))
     }
 }
 
@@ -246,12 +318,12 @@ fn collect_matches(
     options: SearchOptions,
     result: &mut Vec<String>,
 ) {
-    let key_match =
-        options.search_keys && node.key.as_deref().is_some_and(|key| pattern.is_match(key));
-    let value_match = options.search_values && pattern.is_match(&node.display_value);
-    let path_match = options.search_paths && pattern.is_match(&node.path);
-
-    if key_match || value_match || path_match {
+    if pattern.matches_fields(
+        node.key.as_deref(),
+        &node.display_value,
+        &node.path,
+        options,
+    ) {
         result.push(node.path.clone());
     }
 
@@ -416,5 +488,49 @@ mod tests {
         assert_eq!(state.matches, ["phrase"]);
         state.search_with_options(&root, "a a", options);
         assert_eq!(state.matches, ["overlap"]);
+    }
+
+    #[test]
+    fn key_value_search_matches_both_fields_on_the_same_node() {
+        let root = parse_json(
+            r#"{"user":{"name":"Alice Smith"},"role":"admin","endpoint":"https://example.test"}"#,
+        )
+        .unwrap();
+        let mut state = SearchState::default();
+
+        state.search(&root, " NAME : ali ");
+        assert_eq!(state.matches, ["user.name"]);
+
+        state.search(&root, "user: admin");
+        assert!(state.matches.is_empty());
+
+        state.search(&root, "https://example");
+        assert_eq!(state.matches, ["endpoint"]);
+    }
+
+    #[test]
+    fn key_value_search_respects_search_scopes_and_regex_options() {
+        let root = parse_json(r#"{"name":"Alice","nickname":"Alicia"}"#).unwrap();
+        let mut state = SearchState::default();
+
+        state.search_with_options(
+            &root,
+            "name: Alice",
+            SearchOptions {
+                search_values: false,
+                ..Default::default()
+            },
+        );
+        assert!(state.matches.is_empty());
+
+        state.search_with_options(
+            &root,
+            r"^name$: .*Alice.*",
+            SearchOptions {
+                use_regex: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.matches, ["name"]);
     }
 }

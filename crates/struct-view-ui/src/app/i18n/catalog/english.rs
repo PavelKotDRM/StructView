@@ -44,7 +44,7 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::Mode => "Mode",
         TextKey::ViewMode => "View",
         TextKey::EditMode => "Edit",
-        TextKey::SearchPlaceholder => "Search keys, values, and paths…",
+        TextKey::SearchPlaceholder => "Search keys, values, paths, or key: value…",
         TextKey::SearchWindow => "Advanced search",
         TextKey::SearchIn => "Search in:",
         TextKey::SearchPaths => "Search in paths",
