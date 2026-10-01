@@ -18,6 +18,7 @@ pub fn parse_data(
     input: &str,
     format: Option<DataFormat>,
 ) -> Result<(JsonNode, DataFormat), ParseError> {
+    let input = input.strip_prefix('\u{feff}').unwrap_or(input);
     if let Some(format) = format {
         let root = build_document(input, format)?;
         return Ok((root, format));

@@ -1,10 +1,21 @@
 use super::*;
+use struct_view_core::search::escape_regex_literal;
+
+const COMPACT_MENU_WIDTH: f32 = 520.0;
 
 impl StructViewApp {
-    /// Отрисовать верхнюю панель с меню, переключателем режима и строкой поиска.
+    /// Отрисовать верхнюю панель с адаптивным меню и поиском.
     pub(in crate::app) fn show_top_panel(&mut self, ui: &mut Ui) {
         self.handle_shortcuts(ui.ctx());
+        self.show_search_window(ui.ctx());
+        let locale = self.locale;
+        let search_shortcut = if cfg!(target_os = "macos") {
+            "Cmd+F"
+        } else {
+            "Ctrl+F"
+        };
         egui::Panel::top("top_panel").show(ui, |ui| {
+            let compact_menu = ui.available_width() < COMPACT_MENU_WIDTH;
             egui::ScrollArea::horizontal()
                 .id_salt("top_panel_controls_scroll")
                 .auto_shrink([false, true])
@@ -12,28 +23,51 @@ impl StructViewApp {
                 .scroll_source(egui::scroll_area::ScrollSource::MOUSE_WHEEL)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        self.show_menu_bar(ui);
-                        ui.separator();
-                        if self.is_comparing() {
-                            self.show_comparison_buttons(ui);
-                        } else {
-                            self.show_tree_buttons(ui);
+                        self.show_menu_bar(ui, compact_menu);
+                        if !self.is_comparing() {
                             ui.separator();
-                            self.show_mode_switch(ui);
-                            ui.separator();
-                            self.show_search_bar(ui);
-                        }
-                        if self.root.is_some() || self.comparison.is_some() {
-                            ui.separator();
-                            self.show_visualization_selector(ui);
+                            if ui
+                                .button("🔍")
+                                .on_hover_text(format!(
+                                    "{} ({})",
+                                    locale.text(TextKey::SearchWindow),
+                                    search_shortcut
+                                ))
+                                .clicked()
+                            {
+                                self.search_window_open = true;
+                            }
                         }
                     });
                 });
         });
     }
 
-    /// Отрисовать строку меню («Файл», «Вид», «Помощь»).
-    fn show_menu_bar(&mut self, ui: &mut Ui) {
+    /// Показывать обычные разделы меню на широком экране и общий список на узком.
+    fn show_menu_bar(&mut self, ui: &mut Ui, compact: bool) {
+        let locale = self.locale;
+        if compact {
+            ui.menu_button(locale.text(TextKey::MainMenu), |ui| {
+                self.show_file_menu(ui);
+                ui.separator();
+                self.show_edit_menu(ui);
+                ui.separator();
+                self.show_view_menu(ui);
+                ui.separator();
+                self.show_settings_menu(ui);
+                ui.separator();
+                self.show_help_menu(ui);
+            });
+        } else {
+            self.show_file_menu(ui);
+            self.show_edit_menu(ui);
+            self.show_view_menu(ui);
+            self.show_settings_menu(ui);
+            self.show_help_menu(ui);
+        }
+    }
+
+    fn show_file_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::FileMenu), |ui| {
             if ui.button(locale.text(TextKey::NewFile)).clicked() {
@@ -93,8 +127,37 @@ impl StructViewApp {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
+    }
 
+    fn show_edit_menu(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
         ui.menu_button(locale.text(TextKey::EditMenu), |ui| {
+            if self.root.is_some() {
+                ui.menu_button(locale.text(TextKey::Mode), |ui| {
+                    if ui
+                        .selectable_value(
+                            &mut self.mode,
+                            AppMode::View,
+                            locale.text(TextKey::ViewMode),
+                        )
+                        .changed()
+                    {
+                        ui.close();
+                    }
+                    if ui
+                        .selectable_value(
+                            &mut self.mode,
+                            AppMode::Edit,
+                            locale.text(TextKey::EditMode),
+                        )
+                        .changed()
+                    {
+                        ui.close();
+                    }
+                });
+                ui.separator();
+            }
+
             if ui
                 .add_enabled(
                     self.can_undo(),
@@ -152,8 +215,66 @@ impl StructViewApp {
                 ui.close();
             }
         });
+    }
 
+    fn show_view_menu(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
+        let comparing = self.is_comparing();
         ui.menu_button(locale.text(TextKey::ViewMenu), |ui| {
+            if self.root.is_some() || self.comparison.is_some() {
+                ui.menu_button(locale.text(TextKey::Visualization), |ui| {
+                    if comparing {
+                        for (mode, text_key) in [
+                            (VisualizationMode::Comparison, TextKey::ComparisonView),
+                            (VisualizationMode::Diff, TextKey::DiffView),
+                        ] {
+                            if ui
+                                .selectable_value(
+                                    &mut self.visualization,
+                                    mode,
+                                    locale.text(text_key),
+                                )
+                                .changed()
+                            {
+                                ui.close();
+                            }
+                        }
+                    } else {
+                        for (mode, text_key) in [
+                            (VisualizationMode::Tree, TextKey::TreeView),
+                            (VisualizationMode::Graph, TextKey::GraphView),
+                            (VisualizationMode::Table, TextKey::TableView),
+                            (VisualizationMode::Schema, TextKey::SchemaView),
+                        ] {
+                            if ui
+                                .selectable_value(
+                                    &mut self.visualization,
+                                    mode,
+                                    locale.text(text_key),
+                                )
+                                .changed()
+                            {
+                                ui.close();
+                            }
+                        }
+                    }
+                });
+            }
+
+            if self.root.is_some() {
+                ui.menu_button(locale.text(TextKey::TreeActions), |ui| {
+                    if ui.button(locale.text(TextKey::ExpandAll)).clicked() {
+                        ui.close();
+                        self.set_all_expanded(true);
+                    }
+                    if ui.button(locale.text(TextKey::CollapseAll)).clicked() {
+                        ui.close();
+                        self.set_all_expanded(false);
+                    }
+                });
+            }
+
+            ui.separator();
             let theme_label = if self.dark_mode {
                 locale.text(TextKey::LightTheme)
             } else {
@@ -165,17 +286,11 @@ impl StructViewApp {
                 let ctx = ui.ctx().clone();
                 self.apply_theme(&ctx);
             }
-            ui.separator();
-            if ui.button(locale.text(TextKey::ExpandAll)).clicked() {
-                ui.close();
-                self.set_all_expanded(true);
-            }
-            if ui.button(locale.text(TextKey::CollapseAll)).clicked() {
-                ui.close();
-                self.set_all_expanded(false);
-            }
         });
+    }
 
+    fn show_settings_menu(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
         ui.menu_button(locale.text(TextKey::SettingsMenu), |ui| {
             ui.label(locale.text(TextKey::Language));
             for available_locale in Locale::ALL {
@@ -188,7 +303,10 @@ impl StructViewApp {
                 }
             }
         });
+    }
 
+    fn show_help_menu(&mut self, ui: &mut Ui) {
+        let locale = self.locale;
         ui.menu_button(locale.text(TextKey::HelpMenu), |ui| {
             ui.label(format!("StructView {}", build_info::VERSION));
             ui.separator();
@@ -225,102 +343,13 @@ impl StructViewApp {
         });
     }
 
-    /// Отрисовать кнопки управления режимом сравнения.
-    fn show_comparison_buttons(&mut self, ui: &mut Ui) {
-        let locale = self.locale;
-        if ui.button(locale.text(TextKey::CompareFiles)).clicked() {
-            self.open_comparison_dialog();
-        }
-        if ui.button(locale.text(TextKey::Close)).clicked() {
-            self.close_file();
-        }
-    }
-
-    /// Выбрать представление открытого документа или сравниваемой пары.
-    fn show_visualization_selector(&mut self, ui: &mut Ui) {
-        let locale = self.locale;
-        let comparing = self.is_comparing();
-        let mut selected = self.visualization;
-        let label = visualization_label(selected, locale);
-        ui.label(locale.text(TextKey::Visualization));
-        egui::ComboBox::from_id_salt("visualization_mode")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                if comparing {
-                    for (mode, text_key) in [
-                        (VisualizationMode::Comparison, TextKey::ComparisonView),
-                        (VisualizationMode::Diff, TextKey::DiffView),
-                    ] {
-                        ui.selectable_value(&mut selected, mode, locale.text(text_key));
-                    }
-                } else {
-                    for (mode, text_key) in [
-                        (VisualizationMode::Tree, TextKey::TreeView),
-                        (VisualizationMode::Graph, TextKey::GraphView),
-                        (VisualizationMode::Table, TextKey::TableView),
-                        (VisualizationMode::Schema, TextKey::SchemaView),
-                    ] {
-                        ui.selectable_value(&mut selected, mode, locale.text(text_key));
-                    }
-                }
-            });
-        self.visualization = selected;
-    }
-
-    /// Отрисовать быстрые кнопки дерева и сохранения файла.
-    fn show_tree_buttons(&mut self, ui: &mut Ui) {
-        let locale = self.locale;
-        if ui.button(locale.text(TextKey::ToolbarExpandAll)).clicked() {
-            self.set_all_expanded(true);
-        }
-        if ui
-            .button(locale.text(TextKey::ToolbarCollapseAll))
-            .clicked()
-        {
-            self.set_all_expanded(false);
-        }
-        if ui.button(locale.text(TextKey::Save)).clicked() {
-            self.request_save_current();
-        }
-        if ui
-            .add_enabled(
-                !self.selected_paths.is_empty(),
-                egui::Button::new(locale.text(TextKey::Copy)),
-            )
-            .clicked()
-        {
-            self.copy_structures_requested = true;
-        }
-        if ui
-            .add_enabled(
-                self.can_delete_selected(),
-                egui::Button::new(locale.text(TextKey::Delete)),
-            )
-            .clicked()
-        {
-            self.delete_requested = true;
-        }
-        if ui
-            .add_enabled(
-                self.mode == AppMode::Edit && self.can_paste_into_selected(),
-                egui::Button::new(locale.text(TextKey::Paste)),
-            )
-            .clicked()
-        {
-            self.paste_requested = true;
-        }
-        if ui.button(locale.text(TextKey::Close)).clicked() {
-            self.close_file();
-        }
-    }
-
     /// Обработать горячие клавиши команд редактирования и работы со структурами.
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
 
-        let (copy, paste, undo, redo, delete) = ctx.input(|input| {
+        let (copy, paste, undo, redo, delete, find) = ctx.input(|input| {
             let command = input.modifiers.command;
             (
                 command && input.key_pressed(egui::Key::C),
@@ -330,8 +359,10 @@ impl StructViewApp {
                     && (input.key_pressed(egui::Key::Y)
                         || (input.modifiers.shift && input.key_pressed(egui::Key::Z))),
                 input.key_pressed(egui::Key::Delete),
+                command && input.key_pressed(egui::Key::F),
             )
         });
+        self.search_window_open |= find;
         self.copy_structures_requested |= copy;
         self.paste_requested |= paste;
         self.undo_requested |= undo && self.can_undo();
@@ -339,97 +370,216 @@ impl StructViewApp {
         self.delete_requested |= delete && self.can_delete_selected();
     }
 
+    fn show_search_window(&mut self, ctx: &egui::Context) {
+        if !self.search_window_open {
+            return;
+        }
+
+        let locale = self.locale;
+        let mut open = true;
+        egui::Window::new(locale.text(TextKey::SearchWindow))
+            .open(&mut open)
+            .default_width(560.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                if self.root.is_none() {
+                    ui.label(locale.text(TextKey::NoDocument));
+                    return;
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label("🔍");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.search_query_buf)
+                            .hint_text(locale.text(TextKey::SearchPlaceholder))
+                            .desired_width(ui.available_width() - 90.0),
+                    );
+                    if response.changed()
+                        || (response.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                    {
+                        self.refresh_search();
+                        self.request_search_scroll();
+                    }
+                    if ui.button(locale.text(TextKey::ClearSearch)).clicked() {
+                        self.search_query_buf.clear();
+                        self.regex_builder_literal.clear();
+                        self.refresh_search();
+                    }
+                });
+
+                ui.separator();
+                ui.label(locale.text(TextKey::SearchIn));
+                let mut scope_changed = false;
+                ui.horizontal_wrapped(|ui| {
+                    scope_changed |= ui
+                        .checkbox(
+                            &mut self.search.options.search_keys,
+                            locale.text(TextKey::SearchKeys),
+                        )
+                        .changed();
+                    scope_changed |= ui
+                        .checkbox(
+                            &mut self.search.options.search_values,
+                            locale.text(TextKey::SearchValues),
+                        )
+                        .changed();
+                    scope_changed |= ui
+                        .checkbox(
+                            &mut self.search.options.search_paths,
+                            locale.text(TextKey::SearchPaths),
+                        )
+                        .changed();
+                });
+                ui.separator();
+                ui.label(locale.text(TextKey::SearchOptions));
+                let mut matching_changed = false;
+                let regex_changed = ui
+                    .checkbox(
+                        &mut self.search.options.use_regex,
+                        locale.text(TextKey::RegexSearch),
+                    )
+                    .changed();
+                matching_changed |= regex_changed;
+                if regex_changed && self.search.options.use_regex {
+                    self.search.options.exact_match = false;
+                    self.search.options.whole_word = false;
+                }
+                if self.search.options.use_regex {
+                    ui.small(locale.text(TextKey::RegexSearchHelp));
+                    ui.collapsing(locale.text(TextKey::RegexBuilder), |ui| {
+                        ui.label(locale.text(TextKey::RegexBuilderHelp));
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.regex_builder_literal)
+                                    .hint_text(locale.text(TextKey::RegexLiteralPlaceholder)),
+                            );
+                            if ui
+                                .add_enabled(
+                                    !self.regex_builder_literal.is_empty(),
+                                    egui::Button::new(locale.text(TextKey::RegexAddLiteral)),
+                                )
+                                .clicked()
+                            {
+                                let literal = escape_regex_literal(&self.regex_builder_literal);
+                                self.search_query_buf.push_str(&literal);
+                                self.regex_builder_literal.clear();
+                                self.refresh_search();
+                                self.request_search_scroll();
+                            }
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            for (key, fragment) in [
+                                (TextKey::RegexDigit, r"\d"),
+                                (TextKey::RegexDigits, r"\d+"),
+                                (TextKey::RegexWord, r"\w+"),
+                                (TextKey::RegexWhitespace, r"\s+"),
+                                (TextKey::RegexAnyCharacter, "."),
+                                (TextKey::RegexAnyText, ".*"),
+                                (TextKey::RegexStart, "^"),
+                                (TextKey::RegexEnd, "$"),
+                            ] {
+                                if ui.button(locale.text(key)).clicked() {
+                                    self.search_query_buf.push_str(fragment);
+                                    self.refresh_search();
+                                    self.request_search_scroll();
+                                }
+                            }
+                        });
+                    });
+                }
+                ui.horizontal_wrapped(|ui| {
+                    matching_changed |= ui
+                        .checkbox(
+                            &mut self.search.options.case_sensitive,
+                            locale.text(TextKey::CaseSensitive),
+                        )
+                        .changed();
+                });
+                ui.add_enabled_ui(!self.search.options.use_regex, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let exact_changed = ui
+                            .checkbox(
+                                &mut self.search.options.exact_match,
+                                locale.text(TextKey::ExactMatch),
+                            )
+                            .changed();
+                        if exact_changed && self.search.options.exact_match {
+                            self.search.options.whole_word = false;
+                        }
+                        let whole_word_changed = ui
+                            .checkbox(
+                                &mut self.search.options.whole_word,
+                                locale.text(TextKey::WholeWord),
+                            )
+                            .changed();
+                        if whole_word_changed && self.search.options.whole_word {
+                            self.search.options.exact_match = false;
+                        }
+                        matching_changed |= exact_changed || whole_word_changed;
+                    });
+                });
+                if scope_changed || matching_changed {
+                    self.refresh_search();
+                    self.request_search_scroll();
+                }
+
+                ui.separator();
+                let count = self.search.matches.len();
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "{}: {}",
+                        locale.text(TextKey::SearchResults),
+                        count
+                    ));
+                    if count > 0 {
+                        ui.label(format!("{}/{}", self.search.current_index + 1, count));
+                        if ui.button("<").clicked() {
+                            self.search.prev();
+                            self.request_search_scroll();
+                        }
+                        if ui.button(">").clicked() {
+                            self.search.next();
+                            self.request_search_scroll();
+                        }
+                    }
+                });
+                if let Some(error) = &self.search.error {
+                    ui.colored_label(
+                        SyntaxColors::new(ui.visuals()).error,
+                        format!("{}: {}", locale.text(TextKey::RegexSearchError), error),
+                    );
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for (index, path) in self.search.matches.clone().into_iter().enumerate() {
+                            let label = if path.is_empty() {
+                                "$".to_string()
+                            } else {
+                                path
+                            };
+                            if ui
+                                .selectable_label(index == self.search.current_index, label)
+                                .clicked()
+                            {
+                                self.search.current_index = index;
+                                self.request_search_scroll();
+                            }
+                        }
+                    });
+                if count == 0 && !self.search_query_buf.is_empty() && self.search.error.is_none() {
+                    ui.colored_label(Color32::GRAY, locale.text(TextKey::NotFound));
+                }
+            });
+        self.search_window_open = open;
+    }
+
     /// Развернуть или свернуть все узлы дерева.
     fn set_all_expanded(&mut self, expanded: bool) {
         if let Some(root) = &mut self.root {
             set_expanded_all(root, expanded);
             self.visible_rows_dirty = true;
-        }
-    }
-
-    /// Отрисовать переключатель режима «Просмотр» / «Редактирование».
-    fn show_mode_switch(&mut self, ui: &mut Ui) {
-        let locale = self.locale;
-        ui.label(locale.text(TextKey::Mode));
-        ui.selectable_value(
-            &mut self.mode,
-            AppMode::View,
-            locale.text(TextKey::ViewMode),
-        );
-        ui.selectable_value(
-            &mut self.mode,
-            AppMode::Edit,
-            locale.text(TextKey::EditMode),
-        );
-    }
-
-    /// Отрисовать строку поиска и навигацию по совпадениям.
-    fn show_search_bar(&mut self, ui: &mut Ui) {
-        let locale = self.locale;
-        ui.label("🔍");
-        let search_response = ui.add(
-            egui::TextEdit::singleline(&mut self.search_query_buf)
-                .hint_text(locale.text(TextKey::SearchPlaceholder))
-                .desired_width(SEARCH_FIELD_MIN_WIDTH)
-                .min_size(egui::vec2(SEARCH_FIELD_MIN_WIDTH, 0.0)),
-        );
-
-        let query_changed = search_response.changed();
-        let enter_pressed =
-            search_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-        let mut options_changed = false;
-        ui.menu_button(locale.text(TextKey::SearchOptions), |ui| {
-            options_changed |= ui
-                .checkbox(
-                    &mut self.search.options.search_keys,
-                    locale.text(TextKey::SearchKeys),
-                )
-                .changed();
-            options_changed |= ui
-                .checkbox(
-                    &mut self.search.options.search_values,
-                    locale.text(TextKey::SearchValues),
-                )
-                .changed();
-            ui.separator();
-            options_changed |= ui
-                .checkbox(
-                    &mut self.search.options.case_sensitive,
-                    locale.text(TextKey::CaseSensitive),
-                )
-                .changed();
-            options_changed |= ui
-                .checkbox(
-                    &mut self.search.options.exact_match,
-                    locale.text(TextKey::ExactMatch),
-                )
-                .changed();
-        });
-
-        if query_changed || enter_pressed || options_changed {
-            self.refresh_search();
-            if self.root.is_some() {
-                self.request_search_scroll();
-            }
-        }
-
-        let match_count = self.search.matches.len();
-        if match_count > 0 {
-            ui.label(
-                RichText::new(format!("{}/{}", self.search.current_index + 1, match_count))
-                    .color(COLOR_MATCH),
-            );
-            if ui.button("<").clicked() {
-                self.search.prev();
-                self.request_search_scroll();
-            }
-            if ui.button(">").clicked() {
-                self.search.next();
-                self.request_search_scroll();
-            }
-        } else if !self.search_query_buf.is_empty() {
-            ui.label(RichText::new(locale.text(TextKey::NotFound)).color(Color32::GRAY));
         }
     }
 }

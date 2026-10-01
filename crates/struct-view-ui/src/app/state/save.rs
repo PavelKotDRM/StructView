@@ -32,7 +32,7 @@ impl StructViewApp {
             let format = DataFormat::from_path(&save_path).unwrap_or(current_format);
             match self.write_root_to_path(&save_path, format) {
                 Ok(_) => self.show_toast(self.locale.text(TextKey::FileSaved)),
-                Err(error) => self.show_toast(&error),
+                Err(error) => self.show_error(&error),
             }
         }
     }
@@ -57,7 +57,7 @@ impl StructViewApp {
             let save_path = with_format_extension(save_path, format);
             match self.write_root_to_path(&save_path, format) {
                 Ok(_) => self.show_toast(self.locale.text(TextKey::FileConverted)),
-                Err(error) => self.show_toast(&error),
+                Err(error) => self.show_error(&error),
             }
         }
     }
@@ -79,7 +79,7 @@ impl StructViewApp {
                 self.file_state.size_bytes = size_bytes;
                 self.show_toast(self.locale.text(TextKey::FileSaved));
             }
-            Err(error) => self.show_toast(&error),
+            Err(error) => self.show_error(&error),
         }
     }
 
@@ -116,6 +116,8 @@ impl StructViewApp {
         self.parse_error = None;
         self.search = SearchState::default();
         self.search_query_buf.clear();
+        self.regex_builder_literal.clear();
+        self.search_window_open = false;
         self.search_scroll_target = None;
         self.save_requested = false;
         self.file_state = FileState::default();
@@ -124,6 +126,7 @@ impl StructViewApp {
         self.selected_paths.clear();
         self.copy_structures_requested = false;
         self.paste_requested = false;
+        self.toast = None;
     }
 
     fn restore_previous_document(&mut self, previous_document: PreviousDocumentState) {
@@ -138,6 +141,8 @@ impl StructViewApp {
         self.parse_error = None;
         self.search = previous_document.search;
         self.search_query_buf = previous_document.search_query_buf;
+        self.regex_builder_literal = previous_document.regex_builder_literal;
+        self.search_window_open = previous_document.search_window_open;
         self.search_scroll_target = previous_document.search_scroll_target;
         self.save_requested = false;
         self.field_dialog = None;
@@ -156,17 +161,27 @@ impl StructViewApp {
 
     /// Сериализовать корень и записать его в указанный путь.
     pub(super) fn write_root_to_path(
-        &self,
+        &mut self,
         path: &Path,
         format: DataFormat,
     ) -> Result<u64, String> {
+        self.commit_pending_inline_edit()?;
         let root = self
             .root
             .as_ref()
             .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())?;
+        self.write_node_to_path(root, path, format)
+    }
+
+    pub(super) fn write_node_to_path(
+        &self,
+        root: &JsonNode,
+        path: &Path,
+        format: DataFormat,
+    ) -> Result<u64, String> {
         let formatted = serialize_node(root, format, false)?;
         let size_bytes = formatted.len() as u64;
-        std::fs::write(path, formatted)
+        write_text_atomic(path, &formatted)
             .map_err(|error| self.locale.save_error(&error.to_string()))?;
         Ok(size_bytes)
     }

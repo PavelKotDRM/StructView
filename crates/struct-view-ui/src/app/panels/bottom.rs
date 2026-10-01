@@ -5,11 +5,12 @@ impl StructViewApp {
     pub(in crate::app) fn show_bottom_panel(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         egui::Panel::bottom("bottom_panel").show(ui, |ui| {
+            let colors = SyntaxColors::new(ui.visuals());
             ui.horizontal(|ui| {
                 if let Some(err) = &self.parse_error {
                     ui.label(
                         RichText::new(format!("⚠ {}: {}", locale.text(TextKey::Error), err))
-                            .color(COLOR_ERROR),
+                            .color(colors.error),
                     );
                 } else if let Some(comparison) = &self.comparison {
                     ui.label(locale.comparison_status(
@@ -44,14 +45,24 @@ impl StructViewApp {
 
     /// Отрисовать всплывающее уведомление, если оно ещё не устарело.
     fn show_toast_label(&mut self, ui: &mut Ui) {
-        let Some((message, shown_at)) = &self.toast else {
+        let Some(toast) = &self.toast else {
             return;
         };
-        if shown_at.elapsed().as_secs() >= TOAST_LIFETIME_SECS {
+        let remaining = toast.remaining();
+        if remaining.is_zero() {
             self.toast = None;
             return;
         }
-        let text = RichText::new(format!("✔ {}", message)).color(COLOR_SUCCESS);
+        let message = toast.message.clone();
+        let kind = toast.kind;
+        ui.ctx().request_repaint_after(remaining);
+
+        let colors = SyntaxColors::new(ui.visuals());
+        let (icon, color) = match kind {
+            ToastKind::Success => ("✔", colors.success),
+            ToastKind::Error => ("⚠", colors.error),
+        };
+        let text = RichText::new(format!("{icon} {message}")).color(color);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(text);
         });

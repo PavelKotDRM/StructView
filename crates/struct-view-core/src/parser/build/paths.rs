@@ -50,8 +50,7 @@ fn object_path_segment(parent: &str, key: &str) -> String {
             format!("{}.{}", parent, key)
         }
     } else {
-        let quoted = serde_json::to_string(key)
-            .unwrap_or_else(|error| format!("\"<key serialization error: {error}>\""));
+        let quoted = serde_json::Value::String(key.to_string()).to_string();
         if parent.is_empty() {
             format!("[{}]", quoted)
         } else {

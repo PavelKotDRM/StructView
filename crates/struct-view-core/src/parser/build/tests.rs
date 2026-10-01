@@ -168,6 +168,23 @@ fn parses_yaml_sequence_key() {
 }
 
 #[test]
+fn non_string_yaml_keys_roundtrip_only_in_yaml() {
+    let source = "- [name, age]: [Rae Smith, 4]";
+    let root = parse_data(source, Some(DataFormat::Yaml)).unwrap().0;
+    let original: serde_yaml_ng::Value = serde_yaml_ng::from_str(source).unwrap();
+    let mapping_entry = &root.children[0].children[0];
+
+    let yaml_output = serialize_node(&root, DataFormat::Yaml, false).unwrap();
+    let roundtrip: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml_output).unwrap();
+    assert_eq!(roundtrip, original);
+    assert!(node_to_value(&root).unwrap_err().contains("YAML"));
+    assert!(mapping_entry.yaml_key.is_some());
+    assert!(node_to_value(mapping_entry).is_ok());
+    assert!(serialize_node(&root, DataFormat::Json, false).is_err());
+    assert!(serialize_node(&root, DataFormat::Toml, false).is_err());
+}
+
+#[test]
 fn parses_yaml_stream_with_sequence_key() {
     let source = r#"--- # The Smiths
 - {name: John Smith, age: 33}
@@ -289,4 +306,75 @@ fn toml_non_finite_numbers_remain_toml_numbers() {
     let toml_output = serialize_node(&root, DataFormat::Toml, false).unwrap();
     assert!(toml_output.contains("value = nan"));
     assert!(serialize_node(&root, DataFormat::Json, false).is_err());
+}
+
+#[test]
+fn parses_utf8_bom_without_changing_string_contents() {
+    for (format, source) in [
+        (DataFormat::Json, r#"{"text":"\ufeffinside"}"#),
+        (DataFormat::Json5, "{text: 'inside'}"),
+        (DataFormat::Yaml, "text: inside"),
+        (DataFormat::Toml, "text = 'inside'"),
+    ] {
+        let (root, detected) = parse_data(&format!("\u{feff}{source}"), Some(format)).unwrap();
+        assert_eq!(detected, format);
+        assert_eq!(root.children[0].key.as_deref(), Some("text"));
+    }
+    let root = parse_json("\u{feff}{\"text\":\"\u{feff}inside\"}").unwrap();
+    assert_eq!(node_to_value(&root).unwrap()["text"], "\u{feff}inside");
+}
+
+#[test]
+fn json_numbers_roundtrip_without_precision_loss() {
+    for number in [
+        "123456789012345678901234567890",
+        "0.12345678901234567890123456789",
+        "1e+400",
+    ] {
+        let source = format!("{{\"number\":{number}}}");
+        let root = parse_json(&source).unwrap();
+        assert_eq!(
+            serialize_node(&root, DataFormat::Json, true).unwrap(),
+            source
+        );
+    }
+}
+
+#[test]
+fn serializers_reject_missing_and_duplicate_object_keys() {
+    let mut root = parse_json(r#"{"value":1}"#).unwrap();
+    root.children.push(root.children[0].clone());
+    for format in DataFormat::ALL {
+        assert!(serialize_node(&root, format, false).is_err(), "{format}");
+    }
+    root.children.pop();
+    root.children[0].key = None;
+    for format in DataFormat::ALL {
+        assert!(serialize_node(&root, format, false).is_err(), "{format}");
+    }
+}
+
+#[test]
+fn yaml_plain_quotes_do_not_hide_following_comments() {
+    let root = parse_data(
+        "name: don't stop # first\ntext: plain \"word # second\nnext: done # third\nquoted: \"# data\" # fourth\n",
+        Some(DataFormat::Yaml),
+    )
+    .unwrap()
+    .0;
+    assert_eq!(
+        collect_comments(&root),
+        ["# first", "# second", "# third", "# fourth"]
+    );
+}
+
+#[test]
+fn toml_multiline_closing_quotes_do_not_hide_comments() {
+    let root = parse_data(
+        "single = '''text'''' # first\ndouble = \"\"\"text\"\"\"\"\" # second\nnext = 1 # third\n",
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+    assert_eq!(collect_comments(&root), ["# first", "# second", "# third"]);
 }

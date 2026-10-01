@@ -82,47 +82,57 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, St
         "validate" => return parse_validate(&args[1..]),
         "find" => return parse_find(&args[1..]),
         "diff" | "compare" => return parse_diff(&args[1..]),
+        "--" => return parse_gui_files(&args[1..], true),
         _ => {}
     }
 
     if first.starts_with('-') {
         return Err(format!("Unknown option: {}", first));
     }
-    if args.len() > 1 {
-        if args.iter().any(|arg| arg.starts_with('-')) {
-            return Err("GUI accepts file paths only".to_string());
-        }
-        return Ok(Command::GuiCompare {
-            files: args.into_iter().map(PathBuf::from).collect(),
-        });
+    parse_gui_files(&args, false)
+}
+
+fn parse_gui_files(args: &[String], literal: bool) -> Result<Command, String> {
+    if !literal && args.iter().any(|arg| arg.starts_with('-')) {
+        return Err("GUI accepts file paths only".to_string());
     }
-    Ok(Command::Gui {
-        file: Some(PathBuf::from(first)),
-    })
+    match args {
+        [] => Ok(Command::Gui { file: None }),
+        [file] => Ok(Command::Gui {
+            file: Some(PathBuf::from(file)),
+        }),
+        files => Ok(Command::GuiCompare {
+            files: files.iter().map(PathBuf::from).collect(),
+        }),
+    }
 }
 
 /// Разобрать аргументы подкоманды `diff`.
 fn parse_diff(args: &[String]) -> Result<Command, String> {
-    if args.len() < 2 {
-        return Err("The diff command requires at least two files".to_string());
-    }
-
     let mut inputs = Vec::with_capacity(args.len());
     let mut stdin_seen = false;
+    let mut literal = false;
     for arg in args {
+        if arg == "--" && !literal {
+            literal = true;
+            continue;
+        }
         if arg == "-" {
             if stdin_seen {
                 return Err("The diff command accepts at most one stdin source".to_string());
             }
             stdin_seen = true;
             inputs.push(Source::Stdin);
-        } else if arg.starts_with('-') {
+        } else if !literal && arg.starts_with('-') {
             return Err(format!("Unknown option for diff: {}", arg));
         } else {
             inputs.push(Source::File(PathBuf::from(arg)));
         }
     }
 
+    if inputs.len() < 2 {
+        return Err("The diff command requires at least two files".to_string());
+    }
     Ok(Command::Diff { inputs })
 }
 
@@ -131,19 +141,29 @@ fn parse_format(args: &[String]) -> Result<Command, String> {
     let mut input: Option<Source> = None;
     let mut output: Option<PathBuf> = None;
     let mut minify = false;
+    let mut literal = false;
 
     let mut i = 0;
     while i < args.len() {
+        if literal {
+            input = Some(take_positional(input, &args[i], "format", true)?);
+            i += 1;
+            continue;
+        }
         match args[i].as_str() {
+            "--" => literal = true,
             "-m" | "--minify" => minify = true,
             "-o" | "--output" => {
                 i += 1;
                 let value = args
                     .get(i)
                     .ok_or_else(|| "--output requires a file path".to_string())?;
+                if value.starts_with('-') {
+                    return Err("--output requires a file path, not an option".to_string());
+                }
                 output = Some(PathBuf::from(value));
             }
-            other => input = Some(take_positional(input, other, "format")?),
+            other => input = Some(take_positional(input, other, "format", false)?),
         }
         i += 1;
     }
@@ -158,8 +178,13 @@ fn parse_format(args: &[String]) -> Result<Command, String> {
 /// Разобрать аргументы подкоманды `validate`.
 fn parse_validate(args: &[String]) -> Result<Command, String> {
     let mut input: Option<Source> = None;
+    let mut literal = false;
     for arg in args {
-        input = Some(take_positional(input, arg, "validate")?);
+        if arg == "--" && !literal {
+            literal = true;
+        } else {
+            input = Some(take_positional(input, arg, "validate", literal)?);
+        }
     }
     Ok(Command::Validate {
         input: input.unwrap_or(Source::Stdin),
@@ -172,13 +197,24 @@ fn parse_find(args: &[String]) -> Result<Command, String> {
     let mut input: Option<Source> = None;
     let mut options = SearchOptions::default();
     let mut scope_selected = false;
+    let mut literal = false;
 
     for arg in args {
+        if literal {
+            if query.is_none() {
+                query = Some(arg.clone());
+            } else {
+                input = Some(take_positional(input, arg, "find", true)?);
+            }
+            continue;
+        }
         match arg.as_str() {
+            "--" => literal = true,
             "--keys" => {
                 if !scope_selected {
                     options.search_keys = false;
                     options.search_values = false;
+                    options.search_paths = false;
                     scope_selected = true;
                 }
                 options.search_keys = true;
@@ -187,15 +223,37 @@ fn parse_find(args: &[String]) -> Result<Command, String> {
                 if !scope_selected {
                     options.search_keys = false;
                     options.search_values = false;
+                    options.search_paths = false;
                     scope_selected = true;
                 }
                 options.search_values = true;
             }
+            "--paths" => {
+                if !scope_selected {
+                    options.search_keys = false;
+                    options.search_values = false;
+                    options.search_paths = false;
+                    scope_selected = true;
+                }
+                options.search_paths = true;
+            }
             "--case-sensitive" => options.case_sensitive = true,
             "--exact" => options.exact_match = true,
+            "--whole-word" => options.whole_word = true,
+            "--regex" => options.use_regex = true,
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("Unknown option for find: {arg}"));
+            }
             _ if query.is_none() => query = Some(arg.clone()),
-            _ => input = Some(take_positional(input, arg, "find")?),
+            _ => input = Some(take_positional(input, arg, "find", false)?),
         }
+    }
+
+    if options.use_regex && (options.exact_match || options.whole_word) {
+        return Err("--regex cannot be combined with --exact or --whole-word".to_string());
+    }
+    if options.exact_match && options.whole_word {
+        return Err("--exact and --whole-word cannot be used together".to_string());
     }
 
     let query = query.ok_or_else(|| "The find command requires a search query".to_string())?;
@@ -207,14 +265,19 @@ fn parse_find(args: &[String]) -> Result<Command, String> {
 }
 
 /// Принять позиционный аргумент-источник, отвергнув неизвестные флаги и дубликаты.
-fn take_positional(current: Option<Source>, arg: &str, command: &str) -> Result<Source, String> {
+fn take_positional(
+    current: Option<Source>,
+    arg: &str,
+    command: &str,
+    literal: bool,
+) -> Result<Source, String> {
     if current.is_some() {
         return Err(format!("The {} command accepts only one file", command));
     }
     if arg == "-" {
         return Ok(Source::Stdin);
     }
-    if arg.starts_with('-') {
+    if !literal && arg.starts_with('-') {
         return Err(format!("Unknown option for {}: {}", command, arg));
     }
     Ok(Source::File(PathBuf::from(arg)))
@@ -311,10 +374,46 @@ mod tests {
                 options: SearchOptions {
                     search_keys: true,
                     search_values: false,
+                    search_paths: false,
                     case_sensitive: true,
                     exact_match: true,
+                    whole_word: false,
+                    use_regex: false,
                 },
             }
+        );
+    }
+
+    #[test]
+    fn find_parses_regex_and_rejects_incompatible_match_options() {
+        let command = parse_args(
+            ["find", "--paths", "--regex", r"^user_[0-9]+$", "data.json"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(
+            command,
+            Command::Find {
+                query: r"^user_[0-9]+$".to_string(),
+                input: Source::File(PathBuf::from("data.json")),
+                options: SearchOptions {
+                    search_keys: false,
+                    search_values: false,
+                    search_paths: true,
+                    use_regex: true,
+                    ..Default::default()
+                },
+            }
+        );
+
+        assert!(
+            parse_args(
+                ["find", "--regex", "--exact", "user", "data.json"]
+                    .map(String::from)
+                    .to_vec()
+            )
+            .is_err()
         );
     }
 
@@ -342,5 +441,39 @@ mod tests {
     #[test]
     fn unknown_option_is_error() {
         assert!(parse_args(["--nope".to_string()]).is_err());
+    }
+
+    #[test]
+    fn unknown_find_option_is_not_used_as_a_query() {
+        assert!(parse_args(["find", "--typo", "data.json"].map(String::from)).is_err());
+    }
+
+    #[test]
+    fn option_terminator_allows_queries_and_paths_starting_with_a_dash() {
+        assert_eq!(
+            parse_args(["find", "--keys", "--", "--literal", "-data.json"].map(String::from))
+                .unwrap(),
+            Command::Find {
+                query: "--literal".to_string(),
+                input: Source::File(PathBuf::from("-data.json")),
+                options: SearchOptions {
+                    search_keys: true,
+                    search_values: false,
+                    search_paths: false,
+                    ..Default::default()
+                },
+            }
+        );
+        assert_eq!(
+            parse_args(["--", "-data.json"].map(String::from)).unwrap(),
+            Command::Gui {
+                file: Some(PathBuf::from("-data.json"))
+            }
+        );
+    }
+
+    #[test]
+    fn an_output_option_requires_a_path_not_another_option() {
+        assert!(parse_args(["format", "--output", "--minify"].map(String::from)).is_err());
     }
 }

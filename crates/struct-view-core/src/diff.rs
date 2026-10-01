@@ -4,6 +4,9 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+use crate::numbers;
+use crate::parser::build_path;
+
 /// Одно отличие между документами.
 ///
 /// Значения идут в том же порядке, что и входной список документов.
@@ -33,6 +36,40 @@ pub fn compare_values(values: &[Value]) -> Vec<Difference> {
     differences
 }
 
+/// Compare a selected pair at an existing difference path.
+pub fn compare_pair_at_path(
+    path: &str,
+    left: Option<&Value>,
+    right: Option<&Value>,
+) -> Vec<Difference> {
+    let mut differences = Vec::new();
+    collect_differences(path.to_string(), vec![left, right], &mut differences);
+    differences
+}
+
+/// Compare normalized values, retaining integer/float distinctions but not decimal spelling.
+pub fn values_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => numbers::equivalent(left, right),
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| values_equal(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, left)| {
+                    right
+                        .get(key)
+                        .is_some_and(|right| values_equal(left, right))
+                })
+        }
+        _ => left == right,
+    }
+}
+
 /// Преобразовать значение отличия в форматированный JSON.
 ///
 /// Отсутствующий путь отображается отдельно от JSON-значения `null`.
@@ -49,7 +86,11 @@ fn collect_differences(
     values: Vec<Option<&Value>>,
     differences: &mut Vec<Difference>,
 ) {
-    if values.iter().all(|value| *value == values[0]) {
+    if values.iter().all(|value| match (*value, values[0]) {
+        (Some(left), Some(right)) => values_equal(left, right),
+        (None, None) => true,
+        _ => false,
+    }) {
         return;
     }
 
@@ -68,7 +109,11 @@ fn collect_differences(
                 .iter()
                 .map(|value| value.and_then(|value| value.as_object()?.get(&key)))
                 .collect();
-            collect_differences(object_path(&path, &key), child_values, differences);
+            collect_differences(
+                build_path(&path, &Some(key), false),
+                child_values,
+                differences,
+            );
         }
         return;
     }
@@ -98,25 +143,6 @@ fn collect_differences(
         path,
         values: values.into_iter().map(|value| value.cloned()).collect(),
     });
-}
-
-fn object_path(parent: &str, key: &str) -> String {
-    if is_identifier(key) {
-        format!("{parent}.{key}")
-    } else {
-        let encoded = serde_json::to_string(key)
-            .unwrap_or_else(|error| format!("\"<key serialization error: {error}>\""));
-        format!("{parent}[{encoded}]")
-    }
-}
-
-fn is_identifier(key: &str) -> bool {
-    let mut chars = key.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first == '_' || first.is_ascii_alphabetic())
-        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 #[cfg(test)]

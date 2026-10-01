@@ -173,3 +173,141 @@ fn schema_view_recognizes_openapi_components_and_infers_sample_presence() {
         .unwrap();
     assert_eq!(name.required, Some(false));
 }
+
+#[test]
+fn table_paths_keep_the_root_prefix_for_comments_and_yaml_tags() {
+    let root = parse_data("# note\nsecret: !custom hello", Some(DataFormat::Yaml))
+        .unwrap()
+        .0;
+    let table = build_table(&root);
+    assert_eq!(
+        table
+            .rows
+            .iter()
+            .map(|row| row.path.as_str())
+            .collect::<Vec<_>>(),
+        ["$", "$::comment[0]", "$.secret", "$.secret::metadata-value"]
+    );
+}
+
+#[test]
+fn graph_uses_valid_identity_and_label_when_another_alias_is_null() {
+    let root = parse_data(
+        r#"{"$id":null,"id":"actual","name":null,"title":"Visible title"}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+    assert_eq!(graph.nodes.len(), 1);
+    assert_eq!(graph.nodes[0].id, "actual");
+    assert_eq!(graph.nodes[0].label, "Visible title");
+}
+
+#[test]
+fn graph_resolves_pointers_to_ordinary_entities() {
+    let root = parse_data(
+        r##"{"objects":[{"id":"source","$ref":"#/objects/1"},{"id":"target"}]}"##,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+    assert_eq!(graph.edges.len(), 1);
+    assert_eq!(graph.edges[0].source, 0);
+    assert_eq!(graph.edges[0].target, 1);
+}
+
+#[test]
+fn swagger_definitions_and_inline_constraint_only_schemas_are_visible() {
+    let root = parse_data(
+        r#"{"swagger":"2.0","definitions":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}},"paths":{"/pets":{"get":{"responses":{"200":{"schema":{"minimum":0},"example":{"schema":{"type":"string"}}}}}}}}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    let diagram = build_schema_diagram(&root).unwrap();
+    assert_eq!(diagram.source, SchemaSource::OpenApi);
+    assert!(
+        diagram
+            .rows
+            .iter()
+            .any(|row| row.path == "$.definitions.Pet.name")
+    );
+    assert!(
+        diagram
+            .rows
+            .iter()
+            .any(|row| row.constraints == "minimum=0")
+    );
+    assert!(!diagram.rows.iter().any(|row| row.path.contains(".example")));
+}
+
+#[test]
+fn an_ordinary_openapi_named_field_is_not_an_api_schema() {
+    let root = parse_data(r#"{"openapi":"notes","count":1}"#, Some(DataFormat::Json))
+        .unwrap()
+        .0;
+    assert_eq!(
+        build_schema_diagram(&root).unwrap().source,
+        SchemaSource::Inferred
+    );
+}
+
+#[test]
+fn empty_or_boolean_properties_are_not_mistaken_for_json_schema() {
+    for source in [
+        r#"{"properties":{}}"#,
+        r#"{"properties":{"name":{}}}"#,
+        r#"{"properties":{"enabled":true}}"#,
+    ] {
+        let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+        assert_eq!(
+            build_schema_diagram(&root).unwrap().source,
+            SchemaSource::Inferred,
+            "{source}"
+        );
+    }
+
+    let schema = parse_data(
+        r#"{"properties":{"name":{"type":"string"}}}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    assert_eq!(
+        build_schema_diagram(&schema).unwrap().source,
+        SchemaSource::JsonSchema
+    );
+}
+
+#[test]
+fn schema_key_search_matches_field_names_not_entire_paths() {
+    let root = parse_data(
+        r#"{"type":"object","properties":{"name":{"type":"string"},"profile":{"type":"object","properties":{"name":{"type":"string"}}}}}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    let diagram = build_schema_diagram(&root).unwrap();
+    let mut search = SearchState::default();
+    search.search_with_options(
+        &root,
+        "name",
+        struct_view_core::search::SearchOptions {
+            search_keys: true,
+            search_values: false,
+            search_paths: false,
+            exact_match: true,
+            ..Default::default()
+        },
+    );
+    let indices = schema_visible_indices(&diagram, &search).unwrap();
+    assert_eq!(
+        indices
+            .iter()
+            .map(|index| diagram.rows[*index].path.as_str())
+            .collect::<Vec<_>>(),
+        ["$.name", "$.profile.name"]
+    );
+}

@@ -8,8 +8,8 @@ use struct_view_core::diff::format_value;
 use struct_view_core::parser::{DataFormat, set_expanded_all};
 
 use super::i18n::{Locale, TextKey};
-use super::state::{AppMode, StructViewApp};
-use super::theme::{COLOR_ERROR, COLOR_MATCH, COLOR_SUCCESS};
+use super::state::{AppMode, StructViewApp, ToastKind};
+use super::theme::SyntaxColors;
 use super::tree::{
     RenderOptions, TreeOutcome, VisibleRows, focus_match_path, render_visible_rows,
     tree_row_height, visible_row_index,
@@ -22,15 +22,8 @@ use super::visualization::{
     VisualizationMode, build_relationship_graph, build_schema_diagram, build_table,
 };
 
-/// Время показа всплывающего уведомления в секундах.
-const TOAST_LIFETIME_SECS: u64 = 3;
-/// Минимальная ширина поля поиска, достаточная для отображения подсказки.
-const SEARCH_FIELD_MIN_WIDTH: f32 = 260.0;
-
 mod bottom;
 mod central;
 #[cfg(test)]
 mod tests;
 mod top;
-
-use central::visualization_label;

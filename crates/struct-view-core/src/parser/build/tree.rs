@@ -31,6 +31,7 @@ pub(super) fn build_node(
             let count = children.len();
             JsonNode {
                 key,
+                yaml_key: None,
                 value_type: JsonValueType::Object,
                 display_value: format!(
                     "{{{}}} {}",
@@ -51,6 +52,7 @@ pub(super) fn build_node(
             let count = children.len();
             JsonNode {
                 key,
+                yaml_key: None,
                 value_type: JsonValueType::Array,
                 display_value: format!(
                     "[{}] {}",
@@ -69,11 +71,7 @@ pub(super) fn build_node(
             path,
         ),
         Value::Number(n) => {
-            let value_type = if n.is_f64() {
-                JsonValueType::Float
-            } else {
-                JsonValueType::Number
-            };
+            let value_type = JsonValueType::for_number(n);
             leaf(key, value_type, n.to_string(), path)
         }
         Value::Bool(b) => leaf(key, JsonValueType::Bool, b.to_string(), path),
@@ -105,16 +103,16 @@ pub(super) fn build_yaml_node(
                         column: None,
                     });
                 }
-                children.push(build_yaml_node(
-                    Some(child_key),
-                    false,
-                    value,
-                    path.clone(),
-                )?);
+                let mut child = build_yaml_node(Some(child_key), false, value, path.clone())?;
+                if !matches!(raw_key, YamlValue::String(_)) {
+                    child.yaml_key = Some(raw_key.clone());
+                }
+                children.push(child);
             }
             let count = children.len();
             Ok(JsonNode {
                 key,
+                yaml_key: None,
                 value_type: JsonValueType::Object,
                 display_value: format!("{{{count}}} {}", plural_ru(count, "поле", "поля", "полей")),
                 children,
@@ -133,6 +131,7 @@ pub(super) fn build_yaml_node(
             let count = children.len();
             Ok(JsonNode {
                 key,
+                yaml_key: None,
                 value_type: JsonValueType::Array,
                 display_value: format!(
                     "[{count}] {}",
@@ -148,6 +147,7 @@ pub(super) fn build_yaml_node(
             let value = build_yaml_node(None, false, &tagged.value, value_path)?;
             Ok(JsonNode {
                 key,
+                yaml_key: None,
                 value_type: JsonValueType::Metadata,
                 display_value: tagged.tag.to_string(),
                 children: vec![value],
@@ -195,6 +195,7 @@ pub(super) fn build_toml_node(
             let count = children.len();
             JsonNode {
                 key,
+                yaml_key: None,
                 value_type: JsonValueType::Object,
                 display_value: format!(
                     "{{{}}} {}",
@@ -217,6 +218,7 @@ pub(super) fn build_toml_node(
             let count = children.len();
             JsonNode {
                 key,
+                yaml_key: None,
                 value_type: JsonValueType::Array,
                 display_value: format!(
                     "[{}] {}",
@@ -235,7 +237,13 @@ pub(super) fn build_toml_node(
             path,
         ),
         toml::Value::Integer(value) => leaf(key, JsonValueType::Number, value.to_string(), path),
-        toml::Value::Float(value) => leaf(key, JsonValueType::Float, value.to_string(), path),
+        toml::Value::Float(value) => {
+            let mut display = value.to_string();
+            if value.is_finite() && !display.contains(['.', 'e', 'E']) {
+                display.push_str(".0");
+            }
+            leaf(key, JsonValueType::Float, display, path)
+        }
         toml::Value::Boolean(value) => leaf(key, JsonValueType::Bool, value.to_string(), path),
         toml::Value::Datetime(value) => leaf(key, JsonValueType::DateTime, value.to_string(), path),
     }
@@ -250,6 +258,7 @@ fn leaf(
 ) -> JsonNode {
     JsonNode {
         key,
+        yaml_key: None,
         value_type,
         display_value,
         children: vec![],

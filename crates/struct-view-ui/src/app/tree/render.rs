@@ -1,15 +1,14 @@
-use std::collections::BTreeSet;
 use std::ops::Range;
 
 use egui::{RichText, Ui};
 
 use struct_view_core::parser::{JsonNode, JsonValueType};
-use struct_view_core::search::SearchState;
 
 use super::super::edit::apply_primitive_edit;
 use super::super::i18n::Locale;
 use super::super::state::AppMode;
-use super::super::theme::{COLOR_ACTIVE_MATCH, COLOR_KEY, COLOR_MATCH, value_color};
+use super::super::theme::SyntaxColors;
+use super::super::widgets::single_line_text;
 use super::model::{InlineEditEvent, RenderOptions, TreeOutcome, VisibleRows};
 use super::{container_context_menu, context_menu, selection_request};
 
@@ -43,7 +42,11 @@ pub(in crate::app) fn render_visible_rows(
         let Some(node) = node_at_path_mut(root, path) else {
             break;
         };
-        render_node_row(ui, node, depth, options, outcome);
+        let id = egui::Id::new(("tree-row", &node.path));
+        ui.push_id(id, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            render_node_row(ui, node, depth, options, outcome);
+        });
     }
 }
 
@@ -64,7 +67,7 @@ fn render_node_row(
     options: &RenderOptions<'_>,
     outcome: &mut TreeOutcome,
 ) {
-    let highlight = Highlight::for_node(options.search, &node.path);
+    let highlight = Highlight::for_node(options, &node.path);
     let scroll_to_match = options.scroll_to_path.is_some_and(|path| path == node.path);
 
     match node.value_type {
@@ -117,7 +120,8 @@ struct Highlight {
 
 impl Highlight {
     /// Вычислить подсветку для пути узла.
-    fn for_node(search: &SearchState, path: &str) -> Self {
+    fn for_node(options: &RenderOptions<'_>, path: &str) -> Self {
+        let search = options.search;
         if search.query.is_empty() {
             return Self {
                 is_match: false,
@@ -125,7 +129,7 @@ impl Highlight {
             };
         }
         Self {
-            is_match: search.is_match(path),
+            is_match: options.matching_paths.contains(path),
             is_active: search.is_active(path),
         }
     }
@@ -133,11 +137,11 @@ impl Highlight {
     /// Применить цвет подсветки к тексту, если узел найден поиском.
     ///
     /// Если узел не является совпадением, используется `default_color`.
-    fn apply(self, text: RichText, default_color: egui::Color32) -> RichText {
+    fn apply(self, text: RichText, default_color: egui::Color32, colors: SyntaxColors) -> RichText {
         if self.is_active {
-            text.color(COLOR_ACTIVE_MATCH).strong()
+            text.color(colors.active_match).strong()
         } else if self.is_match {
-            text.color(COLOR_MATCH).strong()
+            text.color(colors.matched).strong()
         } else {
             text.color(default_color)
         }
@@ -154,7 +158,8 @@ fn render_container_row(
     highlight: Highlight,
     scroll_to_match: bool,
 ) {
-    let header_text = make_header_text(node, highlight, options.locale);
+    let colors = SyntaxColors::new(ui.visuals());
+    let header_text = make_header_text(node, highlight, options.locale, colors);
     let selected = options.selected_paths.contains(&node.path);
     let previous_expanded = node.expanded;
 
@@ -176,34 +181,28 @@ fn render_container_row(
         let row_height = tree_row_height(ui);
         ui.set_min_height(row_height);
         add_tree_indent(ui, depth);
-        state
-            .show_header(ui, |ui| ui.selectable_label(selected, header_text))
-            .body_unindented(|_| {})
+        state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+        ui.selectable_label(selected, header_text)
+            .on_hover_text(&node.display_value)
     });
-    let (_toggle_response, header_inner, _body) = row_response.inner;
+    let header_response = row_response.inner;
 
     if scroll_to_match {
-        header_inner
-            .response
-            .scroll_to_me(Some(egui::Align::Center));
+        header_response.scroll_to_me(Some(egui::Align::Center));
     }
 
-    if header_inner.inner.clicked() {
+    if header_response.clicked() {
         outcome.selection_request = Some(selection_request(ui, &node.path));
     }
 
     // Считываем актуальное состояние (пользователь мог кликнуть по заголовку)
-    let updated = egui::collapsing_header::CollapsingState::load_with_default_open(
-        ui.ctx(),
-        id,
-        node.expanded,
-    );
-    node.expanded = updated.is_open();
+    node.expanded = state.is_open();
+    state.store(ui.ctx());
     if node.expanded != previous_expanded {
         outcome.expansion_changed = true;
     }
 
-    header_inner.inner.context_menu(|ui| {
+    header_response.context_menu(|ui| {
         container_context_menu(
             ui,
             node,
@@ -226,14 +225,19 @@ fn render_leaf(
     scroll_to_match: bool,
 ) {
     let selected = options.selected_paths.contains(&node.path);
+    let colors = SyntaxColors::new(ui.visuals());
     let row_response = ui.horizontal(|ui| {
         let row_height = tree_row_height(ui);
         ui.set_min_height(row_height);
         add_tree_indent(ui, depth);
 
         if let Some(key) = &node.key {
-            let key_text = highlight.apply(RichText::new(format!("{}: ", key)), COLOR_KEY);
-            let key_resp = ui.selectable_label(selected, key_text);
+            let key_text = highlight.apply(
+                RichText::new(format!("{}: ", single_line_text(key))),
+                colors.key,
+                colors,
+            );
+            let key_resp = ui.selectable_label(selected, key_text).on_hover_text(key);
             if key_resp.clicked() {
                 outcome.selection_request = Some(selection_request(ui, &node.path));
             }
@@ -250,13 +254,16 @@ fn render_leaf(
         }
 
         if is_editable(node, options.mode) {
-            render_value_editor(ui, node, options.locale, options.selected_paths, outcome);
+            render_value_editor(ui, node, options, outcome);
         } else {
             let value_text = highlight.apply(
-                RichText::new(&node.display_value),
-                value_color(&node.value_type),
+                RichText::new(single_line_text(&node.display_value)),
+                colors.value_color(&node.value_type),
+                colors,
             );
-            let value_resp = ui.selectable_label(selected, value_text);
+            let value_resp = ui
+                .selectable_label(selected, value_text)
+                .on_hover_text(&node.display_value);
             if value_resp.clicked() {
                 outcome.selection_request = Some(selection_request(ui, &node.path));
             }
@@ -305,17 +312,17 @@ fn is_editable(node: &JsonNode, mode: AppMode) -> bool {
 fn render_value_editor(
     ui: &mut Ui,
     node: &mut JsonNode,
-    locale: Locale,
-    selected_paths: &BTreeSet<String>,
+    options: &RenderOptions<'_>,
     outcome: &mut TreeOutcome,
 ) {
     let before_value_type = node.value_type.clone();
     let before_display_value = node.display_value.clone();
     let edit_resp = ui.add(
         egui::TextEdit::singleline(&mut node.display_value)
+            .id(value_editor_id(&node.path))
             .desired_width(EDIT_FIELD_WIDTH)
             .font(egui::TextStyle::Monospace)
-            .text_color(value_color(&node.value_type)),
+            .text_color(SyntaxColors::new(ui.visuals()).value_color(&node.value_type)),
     );
 
     if edit_resp.changed() {
@@ -325,7 +332,7 @@ fn render_value_editor(
     let mut valid = true;
     if edit_resp.lost_focus() {
         let edited = node.display_value.clone();
-        match apply_primitive_edit(node, &edited) {
+        match apply_primitive_edit(node, &edited, options.format) {
             Ok(()) => {
                 if node.value_type != before_value_type
                     || node.display_value != before_display_value
@@ -357,27 +364,40 @@ fn render_value_editor(
         outcome.selection_request = Some(selection_request(ui, &node.path));
     }
     edit_resp.context_menu(|ui| {
-        context_menu(ui, node, AppMode::Edit, locale, selected_paths, outcome);
+        context_menu(
+            ui,
+            node,
+            AppMode::Edit,
+            options.locale,
+            options.selected_paths,
+            outcome,
+        );
     });
 }
 
 /// Сформировать текст заголовка для объекта/массива с учётом подсветки поиска.
-fn make_header_text(node: &JsonNode, highlight: Highlight, locale: Locale) -> RichText {
-    let display_value = match node.value_type {
-        JsonValueType::Object => locale.object_count(data_child_count(node)),
-        JsonValueType::Array => locale.array_count(data_child_count(node)),
-        _ => node.display_value.clone(),
-    };
-    let label = match &node.key {
-        Some(k) => format!("{}: {}", k, display_value),
-        None => display_value,
-    };
-    highlight.apply(RichText::new(label), value_color(&node.value_type))
+pub(in crate::app) fn value_editor_id(path: &str) -> egui::Id {
+    egui::Id::new(("tree-value", path))
 }
 
-pub(super) fn data_child_count(node: &JsonNode) -> usize {
-    node.children
-        .iter()
-        .filter(|child| child.value_type != JsonValueType::Comment)
-        .count()
+fn make_header_text(
+    node: &JsonNode,
+    highlight: Highlight,
+    locale: Locale,
+    colors: SyntaxColors,
+) -> RichText {
+    let display_value = match node.value_type {
+        JsonValueType::Object => locale.object_count(node.data_child_count()),
+        JsonValueType::Array => locale.array_count(node.data_child_count()),
+        _ => single_line_text(&node.display_value).into_owned(),
+    };
+    let label = match &node.key {
+        Some(k) => format!("{}: {}", single_line_text(k), display_value),
+        None => display_value,
+    };
+    highlight.apply(
+        RichText::new(label),
+        colors.value_color(&node.value_type),
+        colors,
+    )
 }

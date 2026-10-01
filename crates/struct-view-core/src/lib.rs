@@ -3,5 +3,7 @@
 #![deny(warnings)]
 
 pub mod diff;
+pub mod files;
+mod numbers;
 pub mod parser;
 pub mod search;

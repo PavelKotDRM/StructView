@@ -4,6 +4,7 @@ impl StructViewApp {
     /// Отрисовать центральную панель с деревом JSON.
     pub(in crate::app) fn show_central_panel(&mut self, ui: &mut Ui) {
         egui::CentralPanel::default().show(ui, |ui| {
+            let colors = SyntaxColors::new(ui.visuals());
             self.handle_dropped_files(ui);
             let save_requested = std::mem::take(&mut self.save_requested);
             let copy_structures_requested = std::mem::take(&mut self.copy_structures_requested);
@@ -80,7 +81,7 @@ impl StructViewApp {
                             show_schema(ui, diagram, &self.search, self.locale);
                         }
                         Some(Err(error)) => {
-                            ui.colored_label(COLOR_ERROR, error);
+                            ui.colored_label(colors.error, error);
                         }
                         None => {}
                     }
@@ -104,13 +105,13 @@ impl StructViewApp {
                 self.refresh_search();
             }
             if let Some(error) = outcome.edit_error {
-                self.show_toast(&error);
+                self.show_error(&error);
             }
             if let Some(text) = outcome.copy_request {
                 self.clipboard_payload = None;
                 match copy_to_clipboard(&text) {
                     Ok(()) => self.show_toast(self.locale.text(TextKey::Copied)),
-                    Err(error) => self.show_toast(&self.locale.copy_error(&error)),
+                    Err(error) => self.show_error(&self.locale.copy_error(&error)),
                 }
             }
             if let Some(paths) = outcome.copy_structure_paths {
@@ -165,7 +166,7 @@ impl StructViewApp {
             }
             match std::fs::write(&path, content) {
                 Ok(()) => self.show_toast(self.locale.text(TextKey::TableExported)),
-                Err(error) => self.show_toast(&self.locale.save_error(&error.to_string())),
+                Err(error) => self.show_error(&self.locale.save_error(&error.to_string())),
             }
         }
     }
@@ -176,13 +177,14 @@ impl StructViewApp {
             return;
         };
         let locale = self.locale;
+        let colors = SyntaxColors::new(ui.visuals());
 
         if comparison.differences.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(
                     RichText::new(locale.text(TextKey::ComparisonNoDifferences))
                         .size(18.0)
-                        .color(COLOR_SUCCESS),
+                        .color(colors.success),
                 );
             });
             return;
@@ -221,7 +223,7 @@ impl StructViewApp {
                         for difference in &comparison.differences {
                             ui.label(
                                 RichText::new(&difference.path)
-                                    .color(COLOR_MATCH)
+                                    .color(colors.matched)
                                     .monospace(),
                             );
                             let reference = difference.values.first().and_then(Option::as_ref);
@@ -236,6 +238,7 @@ impl StructViewApp {
                                     reference,
                                     value.as_ref(),
                                     ui.visuals().text_color(),
+                                    colors,
                                 );
                                 ui.label(RichText::new(text).color(color).monospace());
                             }
@@ -264,15 +267,14 @@ impl StructViewApp {
             self.visible_rows_dirty = false;
         }
 
-        // Клонируем состояние поиска, чтобы одновременно держать `&mut self.root`.
-        let search = self.search.clone();
-        let selected_paths = self.selected_paths.clone();
         let mode = self.mode;
         let options = RenderOptions {
-            search: &search,
+            search: &self.search,
+            matching_paths: self.search.matches.iter().map(String::as_str).collect(),
+            format: self.file_state.format.unwrap_or(DataFormat::Json),
             mode,
             scroll_to_path: scroll_to_path.as_deref(),
-            selected_paths: &selected_paths,
+            selected_paths: &self.selected_paths,
             locale: self.locale,
         };
         let mut outcome = TreeOutcome::default();
@@ -342,18 +344,6 @@ impl StructViewApp {
     }
 }
 
-pub(super) fn visualization_label(mode: VisualizationMode, locale: Locale) -> &'static str {
-    let key = match mode {
-        VisualizationMode::Tree => TextKey::TreeView,
-        VisualizationMode::Graph => TextKey::GraphView,
-        VisualizationMode::Table => TextKey::TableView,
-        VisualizationMode::Schema => TextKey::SchemaView,
-        VisualizationMode::Comparison => TextKey::ComparisonView,
-        VisualizationMode::Diff => TextKey::DiffView,
-    };
-    locale.text(key)
-}
-
 /// Отрисовать подсказку, показываемую, пока файл не открыт.
 fn show_placeholder(ui: &mut Ui, locale: Locale) {
     ui.centered_and_justified(|ui| {
@@ -368,7 +358,10 @@ fn show_placeholder(ui: &mut Ui, locale: Locale) {
 /// Отрисовать сообщение об ошибке разбора данных.
 fn show_parse_error(ui: &mut Ui, message: &str, locale: Locale) {
     ui.add_space(8.0);
-    ui.colored_label(COLOR_ERROR, locale.text(TextKey::DataParseError));
+    ui.colored_label(
+        SyntaxColors::new(ui.visuals()).error,
+        locale.text(TextKey::DataParseError),
+    );
     ui.add_space(4.0);
     egui::ScrollArea::both().show(ui, |ui| {
         ui.label(RichText::new(message).monospace());

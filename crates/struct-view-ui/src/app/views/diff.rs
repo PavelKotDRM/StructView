@@ -1,4 +1,6 @@
+use super::super::state::PairDifferenceCache;
 use super::*;
+use struct_view_core::diff::values_equal;
 
 /// Отрисовать парный diff с выбором сравниваемых файлов.
 pub(in crate::app) fn show_diff(
@@ -6,6 +8,7 @@ pub(in crate::app) fn show_diff(
     comparison: &mut ComparisonState,
     locale: Locale,
 ) {
+    let colors = SyntaxColors::new(ui.visuals());
     let mut left_index = comparison.left_index;
     let mut right_index = comparison.right_index;
     let selector_width = (ui.available_width() / 2.0 - 100.0).clamp(120.0, 360.0);
@@ -40,19 +43,37 @@ pub(in crate::app) fn show_diff(
     comparison.left_index = left_index;
     comparison.right_index = right_index;
 
+    let cache_matches = comparison
+        .pair_cache
+        .as_ref()
+        .is_some_and(|cache| cache.left_index == left_index && cache.right_index == right_index);
+    if !cache_matches {
+        let differences = comparison
+            .differences
+            .iter()
+            .filter(|difference| {
+                let left = difference.values.get(left_index).and_then(Option::as_ref);
+                let right = difference.values.get(right_index).and_then(Option::as_ref);
+                pair_change(left, right).is_some()
+            })
+            .cloned()
+            .collect();
+        comparison.pair_cache = Some(PairDifferenceCache {
+            left_index,
+            right_index,
+            differences,
+        });
+    }
     let pair_differences = comparison
-        .differences
-        .iter()
-        .filter(|difference| {
-            difference.values.get(left_index) != difference.values.get(right_index)
-        })
-        .collect::<Vec<_>>();
+        .pair_cache
+        .as_ref()
+        .map_or(&[][..], |cache| cache.differences.as_slice());
     if pair_differences.is_empty() {
         ui.centered_and_justified(|ui| {
             ui.label(
                 RichText::new(locale.text(TextKey::DiffNoDifferences))
                     .size(18.0)
-                    .color(COLOR_SUCCESS),
+                    .color(colors.success),
             );
         });
         return;
@@ -90,24 +111,22 @@ pub(in crate::app) fn show_diff(
                         let right = difference.values.get(right_index).and_then(Option::as_ref);
                         let (change_type, left_color, right_color) = match pair_change(left, right)
                         {
-                            Some(PairChange::Added) => (
-                                locale.text(TextKey::DiffAdded),
-                                Color32::GRAY,
-                                COLOR_SUCCESS,
-                            ),
-                            Some(PairChange::Removed) => (
-                                locale.text(TextKey::DiffRemoved),
-                                COLOR_ERROR,
-                                Color32::GRAY,
-                            ),
-                            Some(PairChange::Changed) => {
-                                (locale.text(TextKey::DiffChanged), COLOR_MATCH, COLOR_MATCH)
+                            Some(PairChange::Added) => {
+                                (locale.text(TextKey::DiffAdded), colors.null, colors.success)
                             }
+                            Some(PairChange::Removed) => {
+                                (locale.text(TextKey::DiffRemoved), colors.error, colors.null)
+                            }
+                            Some(PairChange::Changed) => (
+                                locale.text(TextKey::DiffChanged),
+                                colors.matched,
+                                colors.matched,
+                            ),
                             None => continue,
                         };
                         ui.label(
                             RichText::new(&difference.path)
-                                .color(COLOR_MATCH)
+                                .color(colors.matched)
                                 .monospace(),
                         );
                         ui.label(change_type);
@@ -149,13 +168,14 @@ pub(in crate::app) fn show_difference_legend(
     locale: Locale,
     context: Option<&str>,
 ) {
+    let colors = SyntaxColors::new(ui.visuals());
     ui.horizontal_wrapped(|ui| {
         if let Some(context) = context {
             ui.label(context);
         }
-        ui.label(RichText::new(locale.text(TextKey::DiffAdded)).color(COLOR_SUCCESS));
-        ui.label(RichText::new(locale.text(TextKey::DiffRemoved)).color(COLOR_ERROR));
-        ui.label(RichText::new(locale.text(TextKey::DiffChanged)).color(COLOR_MATCH));
+        ui.label(RichText::new(locale.text(TextKey::DiffAdded)).color(colors.success));
+        ui.label(RichText::new(locale.text(TextKey::DiffRemoved)).color(colors.error));
+        ui.label(RichText::new(locale.text(TextKey::DiffChanged)).color(colors.matched));
     });
 }
 
@@ -163,11 +183,12 @@ pub(in crate::app) fn comparison_value_color(
     reference: Option<&Value>,
     value: Option<&Value>,
     unchanged_color: Color32,
+    colors: SyntaxColors,
 ) -> Color32 {
     match pair_change(reference, value) {
-        Some(PairChange::Added) => COLOR_SUCCESS,
-        Some(PairChange::Removed) => COLOR_ERROR,
-        Some(PairChange::Changed) => COLOR_MATCH,
+        Some(PairChange::Added) => colors.success,
+        Some(PairChange::Removed) => colors.error,
+        Some(PairChange::Changed) => colors.matched,
         None => unchanged_color,
     }
 }
@@ -183,7 +204,7 @@ pub(super) fn pair_change(left: Option<&Value>, right: Option<&Value>) -> Option
     match (left, right) {
         (None, Some(_)) => Some(PairChange::Added),
         (Some(_), None) => Some(PairChange::Removed),
-        (Some(left), Some(right)) if left != right => Some(PairChange::Changed),
+        (Some(left), Some(right)) if !values_equal(left, right) => Some(PairChange::Changed),
         (None, None) | (Some(_), Some(_)) => None,
     }
 }

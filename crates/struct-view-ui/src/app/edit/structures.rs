@@ -5,9 +5,7 @@ use serde_json::Value;
 use crate::clipboard::ClipboardEntry;
 use struct_view_core::parser::{DataFormat, JsonNode, JsonValueType, node_to_value, parse_data};
 
-use super::paths::{
-    data_child_count, find_node_mut, update_child_paths, update_container_label, update_paths,
-};
+use super::paths::{find_node_mut, update_child_paths, update_container_label, update_paths};
 
 /// Собрать выбранные узлы для копирования, не дублируя вложенные выборы.
 ///
@@ -29,6 +27,7 @@ pub(in crate::app) fn selected_structures(
 pub(in crate::app) enum DeleteError {
     EmptySelection,
     RootSelected,
+    MetadataValueSelected,
     SelectionNotFound,
 }
 
@@ -49,8 +48,20 @@ pub(in crate::app) fn delete_selected_structures(
     if targets.is_empty() {
         return Err(DeleteError::SelectionNotFound);
     }
+    if selects_metadata_value(root, &targets) {
+        return Err(DeleteError::MetadataValueSelected);
+    }
 
     Ok(remove_selected_children(root, &targets))
+}
+
+fn selects_metadata_value(node: &JsonNode, selected: &BTreeSet<String>) -> bool {
+    node.children.iter().any(|child| {
+        (node.value_type == JsonValueType::Metadata
+            && child.value_type != JsonValueType::Comment
+            && selected.contains(&child.path))
+            || selects_metadata_value(child, selected)
+    })
 }
 
 fn collect_selected_paths(
@@ -94,6 +105,12 @@ fn collect_selected_structures(
     entries: &mut Vec<ClipboardEntry>,
 ) -> Result<(), String> {
     if selected_paths.contains(&node.path) {
+        if node.yaml_key.is_some() {
+            return Err(
+                "Нестроковый YAML-ключ нельзя представить в буфере скопированных структур"
+                    .to_string(),
+            );
+        }
         entries.push(ClipboardEntry {
             key: node.key.clone(),
             value: node_to_value(node)?,
@@ -193,7 +210,7 @@ fn paste_into_array(parent: &mut JsonNode, entries: &[ClipboardEntry]) -> Result
     }
 
     let parent_path = parent.path.clone();
-    let first_index = data_child_count(parent);
+    let first_index = parent.data_child_count();
     let nodes = values
         .into_iter()
         .enumerate()

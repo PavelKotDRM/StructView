@@ -425,6 +425,16 @@ fn closing_pair_diff_restores_the_previous_document() {
     assert!(app.can_undo());
     assert!(app.can_redo());
 
+    app.load_comparison(vec![open_path.clone(), selected_document_path.clone()]);
+    app.close_file();
+    assert_eq!(app.file_state.path, Some(open_path.clone()));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        3
+    );
+    assert_eq!(app.visualization, VisualizationMode::Table);
+    assert!(app.can_undo());
+
     app.close_file();
     assert!(app.root.is_none());
     assert!(app.file_state.path.is_none());
@@ -496,4 +506,76 @@ fn creating_new_file_initializes_editable_document_for_all_formats() {
         assert_eq!(app.file_state.size_bytes, content.len() as u64);
         std::fs::remove_file(path).unwrap();
     }
+}
+
+fn editable_document() -> StructViewApp {
+    let root = parse_data(r#"{"value":1}"#, Some(DataFormat::Json))
+        .unwrap()
+        .0;
+    let mut app = StructViewApp {
+        root: Some(root),
+        mode: AppMode::Edit,
+        selected_paths: BTreeSet::from(["value".to_string()]),
+        ..StructViewApp::default()
+    };
+    app.file_state.path = Some(std::path::PathBuf::from("original.json"));
+    app.file_state.format = Some(DataFormat::Json);
+    app.search_query_buf = "value".to_string();
+    app.refresh_search();
+    app.push_undo_snapshot(app.root.as_ref().unwrap().clone());
+    app
+}
+
+#[test]
+fn failed_open_create_and_comparison_preserve_the_current_document() {
+    for operation in 0..3 {
+        let mut app = editable_document();
+        match operation {
+            0 => app.load_file(std::env::temp_dir()),
+            1 => app.create_new_file(std::env::temp_dir(), DataFormat::Json),
+            _ => app.load_comparison(vec![std::env::temp_dir()]),
+        }
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+            1
+        );
+        assert_eq!(
+            app.file_state.path,
+            Some(std::path::PathBuf::from("original.json"))
+        );
+        assert_eq!(app.mode, AppMode::Edit);
+        assert_eq!(app.search.query, "value");
+        assert_eq!(app.selected_paths, BTreeSet::from(["value".to_string()]));
+        assert!(app.can_undo());
+        assert!(app.toast.is_some());
+    }
+}
+
+#[test]
+fn saving_commits_the_pending_inline_type_change() {
+    let path = std::env::temp_dir().join(format!(
+        "struct_view-pending-save-{}.json",
+        std::process::id()
+    ));
+    let mut app = editable_document();
+    app.root.as_mut().unwrap().children[0].display_value = "\"updated\"".to_string();
+    app.handle_inline_edit_events(vec![InlineEditEvent {
+        path: "value".to_string(),
+        before_value_type: JsonValueType::Number,
+        before_display_value: "1".to_string(),
+        changed: true,
+        finished: false,
+        valid: true,
+    }]);
+    let result = app.write_root_to_path(&path, DataFormat::Json);
+    let saved = std::fs::read_to_string(&path);
+    if saved.is_ok() {
+        std::fs::remove_file(&path).unwrap();
+    }
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&saved.unwrap()).unwrap()["value"],
+        "updated"
+    );
+    assert!(app.pending_inline_edit.is_none());
 }

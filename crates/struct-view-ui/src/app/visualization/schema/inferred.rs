@@ -6,6 +6,7 @@ use super::{SchemaDiagram, SchemaRow, SchemaSource};
 
 #[derive(Default)]
 struct InferredRow {
+    key: Option<String>,
     types: BTreeSet<String>,
     occurrences: usize,
     parent_path: Option<String>,
@@ -31,6 +32,7 @@ pub(super) fn inferred_schema(root: &JsonNode) -> SchemaDiagram {
                 .map(|count| format!("observed in {}/{} sample object(s)", row.occurrences, count))
                 .unwrap_or_default();
             SchemaRow {
+                key: row.key,
                 path,
                 type_name: row.types.into_iter().collect::<Vec<_>>().join(" | "),
                 required,
@@ -70,6 +72,7 @@ fn collect_inferred_rows(
     row.types
         .insert(schema_node_type(&node.value_type).to_string());
     if let Some(parent_path) = parent_path {
+        row.key = node.key.clone();
         row.occurrences += 1;
         row.parent_path = Some(parent_path.to_string());
     }

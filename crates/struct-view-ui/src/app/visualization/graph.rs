@@ -104,9 +104,7 @@ fn collect_graph_nodes(
             });
             nodes_by_path.insert(node.path.clone(), index);
             add_graph_alias(aliases, id, index);
-            if is_definition {
-                add_graph_alias(aliases, pointer.to_string(), index);
-            }
+            add_graph_alias(aliases, pointer.to_string(), index);
         }
     }
 
@@ -207,15 +205,15 @@ fn collect_reference_values(node: &JsonNode, references: &mut Vec<String>) {
 }
 
 fn object_scalar(node: &JsonNode, keys: &[&str]) -> Option<String> {
-    node.children
-        .iter()
-        .find(|child| {
-            child.key.as_deref().is_some_and(|key| {
-                keys.iter()
-                    .any(|candidate| key.eq_ignore_ascii_case(candidate))
-            })
+    keys.iter().find_map(|candidate| {
+        node.children.iter().find_map(|child| {
+            child
+                .key
+                .as_deref()
+                .filter(|key| key.eq_ignore_ascii_case(candidate))
+                .and_then(|_| scalar_value(child))
         })
-        .and_then(scalar_value)
+    })
 }
 
 fn scalar_value(node: &JsonNode) -> Option<String> {

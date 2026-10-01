@@ -11,8 +11,10 @@ headless commands for formatting, validation, search, and comparison.
 - JSON, YAML, TOML, and JSON5 support;
 - automatic format detection for stdin and files with unknown extensions;
 - interactive object and array tree with expandable and collapsible nodes;
-- full-text search across keys and values;
-- search filters for keys/values, case sensitivity, and exact matching;
+- full-text search across keys, values, and JSON paths;
+- search filters for key/value/path scope, case sensitivity, exact and
+  whole-word matching, and regular expressions;
+- a regex builder for escaped literal text and common pattern fragments;
 - switchable tree, relationship graph, flattened table, and schema views;
 - graph links inferred from common entity identifiers and reference fields;
 - CSV export of table rows, respecting the active search filter;
@@ -48,6 +50,10 @@ headless commands for formatting, validation, search, and comparison.
 For files, the format is detected from the extension first. If the extension
 is unknown, the content is parsed using automatic format detection. For stdin,
 the format is detected from the content.
+
+Non-string YAML mapping keys are preserved when saving as YAML. Converting a
+document with such keys to JSON or TOML is rejected rather than changing their
+types.
 
 ## Installation and build
 
@@ -98,6 +104,8 @@ edit mode.
 
 The interface provides:
 
+- a responsive menu bar with `File`, `Edit`, `View`, `Settings`, and `Help`
+  groups that collapse into one `Menu` on narrow windows;
 - a `File` menu for creating, opening, saving, converting to another format,
   saving to a new file, and closing a document;
 - a view selector for the interactive tree, relationship graph, flattened
@@ -113,8 +121,13 @@ The interface provides:
 - a comparison table for all selected files and a side-by-side diff for any
   selected pair, highlighting additions, removals, and changes;
 - controls for expanding and collapsing the whole tree;
-- search with previous and next match navigation;
-- search options for key/value scope, case sensitivity, and exact matching;
+- a separate, resizable search window opened from the toolbar or with
+  `Ctrl+F` (`Cmd+F` on macOS), with previous/next navigation and selectable
+  result paths;
+- search options for key/value/path scope, case sensitivity, exact and
+  whole-word matching, and Rust regular expressions;
+- a regex builder that appends escaped literal text and common pattern
+  fragments to the active query;
 - `View` and `Edit` modes;
 - undo and redo for up to 100 document changes; inline edits are grouped into
   one action (`Ctrl+Z` / `Ctrl+Y`, or `Cmd+Z` / `Cmd+Shift+Z` on macOS);
@@ -279,7 +292,7 @@ exit code when parsing fails.
 
 ### Path search
 
-Search keys and values and print the paths of matching nodes:
+Search keys, values, and JSON paths and print the paths of matching nodes:
 
 ```sh
 struct_view find user data.json
@@ -290,9 +303,15 @@ Additional options:
 ```text
 --keys            search keys;
 --values          search values;
+--paths           search JSON paths;
 --case-sensitive  match letter case;
---exact           require an exact match.
+--exact           require an exact match;
+--whole-word      require a whole-word match;
+--regex           interpret the query as a Rust regular expression.
 ```
+
+`--regex` cannot be combined with `--exact` or `--whole-word`; case sensitivity
+still applies to regular expressions.
 
 Examples:
 
@@ -300,6 +319,7 @@ Examples:
 struct_view find --keys name data.json
 struct_view find --values --case-sensitive ADMIN config.json
 struct_view find --keys --exact id data.json
+struct_view find --paths --regex '^users\.[0-9]+\.name$' data.json
 ```
 
 If no matches are found, the command exits with a non-zero code.

@@ -1,6 +1,6 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
-use struct_view_core::parser::{JsonNode, JsonValueType};
+use struct_view_core::parser::{DataFormat, JsonNode, JsonValueType};
 use struct_view_core::search::SearchState;
 
 use super::super::i18n::Locale;
@@ -58,6 +58,8 @@ pub(in crate::app) struct SelectionRequest {
 pub(in crate::app) struct RenderOptions<'a> {
     /// Состояние поиска.
     pub(in crate::app) search: &'a SearchState,
+    pub(in crate::app) matching_paths: HashSet<&'a str>,
+    pub(in crate::app) format: DataFormat,
     /// Текущий режим приложения.
     pub(in crate::app) mode: AppMode,
     /// Путь совпадения, к которому нужно прокрутить дерево.

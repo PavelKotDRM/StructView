@@ -27,6 +27,17 @@ pub enum JsonValueType {
     Null,
 }
 
+impl JsonValueType {
+    /// Determine numeric type without converting an arbitrary-precision literal to `f64`.
+    pub fn for_number(number: &serde_json::Number) -> Self {
+        if number.to_string().contains(['.', 'e', 'E']) {
+            Self::Float
+        } else {
+            Self::Number
+        }
+    }
+}
+
 /// Узел JSON-дерева.
 ///
 /// Каждый узел представляет элемент структурированного документа. Объекты и
@@ -37,6 +48,8 @@ pub enum JsonValueType {
 pub struct JsonNode {
     /// Ключ (имя поля) или индекс элемента массива. `None` для корневого узла.
     pub key: Option<String>,
+    /// Исходный нетекстовый ключ YAML, сохраняемый при записи YAML-документа.
+    pub yaml_key: Option<serde_yaml_ng::Value>,
     /// Тип значения этого узла.
     pub value_type: JsonValueType,
     /// Текстовое представление значения для конечных узлов (строки, числа, bool, null).
@@ -48,6 +61,16 @@ pub struct JsonNode {
     pub expanded: bool,
     /// Абсолютный путь к узлу (например, `store.book[2].author`).
     pub path: String,
+}
+
+impl JsonNode {
+    /// Number of data children, excluding comments.
+    pub fn data_child_count(&self) -> usize {
+        self.children
+            .iter()
+            .filter(|child| child.value_type != JsonValueType::Comment)
+            .count()
+    }
 }
 
 /// Ошибка разбора структурированных данных.

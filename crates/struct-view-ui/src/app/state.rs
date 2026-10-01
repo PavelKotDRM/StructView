@@ -5,12 +5,13 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::clipboard::{
     ClipboardEntry, copy_to_clipboard, decode_structures, encode_structures, read_from_clipboard,
 };
 use struct_view_core::diff::{Difference, compare_values};
+use struct_view_core::files::write_text_atomic;
 use struct_view_core::parser::{
     DataFormat, JsonNode, JsonValueType, ParseError, comment_input, node_to_value, parse_data,
     serialize_node,
@@ -23,7 +24,7 @@ use super::edit::{
     selected_structures,
 };
 use super::i18n::{Locale, TextKey};
-use super::theme::value_color;
+use super::theme::SyntaxColors;
 use super::tree::{
     AddChildRequest, EditFieldRequest, InlineEditEvent, SelectionRequest, VisibleRows,
 };
@@ -35,6 +36,26 @@ mod history;
 mod save;
 
 const HISTORY_LIMIT: usize = 100;
+const TOAST_LIFETIME: Duration = Duration::from_secs(3);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ToastKind {
+    Success,
+    Error,
+}
+
+#[derive(Debug)]
+pub(super) struct Toast {
+    pub(super) message: String,
+    pub(super) shown_at: Instant,
+    pub(super) kind: ToastKind,
+}
+
+impl Toast {
+    pub(super) fn remaining(&self) -> Duration {
+        TOAST_LIFETIME.saturating_sub(self.shown_at.elapsed())
+    }
+}
 
 /// Метаданные загруженного файла, отображаемые в статус-баре.
 #[derive(Debug, Default)]
@@ -69,6 +90,8 @@ pub(super) struct PreviousDocumentState {
     pub(super) file_state: FileState,
     pub(super) search: SearchState,
     pub(super) search_query_buf: String,
+    pub(super) regex_builder_literal: String,
+    pub(super) search_window_open: bool,
     pub(super) search_scroll_target: Option<String>,
     pub(super) mode: AppMode,
     pub(super) visualization: VisualizationMode,
@@ -88,8 +111,16 @@ pub(super) struct ComparisonState {
     pub(super) left_index: usize,
     /// Индекс выбранной второй версии в парном diff.
     pub(super) right_index: usize,
+    pub(super) pair_cache: Option<PairDifferenceCache>,
     /// Документ, который нужно восстановить после закрытия сравнения.
     pub(super) previous_document: Option<PreviousDocumentState>,
+}
+
+#[derive(Debug)]
+pub(super) struct PairDifferenceCache {
+    pub(super) left_index: usize,
+    pub(super) right_index: usize,
+    pub(super) differences: Vec<Difference>,
 }
 
 /// Режим работы приложения.
@@ -166,6 +197,10 @@ pub struct StructViewApp {
     pub(super) search: SearchState,
     /// Буфер для строки поиска в UI.
     pub(super) search_query_buf: String,
+    /// Текст, который конструктор добавит в запрос как литерал.
+    pub(super) regex_builder_literal: String,
+    /// Открыто ли расширенное окно поиска.
+    pub(super) search_window_open: bool,
     /// Путь совпадения, к которому нужно прокрутить дерево в следующем кадре.
     pub(super) search_scroll_target: Option<String>,
     /// Отложенный запрос на сохранение текущего файла.
@@ -175,7 +210,7 @@ pub struct StructViewApp {
     /// Состояние сравнения нескольких файлов.
     pub(super) comparison: Option<ComparisonState>,
     /// Временное уведомление (например, «Скопировано») и момент его показа.
-    pub(super) toast: Option<(String, Instant)>,
+    pub(super) toast: Option<Toast>,
     /// Флаг тёмной темы.
     pub(super) dark_mode: bool,
     /// Текущий режим работы приложения.
@@ -223,6 +258,8 @@ impl Default for StructViewApp {
             parse_error: None,
             search: SearchState::default(),
             search_query_buf: String::new(),
+            regex_builder_literal: String::new(),
+            search_window_open: false,
             search_scroll_target: None,
             save_requested: false,
             file_state: FileState::default(),
@@ -338,21 +375,6 @@ fn field_value_types(
     types
 }
 
-fn field_type_label(locale: Locale, value_type: &JsonValueType) -> &'static str {
-    match value_type {
-        JsonValueType::String => locale.text(TextKey::TypeString),
-        JsonValueType::DateTime => locale.text(TextKey::TypeDateTime),
-        JsonValueType::Comment => locale.text(TextKey::TypeComment),
-        JsonValueType::Metadata => locale.text(TextKey::TypeMetadata),
-        JsonValueType::Number => locale.text(TextKey::TypeNumber),
-        JsonValueType::Float => locale.text(TextKey::TypeFloat),
-        JsonValueType::Bool => locale.text(TextKey::TypeBoolean),
-        JsonValueType::Null => locale.text(TextKey::TypeNull),
-        JsonValueType::Object => locale.text(TextKey::TypeObject),
-        JsonValueType::Array => locale.text(TextKey::TypeArray),
-    }
-}
-
 fn default_field_value(value_type: &JsonValueType) -> String {
     match value_type {
         JsonValueType::Bool => "true".to_string(),
@@ -370,14 +392,16 @@ fn default_field_value(value_type: &JsonValueType) -> String {
 
 impl eframe::App for StructViewApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Принудительное обновление, если показано уведомление (чтобы оно исчезло вовремя)
-        if self.toast.is_some() {
-            ui.ctx().request_repaint();
-        }
-
+        let previous_toast = self.toast.as_ref().map(|toast| toast.shown_at);
         self.show_top_panel(ui);
         self.show_bottom_panel(ui);
         self.show_central_panel(ui);
+        if let Some(toast) = &self.toast {
+            if Some(toast.shown_at) != previous_toast {
+                ui.ctx().request_repaint();
+            }
+            ui.ctx().request_repaint_after(toast.remaining());
+        }
     }
 }
 

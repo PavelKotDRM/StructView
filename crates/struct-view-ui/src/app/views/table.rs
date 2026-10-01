@@ -7,14 +7,18 @@ pub(in crate::app) fn show_table(
     search: &SearchState,
     locale: Locale,
 ) -> bool {
+    let toolbar_size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
     let export_clicked = ui
-        .horizontal(|ui| {
-            ui.label(locale.text(TextKey::TableDescription));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.button(locale.text(TextKey::ExportCsv)).clicked()
-            })
-            .inner
-        })
+        .allocate_ui_with_layout(
+            toolbar_size,
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                let clicked = ui.button(locale.text(TextKey::ExportCsv)).clicked();
+                ui.add(egui::Label::new(locale.text(TextKey::TableDescription)).truncate())
+                    .on_hover_text(locale.text(TextKey::TableDescription));
+                clicked
+            },
+        )
         .inner;
 
     let visible_indices = table_visible_indices(table, search);
@@ -26,81 +30,67 @@ pub(in crate::app) fn show_table(
         return export_clicked;
     }
 
-    let width = ui.available_width().max(MIN_TABLE_WIDTH);
+    let colors = SyntaxColors::new(ui.visuals());
+    let width =
+        (ui.available_width().max(MIN_TABLE_WIDTH) - 2.0 * ui.spacing().item_spacing.x).max(1.0);
     let path_width = width * 0.43;
     let value_width = width * 0.39;
     let type_width = width - path_width - value_width;
-    let row_height = ui.spacing().interact_size.y;
-
-    ui.horizontal(|ui| {
-        table_header(
-            ui,
-            path_width,
-            locale.text(TextKey::ComparisonPath),
-            row_height,
-        );
-        table_header(ui, value_width, locale.text(TextKey::Value), row_height);
-        table_header(ui, type_width, locale.text(TextKey::SchemaType), row_height);
-    });
-
-    egui::ScrollArea::both().auto_shrink([false; 2]).show_rows(
+    let columns = [
+        Column {
+            width: path_width,
+            header: locale.text(TextKey::ComparisonPath),
+        },
+        Column {
+            width: value_width,
+            header: locale.text(TextKey::Value),
+        },
+        Column {
+            width: type_width,
+            header: locale.text(TextKey::SchemaType),
+        },
+    ];
+    show_virtualized_columns(
         ui,
-        row_height,
+        "table_horizontal",
+        &columns,
         visible_row_count,
-        |ui, row_range| {
-            for visible_index in row_range {
-                let row_index = visible_indices
-                    .as_ref()
-                    .map_or(visible_index, |indices| indices[visible_index]);
-                let row = &table.rows[row_index];
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [path_width, row_height],
-                        egui::Label::new(RichText::new(&row.path).monospace()).truncate(),
-                    )
-                    .on_hover_text(&row.path);
-                    ui.add_sized(
-                        [value_width, row_height],
-                        egui::Label::new(
-                            RichText::new(&row.value)
-                                .color(value_color(&row.value_type))
-                                .monospace(),
-                        )
-                        .truncate(),
-                    )
-                    .on_hover_text(&row.value);
-                    ui.add_sized(
-                        [type_width, row_height],
-                        egui::Label::new(value_type_label(locale, &row.value_type)),
-                    );
-                });
-            }
+        |ui, visible_index| {
+            let row_index = visible_indices
+                .as_ref()
+                .map_or(visible_index, |indices| indices[visible_index]);
+            let row = &table.rows[row_index];
+            let value = match row.value_type {
+                JsonValueType::Object => locale.object_count(row.child_count),
+                JsonValueType::Array => locale.array_count(row.child_count),
+                _ => row.value.clone(),
+            };
+            ui.horizontal(|ui| {
+                column_label(
+                    ui,
+                    path_width,
+                    RichText::new(single_line_text(&row.path)).monospace(),
+                )
+                .on_hover_text(&row.path);
+                column_label(
+                    ui,
+                    value_width,
+                    RichText::new(single_line_text(&value))
+                        .color(colors.value_color(&row.value_type))
+                        .monospace(),
+                )
+                .on_hover_text(&value);
+                column_label(
+                    ui,
+                    type_width,
+                    RichText::new(locale.value_type_label(&row.value_type)),
+                )
+                .on_hover_text(locale.value_type_label(&row.value_type));
+            });
         },
     );
 
     export_clicked
-}
-
-pub(super) fn table_header(ui: &mut egui::Ui, width: f32, label: &str, height: f32) {
-    ui.add_sized(
-        [width, height],
-        egui::Label::new(RichText::new(label).strong()),
-    );
-}
-
-fn value_type_label(locale: Locale, value_type: &JsonValueType) -> &'static str {
-    match value_type {
-        JsonValueType::Object => locale.text(TextKey::TypeObject),
-        JsonValueType::Array => locale.text(TextKey::TypeArray),
-        JsonValueType::String => locale.text(TextKey::TypeString),
-        JsonValueType::DateTime => locale.text(TextKey::TypeDateTime),
-        JsonValueType::Comment => locale.text(TextKey::TypeComment),
-        JsonValueType::Metadata => locale.text(TextKey::TypeMetadata),
-        JsonValueType::Number => locale.text(TextKey::TypeNumber),
-        JsonValueType::Float => locale.text(TextKey::TypeFloat),
-        JsonValueType::Bool => locale.text(TextKey::TypeBoolean),
-        JsonValueType::Null => locale.text(TextKey::TypeNull),
-    }
 }
 
 /// Формировать экспорт CSV после применения поиска, вызываемое из состояния.

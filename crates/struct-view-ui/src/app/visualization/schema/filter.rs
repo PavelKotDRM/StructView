@@ -18,12 +18,11 @@ pub(in crate::app) fn schema_visible_indices(
             .enumerate()
             .filter_map(|(index, row)| {
                 let key_match = search.options.search_keys
-                    && text_matches(
-                        &row.path,
-                        &search.query,
-                        search.options.case_sensitive,
-                        search.options.exact_match,
-                    );
+                    && row
+                        .key
+                        .as_deref()
+                        .is_some_and(|key| search.matches_text(key));
+                let path_match = search.options.search_paths && search.matches_text(&row.path);
                 let value_match = search.options.search_values
                     && [
                         row.type_name.as_str(),
@@ -31,29 +30,9 @@ pub(in crate::app) fn schema_visible_indices(
                         row.reference.as_deref().unwrap_or_default(),
                     ]
                     .iter()
-                    .any(|text| {
-                        text_matches(
-                            text,
-                            &search.query,
-                            search.options.case_sensitive,
-                            search.options.exact_match,
-                        )
-                    });
-                (key_match || value_match).then_some(index)
+                    .any(|text| search.matches_text(text));
+                (key_match || path_match || value_match).then_some(index)
             })
             .collect(),
     )
-}
-
-fn text_matches(text: &str, query: &str, case_sensitive: bool, exact_match: bool) -> bool {
-    let (text, query) = if case_sensitive {
-        (text.to_string(), query.to_string())
-    } else {
-        (text.to_lowercase(), query.to_lowercase())
-    };
-    if exact_match {
-        text == query
-    } else {
-        text.contains(&query)
-    }
 }

@@ -43,6 +43,11 @@ pub(super) fn replace_node_at_path(
         updated.key = new_key
             .map(|key| key.trim().to_string())
             .or_else(|| node.key.clone());
+        updated.yaml_key = if new_key.is_some_and(|key| Some(key.trim()) != node.key.as_deref()) {
+            None
+        } else {
+            node.yaml_key.clone()
+        };
         if matches!(
             (&node.value_type, &updated.value_type),
             (JsonValueType::Object, JsonValueType::Object)
@@ -110,7 +115,7 @@ pub(super) fn update_child_paths(node: &mut JsonNode) {
 }
 
 pub(super) fn update_container_label(node: &mut JsonNode) {
-    let count = data_child_count(node);
+    let count = node.data_child_count();
     node.display_value = match node.value_type {
         JsonValueType::Object => format!(
             "{{{}}} {}",
@@ -124,11 +129,4 @@ pub(super) fn update_container_label(node: &mut JsonNode) {
         ),
         _ => return,
     };
-}
-
-pub(super) fn data_child_count(node: &JsonNode) -> usize {
-    node.children
-        .iter()
-        .filter(|child| child.value_type != JsonValueType::Comment)
-        .count()
 }

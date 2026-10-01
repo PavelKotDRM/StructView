@@ -3,7 +3,48 @@ use super::*;
 impl StructViewApp {
     /// Показать кратковременное уведомление в статус-баре.
     pub(in crate::app) fn show_toast(&mut self, message: &str) {
-        self.toast = Some((message.to_string(), Instant::now()));
+        self.toast = Some(Toast {
+            message: message.to_string(),
+            shown_at: Instant::now(),
+            kind: ToastKind::Success,
+        });
+    }
+
+    pub(in crate::app) fn show_error(&mut self, message: &str) {
+        self.toast = Some(Toast {
+            message: message.to_string(),
+            shown_at: Instant::now(),
+            kind: ToastKind::Error,
+        });
+    }
+
+    pub(super) fn apply_document_change<T>(
+        &mut self,
+        change: impl FnOnce(&mut JsonNode, DataFormat) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.commit_pending_inline_edit()?;
+        let format = self.file_state.format.unwrap_or(DataFormat::Json);
+        let root = self
+            .root
+            .as_mut()
+            .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())?;
+        let before = root.clone();
+        let result = change(root, format)
+            .and_then(|value| serialize_node(root, format, true).map(|_| value));
+        match result {
+            Ok(value) => {
+                self.push_undo_snapshot(before);
+                self.retain_valid_selected_paths();
+                self.visible_rows_dirty = true;
+                self.invalidate_visualization_cache();
+                self.refresh_search();
+                Ok(value)
+            }
+            Err(error) => {
+                self.root = Some(before);
+                Err(error)
+            }
+        }
     }
 
     /// Применить к текущему выбору действие клика по узлу.
@@ -50,7 +91,7 @@ impl StructViewApp {
     /// Удалить выбранные структуры с сохранением возможности отмены.
     pub(in crate::app) fn delete_selected(&mut self) {
         if self.mode != AppMode::Edit {
-            self.show_toast(self.locale.text(TextKey::DeleteEditOnly));
+            self.show_error(self.locale.text(TextKey::DeleteEditOnly));
             return;
         }
         if self.comparison.is_some()
@@ -60,41 +101,40 @@ impl StructViewApp {
             return;
         }
         if self.selected_paths.is_empty() {
-            self.show_toast(self.locale.text(TextKey::SelectStructure));
+            self.show_error(self.locale.text(TextKey::SelectStructure));
             return;
         }
-        self.finalize_pending_inline_edit();
-
-        let Some(root) = self.root.as_mut() else {
-            self.show_toast(self.locale.text(TextKey::NoDocument));
-            return;
-        };
-        let snapshot = root.clone();
         let selected_paths = self.selected_paths.clone();
-        let result = delete_selected_structures(root, &selected_paths);
-
-        match result {
-            Ok(count) => {
-                self.push_undo_snapshot(snapshot);
-                self.selected_paths.clear();
-                self.visible_rows_dirty = true;
-                self.invalidate_visualization_cache();
-                self.refresh_search();
-                self.show_toast(&self.locale.structures_deleted(count));
-            }
-            Err(error) => {
+        let locale = self.locale;
+        let result = self.apply_document_change(|root, _| {
+            delete_selected_structures(root, &selected_paths).map_err(|error| {
                 let message = match error {
                     DeleteError::EmptySelection => TextKey::SelectStructure,
                     DeleteError::RootSelected => TextKey::CannotDeleteRoot,
+                    DeleteError::MetadataValueSelected => TextKey::CannotDeleteMetadataValue,
                     DeleteError::SelectionNotFound => TextKey::SelectedStructureNotFound,
                 };
-                self.show_toast(self.locale.text(message));
+                locale.text(message).to_string()
+            })
+        });
+
+        match result {
+            Ok(count) => {
+                self.selected_paths.clear();
+                self.show_toast(&self.locale.structures_deleted(count));
+            }
+            Err(error) => {
+                self.show_error(&error);
             }
         }
     }
 
     /// Скопировать структуры по указанным путям в системный буфер обмена.
     pub(in crate::app) fn copy_structures_at_paths(&mut self, paths: Vec<String>) {
+        if let Err(error) = self.commit_pending_inline_edit() {
+            self.show_error(&error);
+            return;
+        }
         let selected_paths = paths.into_iter().collect::<BTreeSet<_>>();
         let entries = match self.root.as_ref() {
             Some(root) => selected_structures(root, &selected_paths),
@@ -103,7 +143,7 @@ impl StructViewApp {
         let entries = match entries {
             Ok(entries) => entries,
             Err(error) => {
-                self.show_toast(&error);
+                self.show_error(&error);
                 return;
             }
         };
@@ -111,25 +151,25 @@ impl StructViewApp {
         let encoded = match encode_structures(&entries) {
             Ok(encoded) => encoded,
             Err(error) => {
-                self.show_toast(&error);
+                self.show_error(&error);
                 return;
             }
         };
         self.clipboard_payload = Some(entries.clone());
         match copy_to_clipboard(&encoded) {
             Ok(()) => self.show_toast(&self.locale.structures_copied(entries.len())),
-            Err(error) => self.show_toast(&self.locale.system_copy_error(&error)),
+            Err(error) => self.show_error(&self.locale.system_copy_error(&error)),
         }
     }
 
     /// Вставить структуры в единственный выбранный контейнер.
     pub(in crate::app) fn paste_into_selected(&mut self) {
         let Some(path) = self.selected_paths.iter().next().cloned() else {
-            self.show_toast(self.locale.text(TextKey::SelectContainer));
+            self.show_error(self.locale.text(TextKey::SelectContainer));
             return;
         };
         if self.selected_paths.len() != 1 {
-            self.show_toast(self.locale.text(TextKey::SelectOneContainer));
+            self.show_error(self.locale.text(TextKey::SelectOneContainer));
             return;
         }
         self.paste_into_path(path);
@@ -138,7 +178,7 @@ impl StructViewApp {
     /// Вставить структуры в контейнер по пути.
     pub(in crate::app) fn paste_into_path(&mut self, target_path: String) {
         if self.mode != AppMode::Edit {
-            self.show_toast(self.locale.text(TextKey::PasteEditOnly));
+            self.show_error(self.locale.text(TextKey::PasteEditOnly));
             return;
         }
 
@@ -152,30 +192,20 @@ impl StructViewApp {
         let entries = match entries {
             Ok(entries) => entries,
             Err(error) => {
-                self.show_toast(&error);
+                self.show_error(&error);
                 return;
             }
         };
 
-        let history_before = self.root.clone();
-        let result = self
-            .root
-            .as_mut()
-            .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())
-            .and_then(|root| paste_structures_at_path(root, &target_path, &entries));
+        let result = self.apply_document_change(|root, _| {
+            paste_structures_at_path(root, &target_path, &entries)
+        });
 
         match result {
             Ok(count) => {
-                if let Some(snapshot) = history_before {
-                    self.push_undo_snapshot(snapshot);
-                }
-                self.retain_valid_selected_paths();
-                self.visible_rows_dirty = true;
-                self.invalidate_visualization_cache();
-                self.refresh_search();
                 self.show_toast(&self.locale.structures_pasted(count));
             }
-            Err(error) => self.show_toast(&self.locale.paste_error(&error)),
+            Err(error) => self.show_error(&self.locale.paste_error(&error)),
         }
     }
 
@@ -213,11 +243,19 @@ impl StructViewApp {
 
     /// Открыть диалог добавления данных в выбранный контейнер.
     pub(in crate::app) fn open_add_child_dialog(&mut self, request: AddChildRequest) {
+        if let Err(error) = self.commit_pending_inline_edit() {
+            self.show_error(&error);
+            return;
+        }
         self.field_dialog = Some(request.into());
     }
 
     /// Открыть конструктор для редактирования существующего узла.
     pub(in crate::app) fn open_edit_field_dialog(&mut self, request: EditFieldRequest) {
+        if let Err(error) = self.commit_pending_inline_edit() {
+            self.show_error(&error);
+            return;
+        }
         let result: Result<(String, JsonValueType, String, bool), String> = (|| {
             let root = self
                 .root
@@ -245,7 +283,7 @@ impl StructViewApp {
         let (key, value_type, value, key_editable) = match result {
             Ok(data) => data,
             Err(error) => {
-                self.show_toast(&error);
+                self.show_error(&error);
                 return;
             }
         };
@@ -292,9 +330,12 @@ impl StructViewApp {
         };
 
         egui::Window::new(title)
+            .id(egui::Id::new("field_dialog"))
             .collapsible(false)
             .resizable(true)
             .show(ctx, |ui| {
+                let colors = SyntaxColors::new(ui.visuals());
+
                 if show_key_input {
                     ui.label(locale.text(TextKey::FieldName));
                     ui.add(egui::TextEdit::singleline(&mut dialog.key).desired_width(320.0));
@@ -312,7 +353,7 @@ impl StructViewApp {
                     ui.label(locale.text(TextKey::FieldType));
                     let previous_type = dialog.value_type.clone();
                     egui::ComboBox::from_id_salt("field_dialog_type")
-                        .selected_text(field_type_label(locale, &dialog.value_type))
+                        .selected_text(locale.value_type_label(&dialog.value_type))
                         .show_ui(ui, |ui| {
                             for value_type in
                                 field_value_types(format, is_toml_root, is_comment_edit)
@@ -320,7 +361,7 @@ impl StructViewApp {
                                 ui.selectable_value(
                                     &mut dialog.value_type,
                                     value_type.clone(),
-                                    field_type_label(locale, &value_type),
+                                    locale.value_type_label(&value_type),
                                 );
                             }
                         });
@@ -336,7 +377,7 @@ impl StructViewApp {
                             egui::TextEdit::multiline(&mut dialog.value)
                                 .desired_width(420.0)
                                 .desired_rows(4)
-                                .text_color(value_color(&dialog.value_type)),
+                                .text_color(colors.value_color(&dialog.value_type)),
                         );
                     }
                     JsonValueType::Comment => {
@@ -345,7 +386,7 @@ impl StructViewApp {
                             egui::TextEdit::multiline(&mut dialog.value)
                                 .desired_width(420.0)
                                 .desired_rows(4)
-                                .text_color(value_color(&dialog.value_type))
+                                .text_color(colors.value_color(&dialog.value_type))
                                 .hint_text(locale.text(TextKey::CommentHint)),
                         );
                     }
@@ -355,7 +396,7 @@ impl StructViewApp {
                             egui::TextEdit::multiline(&mut dialog.value)
                                 .desired_width(420.0)
                                 .desired_rows(4)
-                                .text_color(value_color(&dialog.value_type))
+                                .text_color(colors.value_color(&dialog.value_type))
                                 .hint_text(locale.text(TextKey::MetadataHint)),
                         );
                     }
@@ -365,7 +406,7 @@ impl StructViewApp {
                             egui::TextEdit::singleline(&mut dialog.value)
                                 .desired_width(320.0)
                                 .font(egui::TextStyle::Monospace)
-                                .text_color(value_color(&dialog.value_type))
+                                .text_color(colors.value_color(&dialog.value_type))
                                 .hint_text("1979-05-27T07:32:00Z"),
                         );
                     }
@@ -375,7 +416,7 @@ impl StructViewApp {
                             egui::TextEdit::singleline(&mut dialog.value)
                                 .desired_width(320.0)
                                 .font(egui::TextStyle::Monospace)
-                                .text_color(value_color(&dialog.value_type)),
+                                .text_color(colors.value_color(&dialog.value_type)),
                         );
                     }
                     JsonValueType::Bool => {
@@ -384,20 +425,20 @@ impl StructViewApp {
                             egui::ComboBox::from_id_salt("field_dialog_bool")
                                 .selected_text(
                                     egui::RichText::new(&dialog.value)
-                                        .color(value_color(&dialog.value_type)),
+                                        .color(colors.value_color(&dialog.value_type)),
                                 )
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(
                                         &mut dialog.value,
                                         "true".to_string(),
                                         egui::RichText::new("true")
-                                            .color(value_color(&dialog.value_type)),
+                                            .color(colors.value_color(&dialog.value_type)),
                                     );
                                     ui.selectable_value(
                                         &mut dialog.value,
                                         "false".to_string(),
                                         egui::RichText::new("false")
-                                            .color(value_color(&dialog.value_type)),
+                                            .color(colors.value_color(&dialog.value_type)),
                                     );
                                 });
                         });
@@ -405,25 +446,25 @@ impl StructViewApp {
                     JsonValueType::Null => {
                         ui.horizontal(|ui| {
                             ui.label(locale.text(TextKey::Value));
-                            ui.colored_label(value_color(&dialog.value_type), "null");
+                            ui.colored_label(colors.value_color(&dialog.value_type), "null");
                         });
                     }
                     JsonValueType::Object => {
                         ui.colored_label(
-                            value_color(&dialog.value_type),
+                            colors.value_color(&dialog.value_type),
                             locale.text(TextKey::EmptyObject),
                         );
                     }
                     JsonValueType::Array => {
                         ui.colored_label(
-                            value_color(&dialog.value_type),
+                            colors.value_color(&dialog.value_type),
                             locale.text(TextKey::EmptyArray),
                         );
                     }
                 }
 
                 if let Some(error) = &dialog.error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(colors.error, error);
                 }
                 ui.horizontal(|ui| {
                     let action = if is_edit {
@@ -449,41 +490,27 @@ impl StructViewApp {
         }
 
         let target = dialog.target.clone();
-        let history_before = self.root.clone();
-        let result = self
-            .root
-            .as_mut()
-            .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())
-            .and_then(|root| match target {
-                FieldDialogTarget::Add { parent_path, .. } => add_typed_child_at_path(
-                    root,
-                    &parent_path,
-                    &dialog.key,
-                    &dialog.value_type,
-                    &dialog.value,
-                    format,
-                ),
-                FieldDialogTarget::Edit { path, key_editable } => edit_child_at_path(
-                    root,
-                    &path,
-                    key_editable.then_some(dialog.key.as_str()),
-                    &dialog.value_type,
-                    &dialog.value,
-                    format,
-                ),
-            });
+        let result = self.apply_document_change(|root, format| match target {
+            FieldDialogTarget::Add { parent_path, .. } => add_typed_child_at_path(
+                root,
+                &parent_path,
+                &dialog.key,
+                &dialog.value_type,
+                &dialog.value,
+                format,
+            ),
+            FieldDialogTarget::Edit { path, key_editable } => edit_child_at_path(
+                root,
+                &path,
+                key_editable.then_some(dialog.key.as_str()),
+                &dialog.value_type,
+                &dialog.value,
+                format,
+            ),
+        });
 
         match result {
             Ok(()) => {
-                if let Some(snapshot) = history_before {
-                    self.push_undo_snapshot(snapshot);
-                }
-                if is_edit {
-                    self.retain_valid_selected_paths();
-                }
-                self.visible_rows_dirty = true;
-                self.invalidate_visualization_cache();
-                self.refresh_search();
                 let message = if is_edit {
                     TextKey::FieldUpdated
                 } else {

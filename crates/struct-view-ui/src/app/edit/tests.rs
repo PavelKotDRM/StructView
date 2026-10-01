@@ -10,6 +10,7 @@ use struct_view_core::parser::{
 fn leaf(value_type: JsonValueType, display_value: &str) -> JsonNode {
     JsonNode {
         key: None,
+        yaml_key: None,
         value_type,
         display_value: display_value.to_string(),
         children: vec![],
@@ -36,25 +37,58 @@ fn roundtrip_escapes_control_characters_in_strings() {
 }
 
 #[test]
+fn copying_non_string_yaml_keys_is_rejected_instead_of_stringifying_them() {
+    let root = parse_data("1: value", Some(DataFormat::Yaml)).unwrap().0;
+    let selected_paths = BTreeSet::from([root.children[0].path.clone()]);
+
+    assert!(
+        selected_structures(&root, &selected_paths)
+            .unwrap_err()
+            .contains("YAML")
+    );
+}
+
+#[test]
+fn editing_a_yaml_value_keeps_its_non_string_key_type() {
+    let mut root = parse_data("1: before", Some(DataFormat::Yaml)).unwrap().0;
+    let path = root.children[0].path.clone();
+    let key = root.children[0].key.clone().unwrap();
+
+    edit_child_at_path(
+        &mut root,
+        &path,
+        Some(&key),
+        &JsonValueType::String,
+        "after",
+        DataFormat::Yaml,
+    )
+    .unwrap();
+
+    assert!(root.children[0].yaml_key.is_some());
+    let output = struct_view_core::parser::serialize_node(&root, DataFormat::Yaml, false).unwrap();
+    assert!(output.contains("1: after"), "{output}");
+}
+
+#[test]
 fn edit_detects_literal_type() {
     let mut node = leaf(JsonValueType::Null, "null");
 
-    apply_primitive_edit(&mut node, " 42 ").unwrap();
+    apply_primitive_edit(&mut node, " 42 ", DataFormat::Json).unwrap();
     assert_eq!(node.value_type, JsonValueType::Number);
     assert_eq!(node.display_value, "42");
 
-    apply_primitive_edit(&mut node, "\"текст\"").unwrap();
+    apply_primitive_edit(&mut node, "\"текст\"", DataFormat::Json).unwrap();
     assert_eq!(node.value_type, JsonValueType::String);
 
-    apply_primitive_edit(&mut node, "false").unwrap();
+    apply_primitive_edit(&mut node, "false", DataFormat::Json).unwrap();
     assert_eq!(node.value_type, JsonValueType::Bool);
 }
 
 #[test]
 fn edit_rejects_invalid_literal() {
     let mut node = leaf(JsonValueType::String, "\"x\"");
-    assert!(apply_primitive_edit(&mut node, "").is_err());
-    assert!(apply_primitive_edit(&mut node, "нет кавычек").is_err());
+    assert!(apply_primitive_edit(&mut node, "", DataFormat::Json).is_err());
+    assert!(apply_primitive_edit(&mut node, "нет кавычек", DataFormat::Json).is_err());
     assert_eq!(node.display_value, "\"x\"");
 }
 
@@ -508,4 +542,40 @@ fn duplicate_paste_does_not_partially_modify_object() {
         node_to_value(&target).unwrap(),
         serde_json::json!({"name": "Ada"})
     );
+}
+
+#[test]
+fn deleting_the_value_of_a_yaml_tag_is_rejected_without_mutation() {
+    let mut root = parse_data("secret: !custom hello", Some(DataFormat::Yaml))
+        .unwrap()
+        .0;
+    let original = node_to_value(&root).unwrap();
+    assert!(
+        delete_selected_structures(
+            &mut root,
+            &BTreeSet::from(["secret::metadata-value".to_string()])
+        )
+        .is_err()
+    );
+    assert_eq!(node_to_value(&root).unwrap(), original);
+}
+
+#[test]
+fn toml_datetime_constructor_rejects_other_types_and_multiple_fields() {
+    for input in ["42", "\"not a date\"", "1979-05-27\nother = true"] {
+        let mut root = parse_json("{}").unwrap();
+        assert!(
+            add_typed_child_at_path(
+                &mut root,
+                "",
+                "created",
+                &JsonValueType::DateTime,
+                input,
+                DataFormat::Toml
+            )
+            .is_err(),
+            "{input}"
+        );
+        assert!(root.children.is_empty());
+    }
 }

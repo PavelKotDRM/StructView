@@ -9,6 +9,7 @@ pub(in crate::app) struct TableRow {
     pub(in crate::app) path: String,
     pub(in crate::app) value: String,
     pub(in crate::app) value_type: JsonValueType,
+    pub(in crate::app) child_count: usize,
 }
 
 /// Данные таблицы вместе с индексом для быстрого применения поиска.
@@ -21,42 +22,32 @@ pub(in crate::app) struct TableData {
 /// Построить строки таблицы, включая контейнеры и пустые значения.
 pub(in crate::app) fn build_table(root: &JsonNode) -> TableData {
     let mut table = TableData::default();
-    collect_table_rows(root, None, &mut table);
+    collect_table_rows(root, "$".to_string(), &mut table);
     table
 }
 
-fn collect_table_rows(
-    node: &JsonNode,
-    parent: Option<(&str, &JsonValueType)>,
-    table: &mut TableData,
-) {
-    let path = match parent {
-        None => "$".to_string(),
-        Some(_)
-            if matches!(
-                node.value_type,
-                JsonValueType::Comment | JsonValueType::Metadata
-            ) =>
-        {
-            node.path.clone()
-        }
-        Some((_, JsonValueType::Metadata)) => node.path.clone(),
-        Some((parent_path, parent_type)) => {
-            let is_index = *parent_type == JsonValueType::Array;
-            build_path(parent_path, &node.key, is_index)
-        }
-    };
-
+fn collect_table_rows(node: &JsonNode, path: String, table: &mut TableData) {
     let index = table.rows.len();
     table.path_indices.insert(node.path.clone(), index);
     table.rows.push(TableRow {
         path: path.clone(),
         value: node.display_value.clone(),
         value_type: node.value_type.clone(),
+        child_count: node.data_child_count(),
     });
 
+    let mut comment_index = 0;
     for child in &node.children {
-        collect_table_rows(child, Some((&path, &node.value_type)), table);
+        let child_path = if child.value_type == JsonValueType::Comment {
+            let child_path = format!("{path}::comment[{comment_index}]");
+            comment_index += 1;
+            child_path
+        } else if node.value_type == JsonValueType::Metadata {
+            format!("{path}::metadata-value")
+        } else {
+            build_path(&path, &child.key, node.value_type == JsonValueType::Array)
+        };
+        collect_table_rows(child, child_path, table);
     }
 }
 

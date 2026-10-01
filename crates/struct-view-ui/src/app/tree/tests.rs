@@ -67,3 +67,59 @@ fn visible_rows_index_respects_expanded_branches() {
     assert_eq!(visible_row_index(&root, "array[0].value"), Some(3));
     assert_eq!(visible_row_index(&root, "missing"), None);
 }
+
+#[test]
+fn rendering_virtualized_rows_have_a_fixed_single_line_height() {
+    for source in [
+        r#"{"line\nbreak":1,"other":2}"#,
+        "{/* first line\nsecond line */ value: 1}",
+    ] {
+        let mut root = struct_view_core::parser::parse_data(source, None)
+            .unwrap()
+            .0;
+        set_expanded_all(&mut root, true);
+        let rows = VisibleRows::from_root(&root);
+        let context = egui::Context::default();
+        let search = struct_view_core::search::SearchState::default();
+        let selected_paths = std::collections::BTreeSet::new();
+        let mut measured = None;
+        context
+            .run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(240.0, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let options = super::RenderOptions {
+                        search: &search,
+                        matching_paths: std::collections::HashSet::new(),
+                        format: struct_view_core::parser::DataFormat::Json,
+                        mode: super::super::state::AppMode::View,
+                        scroll_to_path: None,
+                        selected_paths: &selected_paths,
+                        locale: super::super::i18n::Locale::English,
+                    };
+                    let height = super::tree_row_height(ui);
+                    let expected = rows.len() as f32 * height
+                        + rows.len().saturating_sub(1) as f32 * ui.spacing().item_spacing.y;
+                    let response = ui.scope(|ui| {
+                        super::render_visible_rows(
+                            ui,
+                            &mut root,
+                            &rows,
+                            &options,
+                            &mut super::TreeOutcome::default(),
+                            0..rows.len(),
+                        );
+                    });
+                    measured = Some((response.response.rect.height(), expected));
+                },
+            )
+            .drop_without_applying_deltas();
+        let (height, expected) = measured.unwrap();
+        assert!(height <= expected + 0.5, "{height} > {expected}: {source}");
+    }
+}

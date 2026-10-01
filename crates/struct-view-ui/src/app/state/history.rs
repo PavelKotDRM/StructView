@@ -31,7 +31,10 @@ impl StructViewApp {
         if self.mode != AppMode::Edit || self.comparison.is_some() || self.field_dialog.is_some() {
             return;
         }
-        self.finalize_pending_inline_edit();
+        if let Err(error) = self.commit_pending_inline_edit() {
+            self.show_error(&error);
+            return;
+        }
         if !self.can_undo() {
             return;
         }
@@ -78,7 +81,7 @@ impl StructViewApp {
                     .as_ref()
                     .is_some_and(|pending| pending.path == event.path)
             {
-                restored_invalid_edit |= self.finish_pending_inline_edit(event.valid);
+                restored_invalid_edit |= self.finish_inline_edit_and_report(event.valid);
                 finished_paths.insert(event.path.clone());
             }
         }
@@ -92,13 +95,13 @@ impl StructViewApp {
                 .as_ref()
                 .is_some_and(|pending| pending.path != event.path)
             {
-                restored_invalid_edit |= self.finish_pending_inline_edit(true);
+                restored_invalid_edit |= self.finish_inline_edit_and_report(true);
             }
             if self.pending_inline_edit.is_none() {
                 self.begin_inline_edit(&event);
             }
             if event.finished {
-                restored_invalid_edit |= self.finish_pending_inline_edit(event.valid);
+                restored_invalid_edit |= self.finish_inline_edit_and_report(event.valid);
             }
         }
 
@@ -120,12 +123,24 @@ impl StructViewApp {
         });
     }
 
-    fn finish_pending_inline_edit(&mut self, valid: bool) -> bool {
+    fn finish_inline_edit_and_report(&mut self, valid: bool) -> bool {
+        match self.finish_pending_inline_edit(valid) {
+            Ok(restored) => restored,
+            Err(error) => {
+                self.show_error(&error);
+                true
+            }
+        }
+    }
+
+    fn finish_pending_inline_edit(&mut self, valid: bool) -> Result<bool, String> {
         let Some(pending) = self.pending_inline_edit.take() else {
-            return false;
+            return Ok(false);
         };
         let mut valid = valid;
+        let mut validation_error = None;
         if valid {
+            let format = self.file_state.format.unwrap_or(DataFormat::Json);
             let result = self
                 .root
                 .as_mut()
@@ -133,15 +148,15 @@ impl StructViewApp {
                 .ok_or_else(|| "Не удалось найти inline-правку для завершения".to_string())
                 .and_then(|node| {
                     let edited = node.display_value.clone();
-                    apply_primitive_edit(node, &edited)
+                    apply_primitive_edit(node, &edited, format)
                 });
             if let Err(error) = result {
-                self.show_toast(&error);
+                validation_error = Some(error);
                 valid = false;
             }
         }
         let Some(before_node) = find_node(&pending.root_before, &pending.path) else {
-            return false;
+            return Err("Не удалось восстановить исходное inline-значение".to_string());
         };
 
         if !valid {
@@ -151,7 +166,10 @@ impl StructViewApp {
                 node.value_type = before_node.value_type.clone();
                 node.display_value = before_node.display_value.clone();
             }
-            return true;
+            return match validation_error {
+                Some(error) => Err(error),
+                None => Ok(true),
+            };
         }
 
         let changed = self
@@ -165,16 +183,24 @@ impl StructViewApp {
         if changed {
             self.push_undo_snapshot(pending.root_before);
         }
-        false
+        Ok(false)
     }
 
     pub(in crate::app) fn finalize_pending_inline_edit(&mut self) {
+        if let Err(error) = self.commit_pending_inline_edit() {
+            self.show_error(&error);
+        }
+    }
+
+    pub(super) fn commit_pending_inline_edit(&mut self) -> Result<(), String> {
         if self.pending_inline_edit.is_some() {
-            self.finish_pending_inline_edit(true);
+            let result = self.finish_pending_inline_edit(true);
             self.visible_rows_dirty = true;
             self.invalidate_visualization_cache();
             self.refresh_search();
+            result?;
         }
+        Ok(())
     }
 
     fn refresh_after_history_navigation(&mut self, message: TextKey) {

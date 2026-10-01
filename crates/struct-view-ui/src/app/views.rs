@@ -9,17 +9,16 @@ use struct_view_core::search::SearchState;
 
 use super::i18n::{Locale, TextKey};
 use super::state::ComparisonState;
-use super::theme::{
-    COLOR_ACTIVE_MATCH, COLOR_ERROR, COLOR_KEY, COLOR_MATCH, COLOR_SUCCESS, value_color,
-};
+use super::theme::SyntaxColors;
 use super::visualization::{
     RelationshipGraph, SchemaDiagram, SchemaSource, TableData, schema_visible_indices,
     table_to_csv, table_visible_indices,
 };
+use super::widgets::{Column, column_label, show_virtualized_columns, single_line_text};
 
 const MIN_TABLE_WIDTH: f32 = 760.0;
 const GRAPH_NODE_SIZE: Vec2 = Vec2::new(208.0, 70.0);
-const GRAPH_STEP: Vec2 = Vec2::new(250.0, 116.0);
+const GRAPH_STEP: Vec2 = Vec2::new(340.0, 150.0);
 
 mod diff;
 mod graph;
@@ -35,5 +34,4 @@ pub(super) use diff::{
 };
 pub(super) use graph::show_graph;
 pub(super) use schema::show_schema;
-use table::table_header;
 pub(super) use table::{export_table_csv, show_table};

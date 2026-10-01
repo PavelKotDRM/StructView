@@ -3,7 +3,8 @@ use struct_view_core::parser::{
 };
 
 use super::paths::{
-    find_node_mut, find_parent, replace_node_at_path, update_container_label, update_paths,
+    find_node, find_node_mut, find_parent, replace_node_at_path, update_container_label,
+    update_paths,
 };
 
 /// Применить правку к примитивному узлу (string / number / bool / null).
@@ -19,10 +20,30 @@ use super::paths::{
 pub(in crate::app) fn apply_primitive_edit(
     node: &mut JsonNode,
     edited: &str,
+    format: DataFormat,
 ) -> Result<(), String> {
     let trimmed = edited.trim();
     if trimmed.is_empty() {
         return Err("Значение не может быть пустым".to_string());
+    }
+    if format == DataFormat::Toml {
+        let parsed = parse_child_value(trimmed, format)?;
+        if !matches!(
+            parsed.value_type,
+            JsonValueType::String
+                | JsonValueType::DateTime
+                | JsonValueType::Number
+                | JsonValueType::Float
+                | JsonValueType::Bool
+        ) || !parsed.children.is_empty()
+        {
+            return Err(
+                "Inline-правка TOML должна содержать одно примитивное значение".to_string(),
+            );
+        }
+        node.value_type = parsed.value_type;
+        node.display_value = parsed.display_value;
+        return Ok(());
     }
 
     let (value_type, display_value) = if trimmed == "null" {
@@ -36,11 +57,7 @@ pub(in crate::app) fn apply_primitive_edit(
             .map_err(|e| format!("Ошибка сериализации строки: {}", e))?;
         (JsonValueType::String, normalized)
     } else if let Ok(number) = serde_json::from_str::<serde_json::Number>(trimmed) {
-        let value_type = if number.is_f64() {
-            JsonValueType::Float
-        } else {
-            JsonValueType::Number
-        };
+        let value_type = JsonValueType::for_number(&number);
         (value_type, number.to_string())
     } else {
         return Err(
@@ -67,27 +84,10 @@ pub(in crate::app) fn add_typed_child_at_path(
         return add_comment_child_at_path(root, parent_path, value, format);
     }
 
-    let input = field_value_to_input(value_type, value)?;
-    if *value_type != JsonValueType::Metadata {
-        return add_child_at_path(root, parent_path, key, &input, format);
-    }
-    if format != DataFormat::Yaml {
-        return Err("Metadata (YAML-теги) поддерживаются только в YAML".to_string());
-    }
-
     let parent = find_node_mut(root, parent_path)
         .ok_or_else(|| "Не удалось найти контейнер для добавления данных".to_string())?;
-    let (child_key, is_index) = child_key_for_insert(parent, key, false)?;
-    let mut child = parse_child_value(&input, format)?;
-    if child.value_type != JsonValueType::Metadata {
-        return Err("Для Metadata введите YAML-тег, например «!custom value»".to_string());
-    }
-
-    child.key = child_key;
-    update_paths(&mut child, &parent.path, is_index);
-    parent.children.push(child);
-    update_container_label(parent);
-    Ok(())
+    let child = parse_typed_child_value(value_type, value, format)?;
+    insert_child(parent, key, child)
 }
 
 fn add_comment_child_at_path(
@@ -102,6 +102,7 @@ fn add_comment_child_at_path(
     child_key_for_insert(parent, "", true)?;
     let mut child = JsonNode {
         key: None,
+        yaml_key: None,
         value_type: JsonValueType::Comment,
         display_value,
         children: Vec::new(),
@@ -144,11 +145,10 @@ pub(in crate::app) fn edit_child_at_path(
         return Err("Корневое значение TOML должно быть объектом".to_string());
     }
 
-    let input = field_value_to_input(value_type, value)?;
-    let replacement = parse_child_value(&input, format)?;
-    if *value_type == JsonValueType::Metadata && replacement.value_type != JsonValueType::Metadata {
-        return Err("Для Metadata введите YAML-тег, например «!custom value»".to_string());
+    if find_node(root, path).is_some_and(|node| node.value_type == JsonValueType::Comment) {
+        return Err("Редактировать комментарий можно только как комментарий".to_string());
     }
+    let replacement = parse_typed_child_value(value_type, value, format)?;
 
     let parent = find_parent(root, path);
     let is_index = parent.is_some_and(|parent| parent.value_type == JsonValueType::Array);
@@ -217,7 +217,7 @@ fn field_value_to_input(value_type: &JsonValueType, value: &str) -> Result<Strin
                 return Err("Число не может быть пустым".to_string());
             }
             if let Ok(number) = serde_json::from_str::<serde_json::Number>(trimmed) {
-                if number.is_f64() {
+                if JsonValueType::for_number(&number) == JsonValueType::Float {
                     Ok(number.to_string())
                 } else {
                     Ok(format!("{number}.0"))
@@ -247,14 +247,19 @@ fn field_value_to_input(value_type: &JsonValueType, value: &str) -> Result<Strin
 /// Значение разбирается синтаксисом открытого формата. Для TOML значение
 /// временно оборачивается в поле, поскольку TOML не допускает корневые
 /// скаляры.
+#[cfg(test)]
 pub(super) fn add_child(
     parent: &mut JsonNode,
     key: &str,
     input: &str,
     format: DataFormat,
 ) -> Result<(), String> {
+    let child = parse_child_value(input, format)?;
+    insert_child(parent, key, child)
+}
+
+fn insert_child(parent: &mut JsonNode, key: &str, mut child: JsonNode) -> Result<(), String> {
     let (key, is_index) = child_key_for_insert(parent, key, false)?;
-    let mut child = parse_child_value(input, format)?;
     child.key = key;
     update_paths(&mut child, &parent.path, is_index);
     parent.children.push(child);
@@ -287,11 +292,7 @@ fn child_key_for_insert(
             if is_comment {
                 return Ok((None, true));
             }
-            let index = parent
-                .children
-                .iter()
-                .filter(|child| child.value_type != JsonValueType::Comment)
-                .count();
+            let index = parent.data_child_count();
             Ok((Some(index.to_string()), true))
         }
         _ => Err("Добавлять данные можно только в объект или массив".to_string()),
@@ -299,16 +300,26 @@ fn child_key_for_insert(
 }
 
 /// Найти узел по пути и добавить в него дочерний узел.
-pub(super) fn add_child_at_path(
-    root: &mut JsonNode,
-    parent_path: &str,
-    key: &str,
-    input: &str,
+fn parse_typed_child_value(
+    value_type: &JsonValueType,
+    value: &str,
     format: DataFormat,
-) -> Result<(), String> {
-    let parent = find_node_mut(root, parent_path)
-        .ok_or_else(|| "Не удалось найти контейнер для добавления данных".to_string())?;
-    add_child(parent, key, input, format)
+) -> Result<JsonNode, String> {
+    if *value_type == JsonValueType::DateTime && format != DataFormat::Toml {
+        return Err("Дата/время поддерживается только в TOML".to_string());
+    }
+    if *value_type == JsonValueType::Metadata && format != DataFormat::Yaml {
+        return Err("Metadata (YAML-теги) поддерживаются только в YAML".to_string());
+    }
+    let input = field_value_to_input(value_type, value)?;
+    let node = parse_child_value(&input, format)?;
+    if *value_type == JsonValueType::DateTime && node.value_type != JsonValueType::DateTime {
+        return Err("Введите корректную дату/время TOML".to_string());
+    }
+    if *value_type == JsonValueType::Metadata && node.value_type != JsonValueType::Metadata {
+        return Err("Для Metadata введите YAML-тег, например «!custom value»".to_string());
+    }
+    Ok(node)
 }
 
 fn parse_child_value(input: &str, format: DataFormat) -> Result<JsonNode, String> {
@@ -319,10 +330,24 @@ fn parse_child_value(input: &str, format: DataFormat) -> Result<JsonNode, String
     let (root, _) = parse_data(&source, Some(format)).map_err(|error| error.to_string())?;
 
     if format == DataFormat::Toml {
-        root.children
-            .into_iter()
-            .next()
-            .ok_or_else(|| "TOML-значение не содержит данных".to_string())
+        let mut children = root.children;
+        let index = children
+            .iter()
+            .position(|child| {
+                child.key.as_deref() == Some("value") && child.value_type != JsonValueType::Comment
+            })
+            .ok_or_else(|| "TOML-значение не содержит данных".to_string())?;
+        let mut value = children.remove(index);
+        if children
+            .iter()
+            .any(|child| child.value_type != JsonValueType::Comment)
+        {
+            return Err("Требуется одно TOML-значение без дополнительных полей".to_string());
+        }
+        value.children.splice(0..0, children);
+        value.key = None;
+        update_paths(&mut value, "", false);
+        Ok(value)
     } else {
         Ok(root)
     }

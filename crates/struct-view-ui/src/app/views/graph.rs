@@ -7,6 +7,7 @@ pub(in crate::app) fn show_graph(
     search: &SearchState,
     locale: Locale,
 ) {
+    let colors = SyntaxColors::new(ui.visuals());
     ui.horizontal(|ui| {
         ui.label(format!(
             "{}: {}",
@@ -73,19 +74,28 @@ pub(in crate::app) fn show_graph(
                 let end_offset = box_border_offset(direction);
                 let line_start = start + direction * start_offset;
                 let line_end = end - direction * end_offset;
-                let stroke = Stroke::new(1.5, COLOR_KEY);
+                let stroke = Stroke::new(1.5, colors.key);
                 painter.line_segment([line_start, line_end], stroke);
                 draw_arrow_head(&painter, line_end, direction, stroke);
                 let label_position = Pos2::new(
                     (line_start.x + line_end.x) / 2.0,
                     (line_start.y + line_end.y) / 2.0 - 8.0,
                 );
+                let label_font = FontId::proportional(12.0);
+                let label = shorten_to_width(
+                    &painter,
+                    &edge.label,
+                    18,
+                    &label_font,
+                    (line_end - line_start).length() - 8.0,
+                    colors.key,
+                );
                 painter.text(
                     label_position,
                     Align2::CENTER_CENTER,
-                    shorten(&edge.label, 18),
-                    FontId::proportional(12.0),
-                    COLOR_KEY,
+                    label,
+                    label_font,
+                    colors.key,
                 );
             }
 
@@ -110,27 +120,46 @@ pub(in crate::app) fn show_graph(
                     rect,
                     egui::CornerRadius::same(6),
                     if active_match {
-                        Stroke::new(2.5, COLOR_ACTIVE_MATCH)
+                        Stroke::new(2.5, colors.active_match)
                     } else if is_match {
-                        Stroke::new(2.0, COLOR_MATCH)
+                        Stroke::new(2.0, colors.matched)
                     } else {
                         ui.visuals().widgets.noninteractive.bg_stroke
                     },
                     egui::StrokeKind::Inside,
                 );
+                let label_font = FontId::proportional(15.0);
+                let label = shorten_to_width(
+                    &painter,
+                    &node.label,
+                    24,
+                    &label_font,
+                    GRAPH_NODE_SIZE.x - 16.0,
+                    colors.key,
+                );
                 painter.text(
                     Pos2::new(center.x, center.y - 9.0),
                     Align2::CENTER_CENTER,
-                    shorten(&node.label, 24),
-                    FontId::proportional(15.0),
-                    COLOR_KEY,
+                    label,
+                    label_font,
+                    colors.key,
+                );
+                let id_color = ui.visuals().weak_text_color();
+                let id_font = FontId::monospace(11.0);
+                let id = shorten_to_width(
+                    &painter,
+                    &node.id,
+                    26,
+                    &id_font,
+                    GRAPH_NODE_SIZE.x - 16.0,
+                    id_color,
                 );
                 painter.text(
                     Pos2::new(center.x, center.y + 13.0),
                     Align2::CENTER_CENTER,
-                    shorten(&node.id, 26),
-                    FontId::monospace(11.0),
-                    ui.visuals().weak_text_color(),
+                    id,
+                    id_font,
+                    id_color,
                 );
                 ui.interact(
                     rect,
@@ -142,14 +171,57 @@ pub(in crate::app) fn show_graph(
         });
 }
 
-fn shorten(text: &str, max_chars: usize) -> String {
+fn shorten_to_width(
+    painter: &egui::Painter,
+    text: &str,
+    max_chars: usize,
+    font_id: &FontId,
+    max_width: f32,
+    color: egui::Color32,
+) -> String {
+    let text = single_line_text(text);
     let mut characters = text.chars();
     let prefix = characters.by_ref().take(max_chars).collect::<String>();
-    if characters.next().is_some() {
+    let needs_ellipsis = characters.next().is_some();
+    let candidate = if needs_ellipsis {
         format!("{prefix}…")
     } else {
-        prefix
+        prefix.clone()
+    };
+    if painter
+        .layout_no_wrap(candidate.clone(), font_id.clone(), color)
+        .size()
+        .x
+        <= max_width
+    {
+        return candidate;
     }
+
+    let ellipsis = "…";
+    if painter
+        .layout_no_wrap(ellipsis.to_string(), font_id.clone(), color)
+        .size()
+        .x
+        > max_width
+    {
+        return String::new();
+    }
+
+    let mut result = String::new();
+    for character in prefix.chars() {
+        let next = format!("{result}{character}{ellipsis}");
+        if painter
+            .layout_no_wrap(next, font_id.clone(), color)
+            .size()
+            .x
+            > max_width
+        {
+            break;
+        }
+        result.push(character);
+    }
+    result.push_str(ellipsis);
+    result
 }
 
 fn box_border_offset(direction: Vec2) -> f32 {

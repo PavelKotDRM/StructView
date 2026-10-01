@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 
 use struct_view_core::diff::{Difference, compare_values, format_value};
+use struct_view_core::files::write_text_atomic;
 use struct_view_core::parser::{DataFormat, node_to_value, parse_data, serialize_node};
 use struct_view_core::search::{SearchOptions, SearchState};
 
@@ -17,19 +18,16 @@ use super::source::Source;
 ///
 /// # Errors
 ///
-/// Возвращает описание ошибки ввода-вывода или сериализации.
-///
-/// # Panics
-///
-/// Паникует, если передана [`Command::Gui`] — GUI запускается в `main`.
+/// Возвращает описание ошибки ввода-вывода, сериализации или вызова GUI-команды
+/// из headless-режима.
 pub fn run(command: &Command) -> Result<bool, String> {
     match command {
         Command::Help => {
-            print!("{}", super::HELP);
+            write_text(super::HELP)?;
             Ok(true)
         }
         Command::Version => {
-            print!("{}", struct_view_build_info::detailed());
+            write_text(&struct_view_build_info::detailed())?;
             Ok(true)
         }
         Command::Format {
@@ -45,7 +43,7 @@ pub fn run(command: &Command) -> Result<bool, String> {
         } => run_find(query, input, *options),
         Command::Diff { inputs } => run_diff(inputs),
         Command::Gui { .. } | Command::GuiCompare { .. } => {
-            panic!("GUI commands cannot run in headless mode")
+            Err("GUI commands cannot run in headless mode".to_string())
         }
     }
 }
@@ -78,15 +76,14 @@ fn run_diff(inputs: &[Source]) -> Result<bool, String> {
 
     let differences = compare_values(&values);
     if differences.is_empty() {
-        println!("Files are identical");
+        write_lines(["Files are identical"])?;
         return Ok(true);
     }
 
-    println!("{} difference(s) found", differences.len());
+    write_lines([format!("{} difference(s) found", differences.len()).as_str()])?;
     for difference in differences {
-        for line in difference_lines(&difference, inputs) {
-            println!("{line}");
-        }
+        let lines = difference_lines(&difference, inputs);
+        write_lines(lines.iter().map(String::as_str))?;
     }
     Ok(false)
 }
@@ -125,7 +122,7 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
     let formatted = serialize_node(&root, output_format, minify)?;
 
     match output {
-        Some(path) => std::fs::write(path, formatted)
+        Some(path) => write_text_atomic(path, &formatted)
             .map_err(|e| format!("Write error for {}: {}", path.display(), e))?,
         None => write_lines(std::iter::once(formatted.as_str()))?,
     }
@@ -137,7 +134,7 @@ fn run_validate(input: &Source) -> Result<bool, String> {
     let content = input.read()?;
     match parse_data(&content, input.format_hint()) {
         Ok((_, format)) => {
-            println!("{} is valid", format);
+            write_lines([format!("{format} is valid").as_str()])?;
             Ok(true)
         }
         Err(error) => {
@@ -147,7 +144,7 @@ fn run_validate(input: &Source) -> Result<bool, String> {
     }
 }
 
-/// Найти узлы по подстроке и вывести их пути.
+/// Найти узлы по заданным параметрам и вывести их пути.
 fn run_find(query: &str, input: &Source, options: SearchOptions) -> Result<bool, String> {
     let content = input.read()?;
     let root = match parse_data(&content, input.format_hint()) {
@@ -160,6 +157,9 @@ fn run_find(query: &str, input: &Source, options: SearchOptions) -> Result<bool,
 
     let mut state = SearchState::default();
     state.search_with_options(&root, query, options);
+    if let Some(error) = state.error {
+        return Err(format!("Invalid regular expression: {}", error));
+    }
 
     if state.matches.is_empty() {
         eprintln!("No matches found");
@@ -179,15 +179,32 @@ fn run_find(query: &str, input: &Source, options: SearchOptions) -> Result<bool,
 fn write_lines<'a, I: IntoIterator<Item = &'a str>>(lines: I) -> Result<(), String> {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
+    write_lines_to(&mut lock, lines)
+}
+
+fn write_lines_to<'a, W: Write, I: IntoIterator<Item = &'a str>>(
+    writer: &mut W,
+    lines: I,
+) -> Result<(), String> {
     for line in lines {
-        writeln!(lock, "{}", line).map_err(|e| format!("Output error: {}", e))?;
+        writeln!(writer, "{}", line).map_err(|e| format!("Output error: {}", e))?;
     }
+    writer.flush().map_err(|e| format!("Output error: {e}"))?;
     Ok(())
+}
+
+fn write_text(text: &str) -> Result<(), String> {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    lock.write_all(text.as_bytes())
+        .and_then(|_| lock.flush())
+        .map_err(|error| format!("Output error: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::difference_lines;
+    use super::{difference_lines, run, write_lines_to};
+    use crate::cli::Command;
     use crate::cli::Source;
     use serde_json::json;
     use std::path::PathBuf;
@@ -216,6 +233,36 @@ mod tests {
                 "  after.json:".to_string(),
                 "    false".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn output_errors_are_returned_instead_of_panicking() {
+        struct BrokenWriter;
+        impl std::io::Write for BrokenWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        assert!(
+            write_lines_to(&mut BrokenWriter, ["line"])
+                .unwrap_err()
+                .starts_with("Output error:")
+        );
+        let mut output = Vec::new();
+        write_lines_to(&mut output, ["first", "second"]).unwrap();
+        assert_eq!(output, b"first\nsecond\n");
+    }
+
+    #[test]
+    fn gui_commands_return_an_error_in_headless_mode() {
+        assert!(
+            run(&Command::Gui { file: None })
+                .unwrap_err()
+                .contains("headless")
         );
     }
 }

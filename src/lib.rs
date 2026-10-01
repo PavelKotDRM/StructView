@@ -19,5 +19,5 @@ pub mod console;
 
 pub use struct_view_build_info as build_info;
 pub use struct_view_cli::cli;
-pub use struct_view_core::{diff, parser, search};
+pub use struct_view_core::{diff, files, parser, search};
 pub use struct_view_ui::{app, clipboard, run_native_gui};

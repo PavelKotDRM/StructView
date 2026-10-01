@@ -3,6 +3,8 @@ use serde_json::Value;
 use super::super::node::{JsonNode, JsonValueType};
 use super::comments::{collect_comments, format_comment};
 use super::format::DataFormat;
+use super::tree::build_node;
+use crate::numbers::lossless_f64;
 
 /// Сериализовать значение в выбранном формате.
 ///
@@ -17,14 +19,11 @@ pub fn serialize_data(value: &Value, format: DataFormat, compact: bool) -> Resul
             serde_json::to_string_pretty(value)
         }
         .map_err(|error| format!("Ошибка сериализации {}: {}", format, error)),
-        DataFormat::Yaml => serde_yaml_ng::to_string(value)
-            .map_err(|error| format!("Ошибка сериализации YAML: {}", error)),
-        DataFormat::Toml => if compact {
-            toml::to_string(value)
-        } else {
-            toml::to_string_pretty(value)
-        }
-        .map_err(|error| format!("Ошибка сериализации TOML: {}", error)),
+        DataFormat::Yaml | DataFormat::Toml => serialize_node(
+            &build_node(None, false, value, String::new()),
+            format,
+            compact,
+        ),
     }
 }
 
@@ -88,7 +87,8 @@ pub fn serialize_node(
 /// TOML-дата и время представлены строкой при сравнении, копировании и
 /// сериализации в форматы без собственного типа datetime. Комментарии
 /// исключаются из JSON-совместимого значения, а YAML-теги разворачиваются до
-/// содержащегося в них значения.
+/// содержащегося в них значения. Нестроковые ключи YAML невозможно представить
+/// в JSON-объекте, поэтому такое преобразование завершается ошибкой.
 pub fn node_to_value(node: &JsonNode) -> Result<Value, String> {
     match node.value_type {
         JsonValueType::Object => {
@@ -97,13 +97,15 @@ pub fn node_to_value(node: &JsonNode) -> Result<Value, String> {
                 if child.value_type == JsonValueType::Comment {
                     continue;
                 }
-                let key = child.key.clone().unwrap_or_default();
-                map.insert(key, node_to_value(child)?);
+                let key = object_key(child)?;
+                if map.insert(key.to_string(), node_to_value(child)?).is_some() {
+                    return Err(format!("Ключ «{key}» повторяется в {}", node.path));
+                }
             }
             Ok(Value::Object(map))
         }
         JsonValueType::Array => {
-            let mut values = Vec::with_capacity(data_child_count(node));
+            let mut values = Vec::with_capacity(node.data_child_count());
             for child in &node.children {
                 if child.value_type == JsonValueType::Comment {
                     continue;
@@ -139,6 +141,18 @@ pub fn node_to_value(node: &JsonNode) -> Result<Value, String> {
     }
 }
 
+fn object_key(node: &JsonNode) -> Result<&str, String> {
+    if node.yaml_key.is_some() {
+        return Err(format!(
+            "Нестроковый YAML-ключ в {} нельзя сохранить в этом формате",
+            node.path
+        ));
+    }
+    node.key
+        .as_deref()
+        .ok_or_else(|| format!("Отсутствует ключ объекта в {}", node.path))
+}
+
 fn metadata_value(node: &JsonNode) -> Result<&JsonNode, String> {
     let mut values = node
         .children
@@ -164,11 +178,11 @@ fn node_to_toml(node: &JsonNode) -> Result<toml::Value, String> {
                 if child.value_type == JsonValueType::Comment {
                     continue;
                 }
-                let key = child
-                    .key
-                    .clone()
-                    .ok_or_else(|| format!("Отсутствует ключ TOML в {}", child.path))?;
-                if table.insert(key.clone(), node_to_toml(child)?).is_some() {
+                let key = object_key(child)?;
+                if table
+                    .insert(key.to_string(), node_to_toml(child)?)
+                    .is_some()
+                {
                     return Err(format!("Ключ TOML «{key}» повторяется в {}", node.path));
                 }
             }
@@ -195,31 +209,30 @@ fn node_to_toml(node: &JsonNode) -> Result<toml::Value, String> {
             .map(toml::Value::Datetime)
             .map_err(|error| format!("Некорректная дата/время в {}: {error}", node.path)),
         JsonValueType::Number => {
-            if let Ok(number) = serde_json::from_str::<serde_json::Number>(&node.display_value) {
-                if let Some(integer) = number.as_i64() {
-                    return Ok(toml::Value::Integer(integer));
-                }
-                if let Some(unsigned) = number.as_u64() {
-                    let integer = i64::try_from(unsigned).map_err(|_| {
-                        format!("Число в {} выходит за диапазон TOML Integer", node.path)
-                    })?;
-                    return Ok(toml::Value::Integer(integer));
-                }
-                if let Some(float) = number.as_f64() {
-                    return Ok(toml::Value::Float(float));
-                }
-            }
-
-            node.display_value
-                .parse::<f64>()
-                .map(toml::Value::Float)
-                .map_err(|error| format!("Некорректное число в {}: {error}", node.path))
+            let number = serde_json::from_str::<serde_json::Number>(&node.display_value)
+                .map_err(|error| format!("Некорректное число в {}: {error}", node.path))?;
+            number
+                .as_i64()
+                .map(toml::Value::Integer)
+                .ok_or_else(|| format!("Число в {} выходит за диапазон TOML Integer", node.path))
         }
-        JsonValueType::Float => node
-            .display_value
-            .parse::<f64>()
-            .map(toml::Value::Float)
-            .map_err(|error| format!("Некорректное число в {}: {error}", node.path)),
+        JsonValueType::Float => {
+            if matches!(
+                node.display_value.to_ascii_lowercase().as_str(),
+                "nan" | "+nan" | "-nan" | "inf" | "+inf" | "-inf"
+            ) {
+                return node
+                    .display_value
+                    .parse::<f64>()
+                    .map(toml::Value::Float)
+                    .map_err(|error| format!("Некорректное число в {}: {error}", node.path));
+            }
+            let number = serde_json::from_str::<serde_json::Number>(&node.display_value)
+                .map_err(|error| format!("Некорректное число в {}: {error}", node.path))?;
+            lossless_f64(&number)
+                .map(toml::Value::Float)
+                .map_err(|error| format!("{error} (путь {})", node.path))
+        }
         JsonValueType::Bool => node
             .display_value
             .parse::<bool>()
@@ -244,9 +257,18 @@ fn node_to_yaml_value(node: &JsonNode) -> Result<serde_yaml_ng::Value, String> {
                 }
                 let key = child
                     .key
+                    .as_deref()
+                    .ok_or_else(|| format!("Отсутствует ключ объекта в {}", child.path))?;
+                let yaml_key = child
+                    .yaml_key
                     .clone()
-                    .ok_or_else(|| format!("Отсутствует ключ YAML в {}", child.path))?;
-                mapping.insert(YamlValue::String(key), node_to_yaml_value(child)?);
+                    .unwrap_or_else(|| YamlValue::String(key.to_string()));
+                if mapping
+                    .insert(yaml_key, node_to_yaml_value(child)?)
+                    .is_some()
+                {
+                    return Err(format!("Ключ «{key}» повторяется в {}", node.path));
+                }
             }
             Ok(YamlValue::Mapping(mapping))
         }
@@ -279,8 +301,22 @@ fn node_to_yaml_value(node: &JsonNode) -> Result<serde_yaml_ng::Value, String> {
         JsonValueType::Number | JsonValueType::Float => {
             let number = serde_json::from_str::<serde_json::Number>(&node.display_value)
                 .map_err(|error| format!("Некорректное число в {}: {error}", node.path))?;
-            serde_yaml_ng::to_value(number)
-                .map_err(|error| format!("Ошибка преобразования числа YAML: {error}"))
+            let number = if let Some(value) = number.as_i64() {
+                serde_yaml_ng::Number::from(value)
+            } else if let Some(value) = number.as_u64() {
+                serde_yaml_ng::Number::from(value)
+            } else if JsonValueType::for_number(&number) == JsonValueType::Float {
+                serde_yaml_ng::Number::from(
+                    lossless_f64(&number)
+                        .map_err(|error| format!("{error} (путь {})", node.path))?,
+                )
+            } else {
+                return Err(format!(
+                    "Число в {} выходит за диапазон YAML Integer",
+                    node.path
+                ));
+            };
+            Ok(YamlValue::Number(number))
         }
         JsonValueType::Bool => node
             .display_value
@@ -293,11 +329,4 @@ fn node_to_yaml_value(node: &JsonNode) -> Result<serde_yaml_ng::Value, String> {
 
 fn contains_metadata(node: &JsonNode) -> bool {
     node.value_type == JsonValueType::Metadata || node.children.iter().any(contains_metadata)
-}
-
-fn data_child_count(node: &JsonNode) -> usize {
-    node.children
-        .iter()
-        .filter(|child| child.value_type != JsonValueType::Comment)
-        .count()
 }
