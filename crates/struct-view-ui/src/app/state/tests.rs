@@ -579,3 +579,38 @@ fn saving_commits_the_pending_inline_type_change() {
     );
     assert!(app.pending_inline_edit.is_none());
 }
+
+#[test]
+fn saving_as_updates_the_active_document_location_only_after_success() {
+    let path =
+        std::env::temp_dir().join(format!("struct_view-save-as-{}.yaml", std::process::id()));
+    let mut app = editable_document();
+
+    app.save_document_to_path(path.clone(), DataFormat::Yaml)
+        .unwrap();
+
+    assert_eq!(app.file_state.path.as_deref(), Some(path.as_path()));
+    assert_eq!(app.file_state.format, Some(DataFormat::Yaml));
+    assert_eq!(
+        app.file_state.size_bytes,
+        std::fs::metadata(&path).unwrap().len()
+    );
+
+    let saved_state = (
+        app.file_state.path.clone(),
+        app.file_state.format,
+        app.file_state.size_bytes,
+    );
+    let result = app.save_document_to_path(std::env::temp_dir(), DataFormat::Json);
+    assert!(result.is_err());
+    assert_eq!(
+        (
+            app.file_state.path.clone(),
+            app.file_state.format,
+            app.file_state.size_bytes,
+        ),
+        saved_state
+    );
+
+    std::fs::remove_file(path).unwrap();
+}

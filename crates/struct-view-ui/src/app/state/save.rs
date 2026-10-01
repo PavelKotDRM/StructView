@@ -8,7 +8,7 @@ impl StructViewApp {
     /// # Errors
     ///
     /// Ошибки записи файла отображаются во всплывающем уведомлении.
-    pub(in crate::app) fn save_pretty(&mut self) {
+    pub(in crate::app) fn save_as(&mut self) {
         if self.root.is_none() {
             return;
         }
@@ -30,8 +30,8 @@ impl StructViewApp {
         }
         if let Some(save_path) = dialog.save_file() {
             let format = DataFormat::from_path(&save_path).unwrap_or(current_format);
-            match self.write_root_to_path(&save_path, format) {
-                Ok(_) => self.show_toast(self.locale.text(TextKey::FileSaved)),
+            match self.save_document_to_path(save_path, format) {
+                Ok(()) => self.show_toast(self.locale.text(TextKey::FileSaved)),
                 Err(error) => self.show_error(&error),
             }
         }
@@ -67,20 +67,29 @@ impl StructViewApp {
     /// Если файл ещё не был сохранён, открывается диалог «Сохранить как…».
     pub(in crate::app) fn save_current(&mut self) {
         let Some(path) = self.file_state.path.clone() else {
-            self.save_pretty();
+            self.save_as();
             return;
         };
 
         let format = DataFormat::from_path(&path)
             .or(self.file_state.format)
             .unwrap_or(DataFormat::Json);
-        match self.write_root_to_path(&path, format) {
-            Ok(size_bytes) => {
-                self.file_state.size_bytes = size_bytes;
-                self.show_toast(self.locale.text(TextKey::FileSaved));
-            }
+        match self.save_document_to_path(path, format) {
+            Ok(()) => self.show_toast(self.locale.text(TextKey::FileSaved)),
             Err(error) => self.show_error(&error),
         }
+    }
+
+    pub(super) fn save_document_to_path(
+        &mut self,
+        path: PathBuf,
+        format: DataFormat,
+    ) -> Result<(), String> {
+        let size_bytes = self.write_root_to_path(&path, format)?;
+        self.file_state.path = Some(path);
+        self.file_state.format = Some(format);
+        self.file_state.size_bytes = size_bytes;
+        Ok(())
     }
 
     /// Отложить сохранение до завершения текущей отрисовки дерева.

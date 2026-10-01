@@ -100,7 +100,7 @@ impl StructViewApp {
                 .clicked()
             {
                 ui.close();
-                self.save_pretty();
+                self.save_as();
             }
             ui.menu_button(locale.text(TextKey::ConvertTo), |ui| {
                 let current_format = self.file_state.format;
