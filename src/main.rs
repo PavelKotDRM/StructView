@@ -45,7 +45,9 @@ fn main() -> ExitCode {
 /// Запустить графический интерфейс, опционально открыв указанный файл.
 fn run_gui(files: Vec<PathBuf>) -> ExitCode {
     if !display_available() {
-        eprintln!("Error: no graphical server found (DISPLAY and WAYLAND_DISPLAY are unset).");
+        eprintln!(
+            "Error: no graphical server found (DISPLAY and WAYLAND_DISPLAY are unset or empty)."
+        );
         eprintln!("Command-line mode is available: struct_view --help");
         return ExitCode::FAILURE;
     }
@@ -65,11 +67,29 @@ fn run_gui(files: Vec<PathBuf>) -> ExitCode {
 /// драйвера, поэтому окружение проверяется заранее.
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
 fn display_available() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some()
+    display_variable_set(std::env::var_os("WAYLAND_DISPLAY"))
+        || display_variable_set(std::env::var_os("DISPLAY"))
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+fn display_variable_set(value: Option<std::ffi::OsString>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
 }
 
 /// На платформах с гарантированным оконным менеджером проверка не требуется.
 #[cfg(not(all(unix, not(any(target_os = "macos", target_os = "android")))))]
 fn display_available() -> bool {
     true
+}
+
+#[cfg(all(test, unix, not(any(target_os = "macos", target_os = "android"))))]
+mod tests {
+    use super::display_variable_set;
+
+    #[test]
+    fn empty_display_variable_does_not_claim_a_graphical_server() {
+        assert!(!display_variable_set(None));
+        assert!(!display_variable_set(Some("".into())));
+        assert!(display_variable_set(Some(":0".into())));
+    }
 }

@@ -92,18 +92,25 @@ pub(in crate::app) fn show_diff(
                 .max_col_width(column_width)
                 .spacing([12.0, 4.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new(locale.text(TextKey::ComparisonPath)).strong());
-                    ui.label(RichText::new(locale.text(TextKey::DiffChangeType)).strong());
-                    ui.label(
-                        RichText::new(document_label(comparison, left_index))
-                            .strong()
-                            .monospace(),
+                    column_label(
+                        ui,
+                        column_width,
+                        RichText::new(locale.text(TextKey::ComparisonPath)).strong(),
                     );
-                    ui.label(
-                        RichText::new(document_label(comparison, right_index))
-                            .strong()
-                            .monospace(),
+                    column_label(
+                        ui,
+                        column_width,
+                        RichText::new(locale.text(TextKey::DiffChangeType)).strong(),
                     );
+                    for index in [left_index, right_index] {
+                        let label = document_label(comparison, index);
+                        column_label(
+                            ui,
+                            column_width,
+                            RichText::new(single_line_text(&label)).strong().monospace(),
+                        )
+                        .on_hover_text(label);
+                    }
                     ui.end_row();
 
                     for difference in pair_differences {
@@ -124,33 +131,29 @@ pub(in crate::app) fn show_diff(
                             ),
                             None => continue,
                         };
-                        ui.label(
-                            RichText::new(&difference.path)
+                        column_label(
+                            ui,
+                            column_width,
+                            RichText::new(single_line_text(&difference.path))
                                 .color(colors.matched)
                                 .monospace(),
-                        );
-                        ui.label(change_type);
-                        ui.label(
-                            RichText::new(
-                                left.map(|value| format_value(Some(value)))
-                                    .unwrap_or_else(|| {
-                                        locale.text(TextKey::MissingValue).to_string()
-                                    }),
+                        )
+                        .on_hover_text(&difference.path);
+                        column_label(ui, column_width, RichText::new(change_type))
+                            .on_hover_text(change_type);
+                        for (value, color) in [(left, left_color), (right, right_color)] {
+                            let text = value
+                                .map(|value| format_value(Some(value)))
+                                .unwrap_or_else(|| locale.text(TextKey::MissingValue).to_string());
+                            column_label(
+                                ui,
+                                column_width,
+                                RichText::new(single_line_text(&text))
+                                    .color(color)
+                                    .monospace(),
                             )
-                            .color(left_color)
-                            .monospace(),
-                        );
-                        ui.label(
-                            RichText::new(
-                                right
-                                    .map(|value| format_value(Some(value)))
-                                    .unwrap_or_else(|| {
-                                        locale.text(TextKey::MissingValue).to_string()
-                                    }),
-                            )
-                            .color(right_color)
-                            .monospace(),
-                        );
+                            .on_hover_text(text);
+                        }
                         ui.end_row();
                     }
                 });

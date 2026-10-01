@@ -224,12 +224,8 @@ fn shorten_to_width(
     result
 }
 
-fn box_border_offset(direction: Vec2) -> f32 {
-    if direction.x.abs() >= direction.y.abs() {
-        GRAPH_NODE_SIZE.x / 2.0
-    } else {
-        GRAPH_NODE_SIZE.y / 2.0
-    }
+pub(super) fn box_border_offset(direction: Vec2) -> f32 {
+    (GRAPH_NODE_SIZE.x / 2.0 / direction.x.abs()).min(GRAPH_NODE_SIZE.y / 2.0 / direction.y.abs())
 }
 
 fn draw_arrow_head(painter: &egui::Painter, tip: Pos2, direction: Vec2, stroke: Stroke) {

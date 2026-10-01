@@ -1,3 +1,4 @@
+use super::super::widgets::{column_label, single_line_text};
 use super::*;
 
 impl StructViewApp {
@@ -207,7 +208,11 @@ impl StructViewApp {
                     .max_col_width(column_width)
                     .spacing([12.0, 4.0])
                     .show(ui, |ui| {
-                        ui.label(RichText::new(locale.text(TextKey::ComparisonPath)).strong());
+                        column_label(
+                            ui,
+                            column_width,
+                            RichText::new(locale.text(TextKey::ComparisonPath)).strong(),
+                        );
                         for document in &comparison.documents {
                             let header = format!(
                                 "{} ({}, {:.1} KB, {} ms)",
@@ -216,16 +221,26 @@ impl StructViewApp {
                                 document.size_bytes as f64 / 1024.0,
                                 document.load_time_ms
                             );
-                            ui.label(RichText::new(header).strong().monospace());
+                            column_label(
+                                ui,
+                                column_width,
+                                RichText::new(single_line_text(&header))
+                                    .strong()
+                                    .monospace(),
+                            )
+                            .on_hover_text(&header);
                         }
                         ui.end_row();
 
                         for difference in &comparison.differences {
-                            ui.label(
-                                RichText::new(&difference.path)
+                            column_label(
+                                ui,
+                                column_width,
+                                RichText::new(single_line_text(&difference.path))
                                     .color(colors.matched)
                                     .monospace(),
-                            );
+                            )
+                            .on_hover_text(&difference.path);
                             let reference = difference.values.first().and_then(Option::as_ref);
                             for value in &difference.values {
                                 let text = value
@@ -240,7 +255,14 @@ impl StructViewApp {
                                     ui.visuals().text_color(),
                                     colors,
                                 );
-                                ui.label(RichText::new(text).color(color).monospace());
+                                column_label(
+                                    ui,
+                                    column_width,
+                                    RichText::new(single_line_text(&text))
+                                        .color(color)
+                                        .monospace(),
+                                )
+                                .on_hover_text(&text);
                             }
                             ui.end_row();
                         }

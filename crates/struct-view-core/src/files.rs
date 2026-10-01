@@ -6,15 +6,45 @@ use std::path::Path;
 
 /// Replace a UTF-8 file only after its complete contents have been written.
 ///
-/// Existing symbolic links are followed and file permissions are retained.
+/// Existing symbolic links are followed, even when their target does not yet
+/// exist, and file permissions are retained.
 /// A failed write leaves the destination unchanged.
 pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
-    let target = match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => fs::canonicalize(path)?,
-        Ok(_) => path.to_path_buf(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => path.to_path_buf(),
-        Err(error) => return Err(error),
-    };
+    let mut target = path.to_path_buf();
+    // Resolve the final path component, including dangling links whose target
+    // is to be created. Parent-directory links are followed by the OS.
+    let mut resolved = false;
+    for _ in 0..40 {
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let link = fs::read_link(&target)?;
+                target = if link.is_absolute() {
+                    link
+                } else {
+                    target
+                        .parent()
+                        .filter(|parent| !parent.as_os_str().is_empty())
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(link)
+                };
+            }
+            Ok(_) => {
+                resolved = true;
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                resolved = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if !resolved {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Too many symbolic links",
+        ));
+    }
     let permissions = match fs::metadata(&target) {
         Ok(metadata) => {
             if metadata.permissions().readonly() {
@@ -90,5 +120,25 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_to_string(target).unwrap(), "replacement");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_the_target_of_a_dangling_symbolic_link() {
+        let directory = tempfile::tempdir_in(".").unwrap();
+        let target = directory.path().join("target.json");
+        let link = directory.path().join("link.json");
+        std::os::unix::fs::symlink("target.json", &link).unwrap();
+
+        write_text_atomic(&link, "created").unwrap();
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(target).unwrap(), "created");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
     }
 }

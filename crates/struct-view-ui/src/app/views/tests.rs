@@ -259,3 +259,28 @@ fn rendering_graph_keeps_relationship_labels_readable_between_nodes() {
         "Relationship label should not be truncated"
     );
 }
+
+#[test]
+fn graph_arrows_intersect_card_borders_for_diagonal_and_straight_edges() {
+    for direction in [
+        egui::vec2(340.0, 150.0).normalized(),
+        egui::vec2(1.0, 0.0),
+        egui::vec2(0.0, -1.0),
+    ] {
+        let offset = super::graph::box_border_offset(direction);
+        let intersection = direction * offset;
+        assert!(
+            intersection.x.abs() <= super::GRAPH_NODE_SIZE.x / 2.0 + 0.001,
+            "{intersection:?}"
+        );
+        assert!(
+            intersection.y.abs() <= super::GRAPH_NODE_SIZE.y / 2.0 + 0.001,
+            "{intersection:?}"
+        );
+        assert!(
+            (intersection.x.abs() - super::GRAPH_NODE_SIZE.x / 2.0).abs() < 0.001
+                || (intersection.y.abs() - super::GRAPH_NODE_SIZE.y / 2.0).abs() < 0.001,
+            "{intersection:?}"
+        );
+    }
+}

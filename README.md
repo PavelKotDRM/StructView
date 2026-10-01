@@ -274,6 +274,8 @@ struct_view format - < data.json
 
 The output format is determined from the extension of the file passed to
 `--output`. If `--output` is not specified, the input format is preserved.
+Standard output ends with one newline, even when the serializer already
+includes one (as with YAML and TOML).
 
 ### Syntax validation
 

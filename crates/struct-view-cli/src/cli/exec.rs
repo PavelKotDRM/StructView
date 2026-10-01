@@ -124,7 +124,7 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
     match output {
         Some(path) => write_text_atomic(path, &formatted)
             .map_err(|e| format!("Write error for {}: {}", path.display(), e))?,
-        None => write_lines(std::iter::once(formatted.as_str()))?,
+        None => write_formatted(&formatted)?,
     }
     Ok(true)
 }
@@ -201,9 +201,29 @@ fn write_text(text: &str) -> Result<(), String> {
         .map_err(|error| format!("Output error: {error}"))
 }
 
+fn write_formatted(text: &str) -> Result<(), String> {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    write_formatted_to(&mut lock, text)
+}
+
+fn write_formatted_to(writer: &mut impl Write, text: &str) -> Result<(), String> {
+    writer
+        .write_all(text.as_bytes())
+        .and_then(|_| {
+            if text.ends_with('\n') {
+                Ok(())
+            } else {
+                writer.write_all(b"\n")
+            }
+        })
+        .and_then(|_| writer.flush())
+        .map_err(|error| format!("Output error: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{difference_lines, run, write_lines_to};
+    use super::{difference_lines, run, write_formatted_to, write_lines_to};
     use crate::cli::Command;
     use crate::cli::Source;
     use serde_json::json;
@@ -243,6 +263,7 @@ mod tests {
             fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
                 Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
             }
+
             fn flush(&mut self) -> std::io::Result<()> {
                 Ok(())
             }
@@ -255,6 +276,29 @@ mod tests {
         let mut output = Vec::new();
         write_lines_to(&mut output, ["first", "second"]).unwrap();
         assert_eq!(output, b"first\nsecond\n");
+    }
+
+    #[test]
+    fn formatted_output_has_one_trailing_newline_for_all_formats() {
+        use struct_view_core::parser::{DataFormat, parse_data, serialize_node};
+
+        for (format, source) in [
+            (DataFormat::Json, r#"{"value":1}"#),
+            (DataFormat::Yaml, "value: 1\n"),
+            (DataFormat::Toml, "value = 1\n"),
+            (DataFormat::Json5, "{value: 1}"),
+        ] {
+            let root = parse_data(source, Some(format)).unwrap().0;
+            let formatted = serialize_node(&root, format, false).unwrap();
+            let mut output = Vec::new();
+            write_formatted_to(&mut output, &formatted).unwrap();
+            let output = String::from_utf8(output).unwrap();
+            assert_eq!(
+                output.trim_end_matches('\n').len() + 1,
+                output.len(),
+                "{format}"
+            );
+        }
     }
 
     #[test]
