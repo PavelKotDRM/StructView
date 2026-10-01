@@ -85,7 +85,10 @@ Open the search window from the toolbar or press `Ctrl+F` (`Cmd+F` on macOS).
 Enter a query, choose whether to search keys, values, or paths, and refine it
 with case-sensitive, exact, whole-word, or regular-expression matching. Use
 the previous/next controls to move through matches, or select a result path to
-locate it in the document.
+locate it in the document. The search window opens inside the main window
+first. To detach it, click the three-dot menu at the top of the window and
+choose `Detach window`. To dock it again, click `Attach window` at the top of the
+detached window. The same applies to add/edit field dialogs.
 
 For the sample above, search for `Alice` to find a value, or search keys for
 the exact name `id`. The regex builder can insert escaped literal text and
@@ -96,14 +99,16 @@ common pattern fragments. Regular expressions use Rust regex syntax.
 Switch to **Edit** mode to change the document. Open a node's context menu and
 choose `Edit field…` to edit its value or type; object fields can also be
 renamed. Add object fields and array elements through the type-aware
-constructor. Strings are entered as plain text, numbers and booleans are
-validated, and new objects and arrays start empty. TOML does not support
+constructor using the `+` button next to each object or array. Enter field
+names and choose types manually. Strings are entered as plain text, numbers and
+booleans are validated, and new objects and arrays start empty. Add nested
+fields the same way from their own `+` buttons. TOML does not support
 `null`, so that value is unavailable when editing TOML.
 
 To start a document from scratch, choose `File -> New file…`, give it a
-supported extension, and add fields to the new empty object. Undo and redo are
-available for up to 100 document changes (`Ctrl+Z` / `Ctrl+Y`; on macOS,
-`Cmd+Z` / `Cmd+Shift+Z`).
+supported extension, and add fields to the new empty object with its `+`
+button. Undo and redo are available for up to 100 document changes (`Ctrl+Z` /
+`Ctrl+Y`; on macOS, `Cmd+Z` / `Cmd+Shift+Z`).
 
 Save your changes with the file commands. When saving, StructView chooses the
 output format from the destination extension; if the extension is

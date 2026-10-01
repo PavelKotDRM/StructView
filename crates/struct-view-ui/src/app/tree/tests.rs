@@ -1,5 +1,39 @@
+use super::super::i18n::TextKey;
+use super::render::add_child_request;
 use super::{VisibleRows, focus_match_path, visible_row_index};
 use struct_view_core::parser::{parse_json, set_expanded_all};
+
+#[test]
+fn add_child_action_matches_container_type_and_path() {
+    let root = parse_json(r#"{"object":{},"array":[],"value":1}"#).unwrap();
+    let object = root
+        .children
+        .iter()
+        .find(|node| node.key.as_deref() == Some("object"))
+        .unwrap();
+    let array = root
+        .children
+        .iter()
+        .find(|node| node.key.as_deref() == Some("array"))
+        .unwrap();
+    let value = root
+        .children
+        .iter()
+        .find(|node| node.key.as_deref() == Some("value"))
+        .unwrap();
+
+    let (label, object_request) = add_child_request(object).unwrap();
+    assert!(matches!(label, TextKey::AddField));
+    assert_eq!(object_request.parent_path, "object");
+    assert!(object_request.is_object);
+
+    let (label, array_request) = add_child_request(array).unwrap();
+    assert!(matches!(label, TextKey::AddElement));
+    assert_eq!(array_request.parent_path, "array");
+    assert!(!array_request.is_object);
+
+    assert!(add_child_request(value).is_none());
+}
 
 #[test]
 fn focus_match_path_reveals_target_and_collapses_other_branches() {
@@ -70,9 +104,19 @@ fn visible_rows_index_respects_expanded_branches() {
 
 #[test]
 fn rendering_virtualized_rows_have_a_fixed_single_line_height() {
-    for source in [
-        r#"{"line\nbreak":1,"other":2}"#,
-        "{/* first line\nsecond line */ value: 1}",
+    for (source, mode) in [
+        (
+            r#"{"line\nbreak":1,"other":2}"#,
+            super::super::state::AppMode::View,
+        ),
+        (
+            "{/* first line\nsecond line */ value: 1}",
+            super::super::state::AppMode::View,
+        ),
+        (
+            r#"{"object":{},"array":[]}"#,
+            super::super::state::AppMode::Edit,
+        ),
     ] {
         let mut root = struct_view_core::parser::parse_data(source, None)
             .unwrap()
@@ -97,7 +141,7 @@ fn rendering_virtualized_rows_have_a_fixed_single_line_height() {
                         search: &search,
                         matching_paths: std::collections::HashSet::new(),
                         format: struct_view_core::parser::DataFormat::Json,
-                        mode: super::super::state::AppMode::View,
+                        mode,
                         scroll_to_path: None,
                         selected_paths: &selected_paths,
                         locale: super::super::i18n::Locale::English,

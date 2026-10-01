@@ -144,7 +144,6 @@ impl StructViewApp {
             if self.field_dialog.is_some() {
                 self.finalize_pending_inline_edit();
             }
-            self.show_field_dialog(ui.ctx());
         });
     }
 

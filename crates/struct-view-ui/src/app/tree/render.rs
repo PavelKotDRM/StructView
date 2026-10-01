@@ -5,11 +5,11 @@ use egui::{RichText, Ui};
 use struct_view_core::parser::{JsonNode, JsonValueType};
 
 use super::super::edit::apply_primitive_edit;
-use super::super::i18n::Locale;
+use super::super::i18n::{Locale, TextKey};
 use super::super::state::AppMode;
 use super::super::theme::SyntaxColors;
 use super::super::widgets::single_line_text;
-use super::model::{InlineEditEvent, RenderOptions, TreeOutcome, VisibleRows};
+use super::model::{AddChildRequest, InlineEditEvent, RenderOptions, TreeOutcome, VisibleRows};
 use super::{container_context_menu, context_menu, selection_request};
 
 const EDIT_FIELD_WIDTH: f32 = 300.0;
@@ -169,6 +169,7 @@ fn render_container_row(
         id,
         node.expanded,
     );
+    let add_child = add_child_request(node);
 
     // Если Expand All / Collapse All изменили node.expanded — принудительно
     // обновляем персистентное состояние egui.
@@ -182,10 +183,26 @@ fn render_container_row(
         ui.set_min_height(row_height);
         add_tree_indent(ui, depth);
         state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
-        ui.selectable_label(selected, header_text)
-            .on_hover_text(&node.display_value)
+        let header_response = ui
+            .selectable_label(selected, header_text)
+            .on_hover_text(&node.display_value);
+        let add_clicked = if options.mode == AppMode::Edit {
+            add_child.as_ref().is_some_and(|(label, _)| {
+                let button_padding = ui.spacing().button_padding;
+                ui.spacing_mut().button_padding.y = 0.0;
+                let response =
+                    ui.add_sized([row_height, row_height], egui::Button::new("+").small());
+                ui.spacing_mut().button_padding = button_padding;
+                response
+                    .on_hover_text(options.locale.text(*label))
+                    .clicked()
+            })
+        } else {
+            false
+        };
+        (header_response, add_clicked)
     });
-    let header_response = row_response.inner;
+    let (header_response, add_clicked) = row_response.inner;
 
     if scroll_to_match {
         header_response.scroll_to_me(Some(egui::Align::Center));
@@ -195,11 +212,18 @@ fn render_container_row(
         outcome.selection_request = Some(selection_request(ui, &node.path));
     }
 
+    if add_clicked {
+        state.set_open(true);
+    }
+
     // Считываем актуальное состояние (пользователь мог кликнуть по заголовку)
     node.expanded = state.is_open();
     state.store(ui.ctx());
     if node.expanded != previous_expanded {
         outcome.expansion_changed = true;
+    }
+    if add_clicked && let Some((_, request)) = add_child {
+        outcome.add_child_request = Some(request);
     }
 
     header_response.context_menu(|ui| {
@@ -212,6 +236,21 @@ fn render_container_row(
             outcome,
         );
     });
+}
+
+pub(super) fn add_child_request(node: &JsonNode) -> Option<(TextKey, AddChildRequest)> {
+    let (label, is_object) = match &node.value_type {
+        JsonValueType::Object => (TextKey::AddField, true),
+        JsonValueType::Array => (TextKey::AddElement, false),
+        _ => return None,
+    };
+    Some((
+        label,
+        AddChildRequest {
+            parent_path: node.path.clone(),
+            is_object,
+        },
+    ))
 }
 
 /// Отрисовать листовой узел: ключ и значение (или поле ввода в режиме правки).

@@ -12,6 +12,9 @@ fn both_catalogs_have_core_translations() {
         assert!(!locale.text(TextKey::MainMenu).is_empty());
         assert!(!locale.text(TextKey::TreeActions).is_empty());
         assert!(!locale.text(TextKey::SearchPlaceholder).is_empty());
+        assert!(!locale.text(TextKey::DetachWindow).is_empty());
+        assert!(!locale.text(TextKey::DockWindow).is_empty());
+        assert!(!locale.text(TextKey::WindowOptions).is_empty());
         assert!(!locale.text(TextKey::RegexSearch).is_empty());
         assert!(!locale.text(TextKey::RegexSearchHelp).is_empty());
         assert!(!locale.text(TextKey::RegexSearchError).is_empty());

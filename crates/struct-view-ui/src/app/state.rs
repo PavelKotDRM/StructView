@@ -18,6 +18,7 @@ use struct_view_core::parser::{
 };
 use struct_view_core::search::SearchState;
 
+use super::docking::DockingState;
 use super::edit::{
     DeleteError, add_typed_child_at_path, apply_primitive_edit, delete_selected_structures,
     edit_child_at_path, find_node, find_node_mut, is_object_child, paste_structures_at_path,
@@ -201,6 +202,8 @@ pub struct StructViewApp {
     pub(super) regex_builder_literal: String,
     /// Открыто ли расширенное окно поиска.
     pub(super) search_window_open: bool,
+    /// Размещение окна поиска внутри или вне главного окна.
+    pub(super) search_window_docking: DockingState,
     /// Путь совпадения, к которому нужно прокрутить дерево в следующем кадре.
     pub(super) search_scroll_target: Option<String>,
     /// Отложенный запрос на сохранение текущего файла.
@@ -223,6 +226,8 @@ pub struct StructViewApp {
     pub(super) visualization_cache: VisualizationCache,
     /// Открытый конструктор добавления или редактирования поля.
     pub(super) field_dialog: Option<FieldDialog>,
+    /// Размещение конструктора внутри или вне главного окна.
+    pub(super) field_dialog_docking: DockingState,
     /// Пути выбранных узлов дерева.
     pub(super) selected_paths: BTreeSet<String>,
     /// Индекс строк, видимых в текущем состоянии раскрытия дерева.
@@ -260,6 +265,7 @@ impl Default for StructViewApp {
             search_query_buf: String::new(),
             regex_builder_literal: String::new(),
             search_window_open: false,
+            search_window_docking: DockingState::default(),
             search_scroll_target: None,
             save_requested: false,
             file_state: FileState::default(),
@@ -271,6 +277,7 @@ impl Default for StructViewApp {
             visualization: VisualizationMode::default(),
             visualization_cache: VisualizationCache::default(),
             field_dialog: None,
+            field_dialog_docking: DockingState::default(),
             selected_paths: BTreeSet::new(),
             visible_rows: VisibleRows::default(),
             visible_rows_dirty: true,
@@ -396,6 +403,7 @@ impl eframe::App for StructViewApp {
         self.show_top_panel(ui);
         self.show_bottom_panel(ui);
         self.show_central_panel(ui);
+        self.show_field_dialog(ui.ctx());
         if let Some(toast) = &self.toast {
             if Some(toast.shown_at) != previous_toast {
                 ui.ctx().request_repaint();

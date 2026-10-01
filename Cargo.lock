@@ -3146,14 +3146,14 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "struct-view-build-info"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "vergen",
 ]
 
 [[package]]
 name = "struct-view-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde_json",
  "struct-view-build-info",
@@ -3162,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "struct-view-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "json5",
  "num-bigint",
@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "struct-view-ui"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arboard",
  "eframe",
@@ -3189,7 +3189,7 @@ dependencies = [
 
 [[package]]
 name = "struct_view"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "struct-view-build-info",
  "struct-view-cli",
