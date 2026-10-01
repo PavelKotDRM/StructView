@@ -6,6 +6,8 @@ headless commands for formatting, validation, search, and comparison.
 
 [Русская версия документации](docs/README.ru.md)
 
+Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/tutorial/ru.md).
+
 ## Features
 
 - JSON, YAML, TOML, and JSON5 support;

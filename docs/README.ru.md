@@ -7,6 +7,8 @@
 
 Английская версия документации находится в [основном README](../README.md).
 
+Пошаговые руководства: [English](tutorial/en.md) | [Русский](tutorial/ru.md).
+
 ## Возможности
 
 - поддержка JSON, YAML, TOML и JSON5;
