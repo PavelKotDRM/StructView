@@ -85,7 +85,11 @@ impl StructViewApp {
             }
             if ui
                 .add_enabled(
-                    self.root.is_some(),
+                    self.root.is_some()
+                        && self
+                            .file_state
+                            .format
+                            .is_none_or(DataFormat::is_serializable),
                     egui::Button::new(locale.text(TextKey::Save)),
                 )
                 .clicked()
@@ -135,6 +139,10 @@ impl StructViewApp {
         ui.menu_button(locale.text(TextKey::EditMenu), |ui| {
             if self.root.is_some() {
                 ui.menu_button(locale.text(TextKey::Mode), |ui| {
+                    let can_edit = self
+                        .file_state
+                        .format
+                        .is_none_or(DataFormat::is_serializable);
                     if ui
                         .selectable_value(
                             &mut self.mode,
@@ -145,15 +153,17 @@ impl StructViewApp {
                     {
                         ui.close();
                     }
-                    if ui
-                        .selectable_value(
-                            &mut self.mode,
-                            AppMode::Edit,
-                            locale.text(TextKey::EditMode),
-                        )
-                        .changed()
-                    {
-                        ui.close();
+                    if can_edit {
+                        if ui
+                            .selectable_value(
+                                &mut self.mode,
+                                AppMode::Edit,
+                                locale.text(TextKey::EditMode),
+                            )
+                            .changed()
+                        {
+                            ui.close();
+                        }
                     }
                 });
                 ui.separator();

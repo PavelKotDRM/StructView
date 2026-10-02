@@ -6,6 +6,7 @@ pub(super) fn extract_comments(input: &str, format: DataFormat) -> Vec<String> {
         DataFormat::Json => Vec::new(),
         DataFormat::Json5 => extract_json5_comments(input),
         DataFormat::Yaml | DataFormat::Toml => extract_hash_comments(input, format),
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => Vec::new(),
     }
 }
 
@@ -336,6 +337,9 @@ pub fn format_comment_for_format(comment: &str, format: DataFormat) -> Result<St
         DataFormat::Yaml | DataFormat::Toml => "#",
         DataFormat::Json => {
             return Err("JSON не поддерживает комментарии".to_string());
+        }
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => {
+            return Err(format!("{format} доступен только для чтения"));
         }
     };
     Ok(format_comment(comment, marker))

@@ -6,9 +6,11 @@ license.workspace = true
 description = "Format parsing, tree editing primitives, search, and comparison for StructView"
 
 [dependencies]
+graphviz-rust.workspace = true
 json5.workspace = true
 num-bigint.workspace = true
 regex.workspace = true
+roxmltree.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true

@@ -8,10 +8,12 @@ select it in `Settings -> Language` (`Настройки -> Язык`) if needed
 
 ## 1. Install and open a document
 
-StructView reads JSON (`.json`), YAML (`.yaml`, `.yml`), TOML (`.toml`), and
-JSON5 (`.json5`). For files, it uses the extension when recognized and tries
-automatic format detection for unknown extensions. Data read from standard
-input is detected from its contents.
+StructView reads and writes JSON (`.json`), YAML (`.yaml`, `.yml`), TOML
+(`.toml`), and JSON5 (`.json5`). It also imports Graphviz DOT (`.dot`, `.gv`),
+GraphML (`.graphml`), and GEXF (`.gexf`) as read-only graph documents that can
+be converted to those structured-data formats. For files, it uses the
+extension when recognized and tries automatic format detection for unknown
+extensions. Data read from standard input is detected from its contents.
 
 Build the project with Rust that supports Edition 2024 and Cargo:
 
@@ -81,9 +83,71 @@ Use the view selector to switch between:
 
 ### Graph input formats
 
-The graph view recognizes graph-shaped data inside the supported JSON, JSON5,
-YAML, and TOML documents. It does not import standalone DOT, GraphML, or GEXF
-files. Select **View → Graph** after opening a document.
+The graph view recognizes graph-shaped data inside JSON, JSON5, YAML, and TOML
+documents and imports standalone DOT, GraphML, and GEXF files. GraphML and GEXF
+content with an `.xml` extension is detected by its root element. Select
+**View → Graph** after opening a document.
+
+Imported DOT, GraphML, and GEXF files are read-only. The importer converts them
+to a normalized `graph`/`nodes`/`edges` document while retaining graph
+direction, node IDs and labels, parallel edges, weights, and supported
+attributes. Imported graphs use `directed_multigraph` or
+`undirected_multigraph` so duplicate edges are not lost. GraphML key
+definitions and GEXF attribute definitions are kept in the `graph` metadata;
+other XML extension elements are kept under `xml_extensions`.
+
+DOT graph attributes and node/edge attributes are retained, and chained edges
+are expanded into individual edges. Subgraphs are flattened for graph display;
+their IDs, member nodes, and attributes are kept in `graph.subgraphs`. Source
+comments and formatting are not retained.
+
+GraphML and GEXF inputs must contain one graph with a uniform edge direction.
+Mixed directed and undirected edges are rejected. Nested GraphML graphs and
+hyperedges are not supported. External XML `DOCTYPE` declarations are ignored
+without loading a DTD; internal DTD entities are not supported. GEXF `mutual`
+edges are converted to undirected edges; dynamic timing and visualization
+extensions are retained as metadata, but the graph view displays a static
+topology.
+
+Convert an imported graph from **File → Convert to → JSON, YAML, or TOML** (or
+JSON5). The source file stays open and is not overwritten. The CLI can write
+the same normalized document to a new file:
+
+```sh
+struct_view format network.graphml --output network.json
+struct_view format network.dot --output network.yaml
+```
+
+When formatting a graph input to standard output without `--output`, the CLI
+emits JSON.
+
+For example, the normalized representation has this shape:
+
+```json
+{
+  "graph": {
+    "type": "directed_multigraph",
+    "source_format": "graphml",
+    "name": "Build"
+  },
+  "nodes": [
+    {"id": "compile", "label": "Compile", "attributes": {"kind": "task"}},
+    {"id": "test", "label": "Test", "attributes": {}}
+  ],
+  "edges": [
+    {
+      "source": "compile",
+      "target": "test",
+      "edge_id": "e1",
+      "label": "runs before",
+      "weight": 0,
+      "attributes": {"label": "runs before", "weight": 0}
+    }
+  ]
+}
+```
+
+The same shape is written as YAML or TOML when those formats are selected.
 
 #### Inferred entity relationships
 

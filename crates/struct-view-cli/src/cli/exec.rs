@@ -115,9 +115,16 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
             return Ok(false);
         }
     };
-    let output_format = output
-        .and_then(DataFormat::from_path)
-        .unwrap_or(input_format);
+    let output_format = match output.and_then(DataFormat::from_path) {
+        Some(format) if format.is_serializable() => format,
+        Some(format) => {
+            return Err(format!(
+                "Cannot write {format}; choose JSON, YAML, TOML, or JSON5"
+            ));
+        }
+        None if input_format.is_serializable() => input_format,
+        None => DataFormat::Json,
+    };
 
     let formatted = serialize_node(&root, output_format, minify)?;
 
@@ -223,12 +230,13 @@ fn write_formatted_to(writer: &mut impl Write, text: &str) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
-    use super::{difference_lines, run, write_formatted_to, write_lines_to};
+    use super::{difference_lines, run, run_format, write_formatted_to, write_lines_to};
     use crate::cli::Command;
     use crate::cli::Source;
     use serde_json::json;
     use std::path::PathBuf;
     use struct_view_core::diff::compare_values;
+    use struct_view_core::parser::{DataFormat, node_to_value, parse_data};
 
     #[test]
     fn groups_pretty_values_under_each_changed_path_and_source() {
@@ -280,7 +288,7 @@ mod tests {
 
     #[test]
     fn formatted_output_has_one_trailing_newline_for_all_formats() {
-        use struct_view_core::parser::{DataFormat, parse_data, serialize_node};
+        use struct_view_core::parser::serialize_node;
 
         for (format, source) in [
             (DataFormat::Json, r#"{"value":1}"#),
@@ -299,6 +307,37 @@ mod tests {
                 "{format}"
             );
         }
+    }
+
+    #[test]
+    fn format_command_converts_dot_inputs_to_json_yaml_and_toml() {
+        let input = std::env::temp_dir().join(format!(
+            "struct_view-cli-dot-convert-{}.dot",
+            std::process::id()
+        ));
+        std::fs::write(&input, "digraph { a [label=\"Alpha\"]; b; a -> b; }").unwrap();
+
+        for (index, format) in [DataFormat::Json, DataFormat::Yaml, DataFormat::Toml]
+            .into_iter()
+            .enumerate()
+        {
+            let output = std::env::temp_dir().join(format!(
+                "struct_view-cli-dot-convert-{}-{index}.{}",
+                std::process::id(),
+                format.extension()
+            ));
+            assert!(run_format(&Source::File(input.clone()), Some(&output), false).unwrap());
+            let serialized = std::fs::read_to_string(&output).unwrap();
+            let (root, detected_format) = parse_data(&serialized, Some(format)).unwrap();
+            assert_eq!(detected_format, format);
+            assert_eq!(
+                node_to_value(&root).unwrap()["graph"]["type"],
+                "directed_multigraph"
+            );
+            std::fs::remove_file(output).unwrap();
+        }
+
+        std::fs::remove_file(input).unwrap();
     }
 
     #[test]

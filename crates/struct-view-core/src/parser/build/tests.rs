@@ -378,3 +378,157 @@ fn toml_multiline_closing_quotes_do_not_hide_comments() {
     .0;
     assert_eq!(collect_comments(&root), ["# first", "# second", "# third"]);
 }
+
+#[test]
+fn detects_and_normalizes_dot_graphml_and_gexf_inputs() {
+    let dot = r#"
+        digraph pipeline {
+            graph [rankdir=LR];
+            node [shape=box];
+            compile [label="Compile", color=blue];
+            test [label="Test"];
+            compile -> test -> package [label="build step", weight=2];
+            subgraph cluster_release {
+                label="Release";
+                deploy [label="Deploy"];
+            }
+        }
+    "#;
+    let graphml = r#"
+        <!DOCTYPE graphml PUBLIC "-//GraphML//DTD GraphML 1.0//EN"
+          "http://graphml.graphdrawing.org/dtds/graphml.dtd">
+        <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+          <key id="label" for="node" attr.name="label" attr.type="string"/>
+          <key id="status" for="node" attr.name="status" attr.type="string">
+            <default>active</default>
+          </key>
+          <key id="weight" for="edge" attr.name="weight" attr.type="double"/>
+          <graph id="network" edgedefault="directed">
+            <node id="a"><data key="label">Alpha</data></node>
+            <node id="b"/>
+            <edge id="e1" source="a" target="b"><data key="weight">0</data></edge>
+            <edge id="e2" source="a" target="b"><data key="weight">1.5</data></edge>
+          </graph>
+        </graphml>
+    "#;
+    let gexf = r#"
+        <gexf xmlns="http://www.gexf.net/1.2draft">
+          <meta><title>Social</title></meta>
+          <graph mode="static" defaultedgetype="undirected">
+            <attributes class="node">
+              <attribute id="score" title="score" type="integer">
+                <default>1</default>
+              </attribute>
+            </attributes>
+            <nodes>
+              <node id="a" label="Ada">
+                <attvalues><attvalue for="score" value="4"/></attvalues>
+              </node>
+              <node id="b" label="Bob"/>
+            </nodes>
+            <edges>
+              <edge id="e1" source="a" target="b" weight="0" label="knows"/>
+              <edge id="e2" source="a" target="b" weight="1.5" label="works with"/>
+            </edges>
+          </graph>
+        </gexf>
+    "#;
+
+    for (source_format, source, expected_type, expected_nodes, expected_edges) in [
+        (DataFormat::Dot, dot, "directed_multigraph", 4, 2),
+        (DataFormat::GraphMl, graphml, "directed_multigraph", 2, 2),
+        (DataFormat::Gexf, gexf, "undirected_multigraph", 2, 2),
+    ] {
+        let (root, parsed_format) = parse_data(source, Some(source_format))
+            .unwrap_or_else(|error| panic!("{source_format} parser rejected its fixture: {error}"));
+        assert_eq!(parsed_format, source_format);
+        let (_, detected_format) = parse_data(source, None).unwrap();
+        assert_eq!(detected_format, source_format);
+        let value = node_to_value(&root).unwrap();
+        assert_eq!(value["graph"]["type"], expected_type);
+        assert_eq!(value["nodes"].as_array().unwrap().len(), expected_nodes);
+        assert_eq!(value["edges"].as_array().unwrap().len(), expected_edges);
+
+        if source_format == DataFormat::Dot {
+            assert_eq!(value["graph"]["attributes"]["rankdir"], "LR");
+            assert_eq!(value["graph"]["subgraphs"][0]["id"], "cluster_release");
+            assert_eq!(value["nodes"][0]["attributes"]["shape"], "box");
+        } else if source_format == DataFormat::GraphMl {
+            assert_eq!(value["nodes"][1]["attributes"]["status"], "active");
+            assert_eq!(value["edges"][0]["weight"], 0.0);
+            assert_eq!(
+                value["graph"]["key_definitions"].as_array().unwrap().len(),
+                3
+            );
+        } else {
+            assert_eq!(value["graph"]["name"], "Social");
+            assert_eq!(value["nodes"][1]["attributes"]["score"], 1);
+            assert_eq!(value["edges"][0]["weight"], 0.0);
+        }
+    }
+}
+
+#[test]
+fn special_graphs_convert_to_json_yaml_and_toml() {
+    let sources = [
+        (
+            DataFormat::Dot,
+            "digraph { a [label=\"Alpha\"]; b; a -> b [weight=2]; }",
+        ),
+        (
+            DataFormat::GraphMl,
+            r#"<graphml xmlns="http://graphml.graphdrawing.org/xmlns"><graph edgedefault="undirected"><node id="a"/><node id="b"/><edge source="a" target="b"/></graph></graphml>"#,
+        ),
+        (
+            DataFormat::Gexf,
+            r#"<gexf xmlns="http://www.gexf.net/1.2draft"><graph defaultedgetype="directed"><nodes><node id="a"/><node id="b"/></nodes><edges><edge source="a" target="b"/></edges></graph></gexf>"#,
+        ),
+    ];
+
+    for (source_format, source) in sources {
+        let (root, _) = parse_data(source, Some(source_format)).unwrap();
+        let original = node_to_value(&root).unwrap();
+        assert!(serialize_node(&root, source_format, false).is_err());
+
+        for target_format in [DataFormat::Json, DataFormat::Yaml, DataFormat::Toml] {
+            let converted = serialize_node(&root, target_format, false).unwrap();
+            let (round_tripped, detected_format) =
+                parse_data(&converted, Some(target_format)).unwrap();
+            assert_eq!(detected_format, target_format);
+            assert_eq!(
+                node_to_value(&round_tripped).unwrap(),
+                original,
+                "{source_format} -> {target_format}"
+            );
+        }
+    }
+}
+
+#[test]
+fn graphml_rejects_mixed_edge_directions() {
+    let source = r#"
+        <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+          <graph edgedefault="directed">
+            <node id="a"/>
+            <node id="b"/>
+            <node id="c"/>
+            <edge source="a" target="b" directed="false"/>
+            <edge source="b" target="c"/>
+          </graph>
+        </graphml>
+    "#;
+    let error = parse_data(source, Some(DataFormat::GraphMl)).unwrap_err();
+    assert!(error.message.contains("одновременно ориентированные"));
+}
+
+#[test]
+fn graphml_ignores_external_doctypes_but_rejects_internal_subsets() {
+    let source = r#"
+        <!DOCTYPE graphml [<!ENTITY node_id "a">]>
+        <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+          <graph edgedefault="directed"><node id="&node_id;"/></graph>
+        </graphml>
+    "#;
+    let error = parse_data(source, Some(DataFormat::GraphMl)).unwrap_err();
+    assert!(error.message.contains("Внутренние сущности XML DTD"));
+}

@@ -364,6 +364,43 @@ fn open_document_can_be_converted_to_every_other_format() {
 }
 
 #[test]
+fn graph_files_open_read_only_and_can_be_converted_to_toml() {
+    let input = std::env::temp_dir().join(format!(
+        "struct_view-graph-import-test-{}.xml",
+        std::process::id()
+    ));
+    let output = std::env::temp_dir().join(format!(
+        "struct_view-graph-import-test-{}.toml",
+        std::process::id()
+    ));
+    std::fs::write(
+        &input,
+        r#"<graphml xmlns="http://graphml.graphdrawing.org/xmlns"><graph edgedefault="directed"><node id="a"/><node id="b"/><edge source="a" target="b"/></graph></graphml>"#,
+    )
+    .unwrap();
+
+    let mut app = StructViewApp::default();
+    app.mode = AppMode::Edit;
+    app.load_file(input.clone());
+
+    assert_eq!(app.file_state.format, Some(DataFormat::GraphMl));
+    assert_eq!(app.mode, AppMode::View);
+    app.write_root_to_path(&output, DataFormat::Toml).unwrap();
+
+    let converted = std::fs::read_to_string(&output).unwrap();
+    let (root, format) = parse_data(&converted, Some(DataFormat::Toml)).unwrap();
+    assert_eq!(format, DataFormat::Toml);
+    assert_eq!(
+        node_to_value(&root).unwrap()["graph"]["type"],
+        "directed_multigraph"
+    );
+    assert_eq!(app.file_state.path, Some(input.clone()));
+
+    std::fs::remove_file(output).unwrap();
+    std::fs::remove_file(input).unwrap();
+}
+
+#[test]
 fn close_file_clears_document_state() {
     let path = std::env::temp_dir().join(format!(
         "struct_view-close-test-{}.json",

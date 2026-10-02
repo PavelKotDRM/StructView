@@ -1,7 +1,8 @@
 # StructView
 
 A fast, cross-platform viewer and editor for structured data. The application
-displays JSON, YAML, TOML, and JSON5 as an interactive tree and also provides
+displays JSON, YAML, TOML, and JSON5 as an interactive tree, imports Graphviz
+DOT, GraphML, and GEXF graphs for inspection and conversion, and provides
 headless commands for formatting, validation, search, and comparison.
 
 [Русская версия документации](docs/README.ru.md)
@@ -11,6 +12,8 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 ## Features
 
 - JSON, YAML, TOML, and JSON5 support;
+- read-only Graphviz DOT, GraphML, and GEXF import with conversion to JSON,
+  YAML, TOML, or JSON5;
 - automatic format detection for stdin and files with unknown extensions;
 - interactive object and array tree with expandable and collapsible nodes;
 - full-text search across keys, values, and JSON paths;
@@ -28,8 +31,8 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 - adding object fields and array elements;
 - a field constructor with explicit string, number, boolean, null, object, and
   array types, plus TOML date/time values;
-- saving to the original or another supported format, with explicit conversion
-  to every other supported format;
+- saving editable structured-data files to supported output formats and
+  converting imported graph files to those formats;
 - copying a node value, key, or path from the context menu;
 - selecting and copying multiple structures while preserving their hierarchy;
 - pasting copied structures into another open file;
@@ -42,16 +45,29 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 
 ## Supported formats
 
-| Format | Extensions |
-| --- | --- |
-| JSON | `.json` |
-| YAML | `.yaml`, `.yml` |
-| TOML | `.toml` |
-| JSON5 | `.json5` |
+| Format | Extensions | Access |
+| --- | --- | --- |
+| JSON | `.json` | Read and write |
+| YAML | `.yaml`, `.yml` | Read and write |
+| TOML | `.toml` | Read and write |
+| JSON5 | `.json5` | Read and write |
+| Graphviz DOT | `.dot`, `.gv` | Read-only import |
+| GraphML | `.graphml` | Read-only import |
+| GEXF | `.gexf` | Read-only import |
 
 For files, the format is detected from the extension first. If the extension
 is unknown, the content is parsed using automatic format detection. For stdin,
 the format is detected from the content.
+GraphML or GEXF documents with an `.xml` extension are identified by their root
+element.
+
+DOT, GraphML, and GEXF are normalized to a graph with `graph`, `nodes`, and
+`edges`. Use `File -> Convert to` in the GUI or, for example,
+`struct_view format network.graphml --output network.json`, to save that
+normalized data as JSON, YAML, TOML, or JSON5. Imported graph files are
+read-only and are never overwritten. See the
+[graph input guide](docs/tutorial/en.md) for mappings, supported features, and
+conversion examples.
 
 Non-string YAML mapping keys are preserved when saving as YAML. Converting a
 document with such keys to JSON or TOML is rejected rather than changing their
@@ -117,7 +133,8 @@ The interface provides:
 - a relationship graph inferred from IDs and references, plus explicit
   directed, undirected, weighted, and multi-edge graph schemas; undirected
   adjacency lists and weighted matrices; TOML entity-relation, bipartite, and
-  multipartite graphs. Parallel edges are retained for multigraphs. See the
+  multipartite graphs; read-only Graphviz DOT, GraphML, and GEXF imports.
+  Parallel edges are retained for multigraphs. See the
   [graph input guide](docs/tutorial/en.md) for supported shapes and examples;
   layout is calculated in the background with a progress indicator;
 - a flattened path/value/type table that follows the search filter and can be

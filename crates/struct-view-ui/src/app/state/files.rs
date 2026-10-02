@@ -70,7 +70,11 @@ impl StructViewApp {
     fn apply_loaded_document(&mut self, loaded: Result<LoadedDocument, ParseError>) {
         match loaded {
             Ok(document) => {
-                let mode = self.mode;
+                let mode = if document.format.is_serializable() {
+                    self.mode
+                } else {
+                    AppMode::View
+                };
                 self.clear_document_state();
                 self.mode = mode;
                 self.root = Some(document.root);
@@ -99,10 +103,16 @@ impl StructViewApp {
     /// Открыть системный диалог выбора и загрузить выбранный файл.
     pub(in crate::app) fn open_file_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Supported files", &["json", "yaml", "yml", "toml", "json5"])
+            .add_filter(
+                "Supported files",
+                &[
+                    "json", "yaml", "yml", "toml", "json5", "dot", "gv", "graphml", "gexf", "xml",
+                ],
+            )
             .add_filter("JSON", &["json", "json5"])
             .add_filter("YAML", &["yaml", "yml"])
             .add_filter("TOML", &["toml"])
+            .add_filter("Graph files", &["dot", "gv", "graphml", "gexf", "xml"])
             .add_filter("All files", &["*"])
             .pick_file()
         {
@@ -125,7 +135,7 @@ impl StructViewApp {
             .add_filter("JSON5", &["json5"])
             .save_file()
         {
-            let Some(format) = DataFormat::from_path(&path) else {
+            let Some(format) = DataFormat::from_output_path(&path) else {
                 self.show_error(self.locale.text(TextKey::UnsupportedFileExtension));
                 return;
             };
@@ -168,10 +178,16 @@ impl StructViewApp {
     /// Открыть системный диалог выбора нескольких файлов для сравнения.
     pub(in crate::app) fn open_comparison_dialog(&mut self) {
         if let Some(paths) = rfd::FileDialog::new()
-            .add_filter("Supported files", &["json", "yaml", "yml", "toml", "json5"])
+            .add_filter(
+                "Supported files",
+                &[
+                    "json", "yaml", "yml", "toml", "json5", "dot", "gv", "graphml", "gexf", "xml",
+                ],
+            )
             .add_filter("JSON", &["json", "json5"])
             .add_filter("YAML", &["yaml", "yml"])
             .add_filter("TOML", &["toml"])
+            .add_filter("Graph files", &["dot", "gv", "graphml", "gexf", "xml"])
             .add_filter("All files", &["*"])
             .pick_files()
         {

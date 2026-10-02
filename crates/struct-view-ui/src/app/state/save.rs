@@ -13,20 +13,32 @@ impl StructViewApp {
             return;
         }
 
-        let current_format = self.file_state.format.unwrap_or(DataFormat::Json);
+        let current_format = self
+            .file_state
+            .format
+            .filter(|format| format.is_serializable())
+            .unwrap_or(DataFormat::Json);
         let mut dialog = rfd::FileDialog::new()
             .add_filter("Supported files", &["json", "yaml", "yml", "toml", "json5"])
             .add_filter("JSON", &["json", "json5"])
             .add_filter("YAML", &["yaml", "yml"])
             .add_filter("TOML", &["toml"]);
-        if let Some(name) = self
+        let suggested_name = if self
             .file_state
-            .path
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
+            .format
+            .is_some_and(|format| !format.is_serializable())
         {
-            dialog = dialog.set_file_name(name);
+            Some(self.conversion_file_name(current_format))
+        } else {
+            self.file_state
+                .path
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        };
+        if let Some(name) = suggested_name {
+            dialog = dialog.set_file_name(&name);
         }
         if let Some(save_path) = dialog.save_file() {
             let format = DataFormat::from_path(&save_path).unwrap_or(current_format);

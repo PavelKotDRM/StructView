@@ -24,6 +24,9 @@ pub fn serialize_data(value: &Value, format: DataFormat, compact: bool) -> Resul
             format,
             compact,
         ),
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => {
+            Err(read_only_format_error(format))
+        }
     }
 }
 
@@ -38,6 +41,9 @@ pub fn serialize_node(
     format: DataFormat,
     compact: bool,
 ) -> Result<String, String> {
+    if !format.is_serializable() {
+        return Err(read_only_format_error(format));
+    }
     if format != DataFormat::Yaml && contains_metadata(node) {
         return Err(format!("YAML-теги нельзя сохранить в формате {format}"));
     }
@@ -60,6 +66,9 @@ pub fn serialize_node(
         DataFormat::Json | DataFormat::Json5 => {
             serialize_data(&node_to_value(node)?, format, compact)?
         }
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => {
+            return Err(read_only_format_error(format));
+        }
     };
 
     if format != DataFormat::Json {
@@ -80,6 +89,10 @@ pub fn serialize_node(
     }
 
     Ok(output)
+}
+
+fn read_only_format_error(format: DataFormat) -> String {
+    format!("{format} поддерживается только для чтения; выберите JSON, YAML, TOML или JSON5")
 }
 
 /// Преобразовать узел дерева в JSON-совместимое значение.

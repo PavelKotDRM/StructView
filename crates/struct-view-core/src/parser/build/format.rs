@@ -12,6 +12,12 @@ pub enum DataFormat {
     Toml,
     /// Расширенный синтаксис JSON с комментариями и trailing commas.
     Json5,
+    /// Граф Graphviz DOT, доступный только для чтения.
+    Dot,
+    /// Граф GraphML, доступный только для чтения.
+    GraphMl,
+    /// Граф GEXF, доступный только для чтения.
+    Gexf,
 }
 
 impl DataFormat {
@@ -25,8 +31,23 @@ impl DataFormat {
             "yaml" | "yml" => Some(Self::Yaml),
             "toml" => Some(Self::Toml),
             "json5" => Some(Self::Json5),
+            "dot" | "gv" => Some(Self::Dot),
+            "graphml" => Some(Self::GraphMl),
+            "gexf" => Some(Self::Gexf),
             _ => None,
         }
+    }
+
+    /// Проверить, можно ли сериализовать формат.
+    ///
+    /// Специальные графовые форматы поддерживаются только для импорта.
+    pub fn is_serializable(self) -> bool {
+        Self::ALL.contains(&self)
+    }
+
+    /// Определить записываемый формат по расширению пути.
+    pub fn from_output_path(path: &Path) -> Option<Self> {
+        Self::from_path(path).filter(|format| format.is_serializable())
     }
 
     /// Основное расширение файла без точки.
@@ -36,6 +57,9 @@ impl DataFormat {
             Self::Yaml => "yaml",
             Self::Toml => "toml",
             Self::Json5 => "json5",
+            Self::Dot => "dot",
+            Self::GraphMl => "graphml",
+            Self::Gexf => "gexf",
         }
     }
 
@@ -46,6 +70,9 @@ impl DataFormat {
             Self::Yaml => &["yaml", "yml"],
             Self::Toml => &["toml"],
             Self::Json5 => &["json5"],
+            Self::Dot => &["dot", "gv"],
+            Self::GraphMl => &["graphml"],
+            Self::Gexf => &["gexf"],
         }
     }
 }
@@ -57,6 +84,9 @@ impl fmt::Display for DataFormat {
             Self::Yaml => "YAML",
             Self::Toml => "TOML",
             Self::Json5 => "JSON5",
+            Self::Dot => "Graphviz DOT",
+            Self::GraphMl => "GraphML",
+            Self::Gexf => "GEXF",
         })
     }
 }

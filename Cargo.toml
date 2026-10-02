@@ -17,9 +17,11 @@ license = "MIT"
 arboard = "3"
 eframe = { version = "0.36", default-features = false }
 egui = "0.36"
+graphviz-rust = { version = "0.9", default-features = false }
 json5 = "1"
 num-bigint = "0.5"
 regex = "1"
+roxmltree = "0.21"
 rfd = "0.17"
 serde = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
@@ -32,7 +34,7 @@ vergen = { version = "10", features = ["build", "cargo", "rustc"] }
 name = "struct_view"
 version.workspace = true
 edition.workspace = true
-description = "A fast, cross-platform structured data explorer and editor for JSON, YAML, TOML, and JSON5"
+description = "A fast structured data explorer for JSON, YAML, TOML, JSON5, Graphviz DOT, GraphML, and GEXF"
 
 [[bin]]
 name = "struct_view"

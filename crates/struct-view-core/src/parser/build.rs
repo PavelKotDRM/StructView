@@ -5,6 +5,7 @@ mod format;
 mod parse;
 mod paths;
 mod serialize;
+mod special_graphs;
 #[cfg(test)]
 mod tests;
 mod tree;

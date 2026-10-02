@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use struct_view_core::parser::DataFormat;
 
-/// Источник JSON-данных для headless-команд.
+/// Источник структурированных данных для headless-команд.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// Стандартный ввод (аргумент `-` или отсутствие пути).

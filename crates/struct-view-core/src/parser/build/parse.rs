@@ -4,6 +4,7 @@ use serde_json::Value;
 use super::super::node::{JsonNode, ParseError};
 use super::comments::{add_comment_nodes, extract_comments};
 use super::format::DataFormat;
+use super::special_graphs::parse_special_graph;
 use super::tree::{build_node, build_toml_node, build_yaml_node};
 
 /// Разобрать данные указанного формата или определить формат автоматически.
@@ -29,6 +30,9 @@ pub fn parse_data(
         DataFormat::Json,
         DataFormat::Toml,
         DataFormat::Json5,
+        DataFormat::Dot,
+        DataFormat::GraphMl,
+        DataFormat::Gexf,
         DataFormat::Yaml,
     ] {
         match build_document(input, candidate) {
@@ -87,6 +91,15 @@ fn parse_document(input: &str, format: DataFormat) -> Result<ParsedDocument, Par
                 line: None,
                 column: None,
             }),
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => {
+            parse_special_graph(input, format)
+                .map(ParsedDocument::Json)
+                .map_err(|message| ParseError {
+                    message,
+                    line: None,
+                    column: None,
+                })
+        }
     }
 }
 
