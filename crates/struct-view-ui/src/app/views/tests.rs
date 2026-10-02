@@ -606,7 +606,7 @@ fn crossing_graph_edges_are_routed_onto_separate_tracks() {
     let ports = super::graph::graph_edge_ports(&positions, &endpoints);
     let routing_grid = super::graph::GraphRoutingGrid::new(&positions);
     let first = routing_grid.route_edge_with_ports(0, 3, ports[0], &[]);
-    let second = routing_grid.route_edge_with_ports(1, 2, ports[1], &[first.clone()]);
+    let second = routing_grid.route_edge_with_ports(1, 2, ports[1], std::slice::from_ref(&first));
 
     assert_eq!(first.len(), 2);
     assert!(

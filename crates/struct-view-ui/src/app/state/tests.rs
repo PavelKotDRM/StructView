@@ -379,8 +379,10 @@ fn graph_files_open_read_only_and_can_be_converted_to_toml() {
     )
     .unwrap();
 
-    let mut app = StructViewApp::default();
-    app.mode = AppMode::Edit;
+    let mut app = StructViewApp {
+        mode: AppMode::Edit,
+        ..Default::default()
+    };
     app.load_file(input.clone());
 
     assert_eq!(app.file_state.format, Some(DataFormat::GraphMl));

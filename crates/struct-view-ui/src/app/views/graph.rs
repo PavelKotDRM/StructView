@@ -305,9 +305,7 @@ pub(in crate::app) fn show_graph(
                 } else {
                     ui.visuals().widgets.noninteractive.bg_stroke
                 };
-                let node_stroke = if is_selected {
-                    Stroke::new(3.0, colors.active_match)
-                } else if is_focused {
+                let node_stroke = if is_selected || is_focused {
                     Stroke::new(3.0, colors.active_match)
                 } else if let Some(color) = neighbor_color {
                     Stroke::new(

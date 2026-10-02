@@ -61,7 +61,7 @@ pub(super) fn parse_graphml(input: &str) -> Result<Value, String> {
     let mut node_ids = HashSet::with_capacity(node_elements.len());
     let mut nodes = Vec::with_capacity(node_elements.len());
     for element in node_elements {
-        if children_named(element, "graph").len() > 0 {
+        if !children_named(element, "graph").is_empty() {
             return Err("Вложенные графы GraphML не поддерживаются".to_string());
         }
         let id = required_attribute(element, "id", "узла GraphML")?;
@@ -297,10 +297,10 @@ fn graphml_data(
 ) -> Result<JsonObject, String> {
     let mut attributes = JsonObject::new();
     for key in keys {
-        if key.domain == domain || key.domain == "all" {
-            if let Some(value) = &key.default {
-                attributes.insert(key.name.clone(), value.clone());
-            }
+        if (key.domain == domain || key.domain == "all")
+            && let Some(value) = &key.default
+        {
+            attributes.insert(key.name.clone(), value.clone());
         }
     }
 
@@ -393,10 +393,10 @@ fn gexf_data(
 ) -> Result<JsonObject, String> {
     let mut attributes = JsonObject::new();
     for definition in definitions {
-        if definition.domain == domain {
-            if let Some(value) = &definition.default {
-                attributes.insert(definition.title.clone(), value.clone());
-            }
+        if definition.domain == domain
+            && let Some(value) = &definition.default
+        {
+            attributes.insert(definition.title.clone(), value.clone());
         }
     }
     let mut seen = HashSet::new();

@@ -424,8 +424,10 @@ fn build_explicit_json_graph(
     edge_records: &JsonNode,
     format: EdgeListGraphFormat,
 ) -> RelationshipGraph {
-    let mut graph = RelationshipGraph::default();
-    graph.directed = format.directed;
+    let mut graph = RelationshipGraph {
+        directed: format.directed,
+        ..Default::default()
+    };
     let mut aliases: HashMap<String, Vec<usize>> = HashMap::new();
     for node in &nodes.children {
         if node.value_type != JsonValueType::Object {

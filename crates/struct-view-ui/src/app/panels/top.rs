@@ -153,17 +153,16 @@ impl StructViewApp {
                     {
                         ui.close();
                     }
-                    if can_edit {
-                        if ui
+                    if can_edit
+                        && ui
                             .selectable_value(
                                 &mut self.mode,
                                 AppMode::Edit,
                                 locale.text(TextKey::EditMode),
                             )
                             .changed()
-                        {
-                            ui.close();
-                        }
+                    {
+                        ui.close();
                     }
                 });
                 ui.separator();
