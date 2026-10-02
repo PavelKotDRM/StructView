@@ -75,6 +75,39 @@ fn window_input() -> egui::RawInput {
     }
 }
 
+fn render_graph(
+    ui: &mut egui::Ui,
+    graph: &super::super::visualization::RelationshipGraph,
+    search: &struct_view_core::search::SearchState,
+    locale: super::super::i18n::Locale,
+) {
+    let routing = super::graph::build_graph_routing_layout(graph);
+    super::show_graph(ui, graph, &routing, search, locale);
+}
+
+fn graph_input(
+    pointer_position: Option<egui::Pos2>,
+    primary_pressed: Option<bool>,
+) -> egui::RawInput {
+    let mut input = window_input();
+    input.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(1000.0, 450.0),
+    ));
+    if let Some(position) = pointer_position {
+        input.events.push(egui::Event::PointerMoved(position));
+        if let Some(pressed) = primary_pressed {
+            input.events.push(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
+    input
+}
+
 fn text_shapes(shapes: &[egui::epaint::ClippedShape]) -> Vec<&egui::epaint::TextShape> {
     fn collect<'a>(shape: &'a egui::epaint::Shape, output: &mut Vec<&'a egui::epaint::TextShape>) {
         match shape {
@@ -99,6 +132,13 @@ fn text_origin(output: &egui::FullOutput, text: &str) -> Option<egui::Pos2> {
         .into_iter()
         .find(|shape| shape.galley.job.text == text)
         .map(|shape| shape.pos)
+}
+
+fn text_color(output: &egui::FullOutput, text: &str) -> Option<egui::Color32> {
+    text_shapes(&output.shapes)
+        .into_iter()
+        .find(|shape| shape.galley.job.text == text)
+        .map(|shape| shape.fallback_color)
 }
 
 #[test]
@@ -184,7 +224,7 @@ fn rendering_graph_labels_fit_inside_their_cards() {
     let graph = super::super::visualization::build_relationship_graph(&root);
     let context = egui::Context::default();
     let output = context.run_ui(window_input(), |ui| {
-        super::show_graph(
+        render_graph(
             ui,
             &graph,
             &struct_view_core::search::SearchState::default(),
@@ -210,7 +250,7 @@ fn rendering_graph_labels_use_the_light_theme_palette() {
     let visuals = egui::Visuals::light();
     context.set_visuals(visuals.clone());
     let output = context.run_ui(window_input(), |ui| {
-        super::show_graph(
+        render_graph(
             ui,
             &graph,
             &struct_view_core::search::SearchState::default(),
@@ -230,6 +270,230 @@ fn rendering_graph_labels_use_the_light_theme_palette() {
 }
 
 #[test]
+fn graph_relationship_types_use_stable_distinct_colors() {
+    for visuals in [egui::Visuals::dark(), egui::Visuals::light()] {
+        let colors = SyntaxColors::new(&visuals);
+        let depends_on = super::graph::graph_edge_color("depends_on", colors);
+        let parent_id = super::graph::graph_edge_color("parent_id", colors);
+
+        assert_eq!(
+            depends_on,
+            super::graph::graph_edge_color("depends_on", colors)
+        );
+        assert_ne!(depends_on, parent_id);
+    }
+}
+
+#[test]
+fn graph_reads_undirected_json_adjacency_and_deduplicates_symmetric_links() {
+    let root = struct_view_core::parser::parse_json(
+        r#"{
+            "graph": {"name": "Дружеские связи", "type": "undirected"},
+            "adjacency": {
+                "Анна": ["Борис", "Вера"],
+                "Борис": ["Анна", "Глеб"],
+                "Вера": ["Анна", "Глеб"],
+                "Глеб": ["Борис", "Вера"]
+            }
+        }"#,
+    )
+    .unwrap();
+    let graph = super::super::visualization::build_relationship_graph(&root);
+    let links = graph
+        .edges
+        .iter()
+        .map(|edge| {
+            let source = graph.nodes[edge.source].id.clone();
+            let target = graph.nodes[edge.target].id.clone();
+            if source <= target {
+                (source, target)
+            } else {
+                (target, source)
+            }
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert!(!graph.directed);
+    assert_eq!(graph.nodes.len(), 4);
+    assert_eq!(
+        links,
+        std::collections::BTreeSet::from([
+            ("Анна".to_string(), "Борис".to_string()),
+            ("Анна".to_string(), "Вера".to_string()),
+            ("Борис".to_string(), "Глеб".to_string()),
+            ("Вера".to_string(), "Глеб".to_string()),
+        ])
+    );
+}
+
+#[test]
+fn bipartite_graph_renders_its_partitions_in_separate_columns() {
+    let root = struct_view_core::parser::parse_data(
+        r#"
+            [graph]
+            name = "Employees and projects"
+            type = "bipartite"
+            directed = false
+
+            [partitions]
+            employees = ["anna", "boris"]
+            projects = ["shop", "analytics"]
+
+            [labels]
+            anna = "Anna"
+            boris = "Boris"
+            shop = "Shop"
+            analytics = "Analytics"
+
+            [relations]
+            pairs = [["anna", "shop"], ["boris", "analytics"]]
+        "#,
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+    let graph = super::super::visualization::build_relationship_graph(&root);
+    let context = egui::Context::default();
+    let mut input = window_input();
+    input.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(1000.0, 400.0),
+    ));
+    let output = context.run_ui(input, |ui| {
+        render_graph(
+            ui,
+            &graph,
+            &struct_view_core::search::SearchState::default(),
+            super::super::i18n::Locale::English,
+        );
+    });
+    let text_center_x = |text: &str| {
+        text_shapes(&output.shapes)
+            .into_iter()
+            .find(|shape| shape.galley.job.text == text)
+            .map(|shape| shape.pos.x + shape.galley.rect.width() / 2.0)
+            .unwrap_or_else(|| panic!("Expected graph text {text:?}"))
+    };
+    let anna_x = text_center_x("Anna");
+    let shop_x = text_center_x("Shop");
+    let employee_partition_visible = text_shapes(&output.shapes)
+        .iter()
+        .any(|shape| shape.galley.job.text == "employees");
+    let project_partition_visible = text_shapes(&output.shapes)
+        .iter()
+        .any(|shape| shape.galley.job.text == "projects");
+    output.drop_without_applying_deltas();
+
+    assert!(shop_x > anna_x + super::GRAPH_STEP.x / 2.0);
+    assert!(employee_partition_visible && project_partition_visible);
+}
+
+#[test]
+fn hovering_graph_node_highlights_neighbors_and_fades_unrelated_items() {
+    let root = struct_view_core::parser::parse_json(
+        r#"[{"id":"source","name":"Source","depends_on":"target"},{"id":"target","name":"Target"},{"id":"unrelated","name":"Unrelated","parent_id":"other"},{"id":"other","name":"Other"}]"#,
+    )
+    .unwrap();
+    let graph = super::super::visualization::build_relationship_graph(&root);
+    let context = egui::Context::default();
+    let search = struct_view_core::search::SearchState::default();
+    let locale = super::super::i18n::Locale::English;
+    let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 450.0));
+    let mut input = window_input();
+    input.screen_rect = Some(screen_rect);
+    let initial = context.run_ui(input, |ui| {
+        render_graph(ui, &graph, &search, locale);
+    });
+    let source_position = text_shapes(&initial.shapes)
+        .into_iter()
+        .find(|shape| shape.galley.job.text == "Source")
+        .map(|shape| shape.pos + egui::vec2(1.0, 1.0))
+        .expect("Source label must be visible");
+    initial.drop_without_applying_deltas();
+
+    let mut input = window_input();
+    input.screen_rect = Some(screen_rect);
+    input
+        .events
+        .push(egui::Event::PointerMoved(source_position));
+    let output = context.run_ui(input, |ui| {
+        render_graph(ui, &graph, &search, locale);
+    });
+    let colors = SyntaxColors::new(&egui::Visuals::dark());
+    assert_eq!(text_color(&output, "Source"), Some(colors.key));
+    assert_eq!(text_color(&output, "Target"), Some(colors.key));
+    assert_eq!(
+        text_color(&output, "Unrelated"),
+        Some(colors.key.gamma_multiply(super::graph::GRAPH_DIM_FACTOR))
+    );
+    assert_eq!(
+        text_color(&output, "Other"),
+        Some(colors.key.gamma_multiply(super::graph::GRAPH_DIM_FACTOR))
+    );
+    assert_eq!(
+        text_color(&output, "depends_on"),
+        Some(super::graph::graph_edge_color("depends_on", colors))
+    );
+    assert_eq!(
+        text_color(&output, "parent_id"),
+        Some(
+            super::graph::graph_edge_color("parent_id", colors)
+                .gamma_multiply(super::graph::GRAPH_DIM_FACTOR)
+        )
+    );
+    output.drop_without_applying_deltas();
+}
+
+#[test]
+fn clicking_graph_node_keeps_selection_until_clicked_again() {
+    let root = struct_view_core::parser::parse_json(
+        r#"[{"id":"source","name":"Source","depends_on":"target"},{"id":"target","name":"Target"},{"id":"unrelated","name":"Unrelated","parent_id":"other"},{"id":"other","name":"Other"}]"#,
+    )
+    .unwrap();
+    let graph = super::super::visualization::build_relationship_graph(&root);
+    let context = egui::Context::default();
+    let search = struct_view_core::search::SearchState::default();
+    let locale = super::super::i18n::Locale::English;
+    let render = |input: egui::RawInput| {
+        context.run_ui(input, |ui| {
+            render_graph(ui, &graph, &search, locale);
+        })
+    };
+
+    let initial = render(graph_input(None, None));
+    let source_position = text_shapes(&initial.shapes)
+        .into_iter()
+        .find(|shape| shape.galley.job.text == "Source")
+        .map(|shape| shape.pos + egui::vec2(1.0, 1.0))
+        .expect("Source label must be visible");
+    initial.drop_without_applying_deltas();
+
+    render(graph_input(Some(source_position), Some(true))).drop_without_applying_deltas();
+    render(graph_input(Some(source_position), Some(false))).drop_without_applying_deltas();
+
+    let colors = SyntaxColors::new(&egui::Visuals::dark());
+    let outside = egui::pos2(900.0, 420.0);
+    let selected = render(graph_input(Some(outside), None));
+    assert_eq!(text_color(&selected, "Target"), Some(colors.key));
+    assert_eq!(
+        text_color(&selected, "Other"),
+        Some(colors.key.gamma_multiply(super::graph::GRAPH_DIM_FACTOR))
+    );
+    selected.drop_without_applying_deltas();
+
+    render(graph_input(Some(source_position), Some(true))).drop_without_applying_deltas();
+    render(graph_input(Some(source_position), Some(false))).drop_without_applying_deltas();
+
+    let cleared = render(graph_input(Some(outside), None));
+    assert_eq!(text_color(&cleared, "Other"), Some(colors.key));
+    assert_eq!(
+        text_color(&cleared, "parent_id"),
+        Some(super::graph::graph_edge_color("parent_id", colors))
+    );
+    cleared.drop_without_applying_deltas();
+}
+
+#[test]
 fn rendering_graph_keeps_relationship_labels_readable_between_nodes() {
     let root = struct_view_core::parser::parse_json(
         r#"[{"id":"source","depends_on":"target"},{"id":"target"}]"#,
@@ -243,7 +507,7 @@ fn rendering_graph_keeps_relationship_labels_readable_between_nodes() {
         egui::vec2(1000.0, 240.0),
     ));
     let output = context.run_ui(input, |ui| {
-        super::show_graph(
+        render_graph(
             ui,
             &graph,
             &struct_view_core::search::SearchState::default(),
@@ -257,6 +521,241 @@ fn rendering_graph_keeps_relationship_labels_readable_between_nodes() {
     assert!(
         relationship_label,
         "Relationship label should not be truncated"
+    );
+}
+
+#[test]
+fn graph_routes_edges_around_intervening_cards() {
+    let positions = (0..9)
+        .map(|index| {
+            egui::Pos2::new(
+                128.0 + (index % 3) as f32 * 340.0,
+                59.0 + (index / 3) as f32 * 150.0,
+            )
+        })
+        .collect::<Vec<_>>();
+    let routing_grid = super::graph::GraphRoutingGrid::new(&positions);
+    let route = routing_grid.route_edge(0, 8);
+
+    assert!(
+        route.len() > 2,
+        "The diagonal route should detour around a card"
+    );
+    assert!(
+        route
+            .windows(2)
+            .all(|segment| { segment[0].x == segment[1].x || segment[0].y == segment[1].y })
+    );
+    for (index, position) in positions.iter().enumerate() {
+        if index == 0 || index == 8 {
+            continue;
+        }
+        let obstacle = egui::Rect::from_center_size(*position, super::GRAPH_NODE_SIZE)
+            .expand(super::graph::GRAPH_ROUTE_CLEARANCE);
+        assert!(
+            route.windows(2).all(|segment| {
+                !super::graph::segment_crosses_rect_interior(segment[0], segment[1], obstacle)
+            }),
+            "Route crosses card {index}: {route:?}"
+        );
+    }
+}
+
+#[test]
+fn parallel_graph_edges_use_distinct_card_ports() {
+    let positions = [egui::pos2(128.0, 59.0), egui::pos2(468.0, 59.0)];
+    let endpoints = [(0, 1), (0, 1), (0, 1)];
+    let ports = super::graph::graph_edge_ports(&positions, &endpoints);
+    let routing_grid = super::graph::GraphRoutingGrid::new(&positions);
+    let routes = ports
+        .iter()
+        .map(|ports| routing_grid.route_edge_with_ports(0, 1, *ports, &[]))
+        .collect::<Vec<_>>();
+
+    assert_eq!(routes.iter().map(Vec::len).collect::<Vec<_>>(), [2, 2, 2]);
+    assert!(
+        routes
+            .windows(2)
+            .all(|routes| routes[0][0].y != routes[1][0].y)
+    );
+    assert!(
+        routes
+            .windows(2)
+            .all(|routes| routes[0][1].y != routes[1][1].y)
+    );
+}
+
+#[test]
+fn crossing_graph_edges_are_routed_onto_separate_tracks() {
+    let positions = [
+        egui::pos2(128.0, 59.0),
+        egui::pos2(468.0, 59.0),
+        egui::pos2(128.0, 209.0),
+        egui::pos2(468.0, 209.0),
+    ];
+    let endpoints = [(0, 3), (1, 2)];
+    let ports = super::graph::graph_edge_ports(&positions, &endpoints);
+    let routing_grid = super::graph::GraphRoutingGrid::new(&positions);
+    let first = routing_grid.route_edge_with_ports(0, 3, ports[0], &[]);
+    let second = routing_grid.route_edge_with_ports(1, 2, ports[1], &[first.clone()]);
+
+    assert_eq!(first.len(), 2);
+    assert!(
+        second.len() > 2,
+        "The crossing edge should take a detour: {second:?}"
+    );
+    assert!(
+        second.windows(2).all(|second_segment| {
+            first.windows(2).all(|first_segment| {
+                !super::graph::segments_within_clearance(
+                    second_segment[0],
+                    second_segment[1],
+                    first_segment[0],
+                    first_segment[1],
+                    super::graph::GRAPH_EDGE_CLEARANCE,
+                )
+            })
+        }),
+        "Routes overlap: first={first:?}, second={second:?}"
+    );
+}
+
+#[test]
+fn rendering_crossing_graph_edge_labels_does_not_overlap() {
+    let root = struct_view_core::parser::parse_json(
+        r#"[{"id":"tl","name":"Top left","depends_on":"br"},{"id":"tr","name":"Top right","parent_id":"bl"},{"id":"bl","name":"Bottom left"},{"id":"br","name":"Bottom right"}]"#,
+    )
+    .unwrap();
+    let graph = super::super::visualization::build_relationship_graph(&root);
+    let context = egui::Context::default();
+    let mut input = window_input();
+    input.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(1000.0, 450.0),
+    ));
+    let output = context.run_ui(input, |ui| {
+        render_graph(
+            ui,
+            &graph,
+            &struct_view_core::search::SearchState::default(),
+            super::super::i18n::Locale::English,
+        );
+    });
+    let bounds = ["depends_on", "parent_id"].map(|label| {
+        text_shapes(&output.shapes)
+            .into_iter()
+            .find(|shape| shape.galley.job.text == label)
+            .map(|shape| shape.visual_bounding_rect())
+            .unwrap_or_else(|| panic!("Relationship label must be visible: {label}"))
+    });
+    output.drop_without_applying_deltas();
+    assert!(
+        !bounds[0].intersects(bounds[1]),
+        "Crossing relationship labels overlap: {bounds:?}"
+    );
+}
+
+#[test]
+fn rendering_parallel_graph_edge_labels_does_not_overlap() {
+    let root = struct_view_core::parser::parse_json(
+        r#"[{"id":"source","name":"Source","depends_on":"target","parent_id":"target","ref":"target"},{"id":"target","name":"Target"}]"#,
+    )
+    .unwrap();
+    let graph = super::super::visualization::build_relationship_graph(&root);
+    let context = egui::Context::default();
+    let mut input = window_input();
+    input.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(1000.0, 300.0),
+    ));
+    let output = context.run_ui(input, |ui| {
+        render_graph(
+            ui,
+            &graph,
+            &struct_view_core::search::SearchState::default(),
+            super::super::i18n::Locale::English,
+        );
+    });
+    let bounds = ["depends_on", "parent_id", "ref"].map(|label| {
+        text_shapes(&output.shapes)
+            .into_iter()
+            .find(|shape| shape.galley.job.text == label)
+            .map(|shape| shape.visual_bounding_rect())
+            .unwrap_or_else(|| panic!("Relationship label must be visible: {label}"))
+    });
+    output.drop_without_applying_deltas();
+
+    for (index, first) in bounds.iter().enumerate() {
+        for second in &bounds[index + 1..] {
+            assert!(
+                !first.intersects(*second),
+                "Relationship labels overlap: {first:?} and {second:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn hovering_truncated_graph_edge_label_shows_its_full_text() {
+    let full_label = "very_long_relationship_name_that_needs_tooltip";
+    let root = struct_view_core::parser::parse_json(&format!(
+        r#"[{{"id":"source","{full_label}":"target"}},{{"id":"target"}}]"#
+    ))
+    .unwrap();
+    let graph = super::super::visualization::build_relationship_graph(&root);
+    let context = egui::Context::default();
+    let mut input = window_input();
+    input.time = Some(0.0);
+    input.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(1000.0, 300.0),
+    ));
+    let initial = context.run_ui(input, |ui| {
+        render_graph(
+            ui,
+            &graph,
+            &struct_view_core::search::SearchState::default(),
+            super::super::i18n::Locale::English,
+        );
+    });
+    let label_shape = text_shapes(&initial.shapes)
+        .into_iter()
+        .find(|shape| shape.galley.job.text.contains('…'))
+        .expect("The relationship label should be shortened");
+    let pointer = label_shape.pos + egui::vec2(1.0, 1.0);
+    assert_ne!(label_shape.galley.job.text, full_label);
+    initial.drop_without_applying_deltas();
+
+    let mut tooltip_visible = false;
+    for frame in 1..=10 {
+        let mut input = window_input();
+        input.time = Some(f64::from(frame) * 0.1);
+        input.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1000.0, 300.0),
+        ));
+        if frame == 1 {
+            input.events.push(egui::Event::PointerMoved(pointer));
+        }
+        let output = context.run_ui(input, |ui| {
+            render_graph(
+                ui,
+                &graph,
+                &struct_view_core::search::SearchState::default(),
+                super::super::i18n::Locale::English,
+            );
+        });
+        tooltip_visible = text_shapes(&output.shapes)
+            .iter()
+            .any(|shape| shape.galley.job.text == full_label);
+        output.drop_without_applying_deltas();
+        if tooltip_visible {
+            break;
+        }
+    }
+    assert!(
+        tooltip_visible,
+        "Hovering the shortened label should reveal its complete text"
     );
 }
 

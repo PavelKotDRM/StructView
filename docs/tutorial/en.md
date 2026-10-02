@@ -72,7 +72,15 @@ Use the view selector to switch between:
 - **Graph** — inspect links inferred from common identifiers such as `id`,
   `_id`, and `$id`, and reference fields such as `$ref`, `user_id`, and
   `depends_on`. These links are inferred; duplicate identifiers that make a
-  link ambiguous are not connected.
+  link ambiguous are not connected. Explicit JSON graphs with `graph`, `nodes`,
+  and `edges`, undirected JSON adjacency maps, weighted undirected YAML
+  matrices, and TOML catalogs with `[graph]`, `[entities]`, and
+  `[relations].edges` are also supported. Bipartite TOML graphs can define
+  `[partitions]`, `[labels]`, and `[relations].pairs`; the two groups are shown
+  in separate columns. TOML directed multigraphs with `[nodes]` and `[[edges]]`
+  preserve parallel edges. Hover a shortened edge label to see its full text.
+  Layout is calculated in the background, with a progress indicator while it is
+  being built.
 - **Table** — see flattened paths, values, and types. The table follows the
   active search filter and can be exported as CSV.
 - **Schema** — inspect JSON Schema or OpenAPI component and inline path

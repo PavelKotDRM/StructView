@@ -235,6 +235,7 @@ impl StructViewApp {
     /// Сбросить производные модели после изменения документа.
     pub(in crate::app) fn invalidate_visualization_cache(&mut self) {
         self.visualization_cache = VisualizationCache::default();
+        self.graph_calculation = super::super::views::GraphCalculationState::default();
     }
 
     /// Запланировать прокрутку к текущему совпадению, если оно существует.

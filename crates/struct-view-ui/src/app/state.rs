@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use crate::clipboard::{
@@ -29,6 +30,7 @@ use super::theme::SyntaxColors;
 use super::tree::{
     AddChildRequest, EditFieldRequest, InlineEditEvent, SelectionRequest, VisibleRows,
 };
+use super::views::GraphCalculationState;
 use super::visualization::{VisualizationCache, VisualizationMode};
 
 mod editing;
@@ -69,6 +71,15 @@ pub(super) struct FileState {
     pub(super) load_time_ms: u128,
     /// Формат открытого файла.
     pub(super) format: Option<DataFormat>,
+}
+
+pub(super) struct LoadedDocument {
+    pub(super) path: PathBuf,
+    pub(super) root: JsonNode,
+    pub(super) size_bytes: u64,
+    pub(super) load_time_ms: u128,
+    pub(super) format: DataFormat,
+    pub(super) visible_rows: VisibleRows,
 }
 
 /// Документ, загруженный в режим сравнения.
@@ -210,6 +221,8 @@ pub struct StructViewApp {
     pub(super) save_requested: bool,
     /// Мета-информация о загруженном файле.
     pub(super) file_state: FileState,
+    /// Результат фонового чтения и разбора файла.
+    pub(super) file_load_receiver: Option<Receiver<Result<LoadedDocument, ParseError>>>,
     /// Состояние сравнения нескольких файлов.
     pub(super) comparison: Option<ComparisonState>,
     /// Временное уведомление (например, «Скопировано») и момент его показа.
@@ -224,6 +237,8 @@ pub struct StructViewApp {
     pub(super) visualization: VisualizationMode,
     /// Вычисляемые модели представлений текущего документа.
     pub(super) visualization_cache: VisualizationCache,
+    /// Асинхронное построение модели и маршрутов графа связей.
+    pub(super) graph_calculation: GraphCalculationState,
     /// Открытый конструктор добавления или редактирования поля.
     pub(super) field_dialog: Option<FieldDialog>,
     /// Размещение конструктора внутри или вне главного окна.
@@ -269,6 +284,7 @@ impl Default for StructViewApp {
             search_scroll_target: None,
             save_requested: false,
             file_state: FileState::default(),
+            file_load_receiver: None,
             comparison: None,
             toast: None,
             dark_mode: true,
@@ -276,6 +292,7 @@ impl Default for StructViewApp {
             locale: Locale::default(),
             visualization: VisualizationMode::default(),
             visualization_cache: VisualizationCache::default(),
+            graph_calculation: GraphCalculationState::default(),
             field_dialog: None,
             field_dialog_docking: DockingState::default(),
             selected_paths: BTreeSet::new(),
@@ -332,7 +349,7 @@ impl StructViewApp {
         let mut app = Self::new(cc);
         match paths.as_slice() {
             [] => {}
-            [path] => app.load_file(path.clone()),
+            [path] => app.request_file_load(path.clone()),
             _ => app.load_comparison(paths),
         }
         app
@@ -399,6 +416,8 @@ fn default_field_value(value_type: &JsonValueType) -> String {
 
 impl eframe::App for StructViewApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_file_load(ui.ctx());
+        self.graph_calculation.poll(ui.ctx());
         let previous_toast = self.toast.as_ref().map(|toast| toast.shown_at);
         self.show_top_panel(ui);
         self.show_bottom_panel(ui);

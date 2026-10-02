@@ -45,13 +45,32 @@ impl StructViewApp {
             let outcome = match self.visualization {
                 VisualizationMode::Tree => self.show_tree(ui),
                 VisualizationMode::Graph => {
-                    if self.visualization_cache.graph.is_none()
-                        && let Some(root) = &self.root
-                    {
-                        self.visualization_cache.graph = Some(build_relationship_graph(root));
+                    if let Some(root) = &self.root {
+                        self.graph_calculation.ensure_started(root, ui.ctx());
                     }
-                    if let Some(graph) = &self.visualization_cache.graph {
-                        show_graph(ui, graph, &self.search, self.locale);
+                    if let Some(error) = self.graph_calculation.error() {
+                        ui.colored_label(
+                            colors.error,
+                            format!(
+                                "{} {error}",
+                                self.locale.text(TextKey::BackgroundOperationFailed)
+                            ),
+                        );
+                    } else if let Some(calculation) = self.graph_calculation.result() {
+                        show_graph(
+                            ui,
+                            &calculation.graph,
+                            &calculation.routing,
+                            &self.search,
+                            self.locale,
+                        );
+                    } else {
+                        ui.centered_and_justified(|ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.add(egui::Spinner::new());
+                                ui.label(self.locale.text(TextKey::GraphCalculating));
+                            });
+                        });
                     }
                     TreeOutcome::default()
                 }
@@ -359,7 +378,7 @@ impl StructViewApp {
         });
         match dropped_paths.as_slice() {
             [] => {}
-            [path] => self.load_file(path.clone()),
+            [path] => self.request_file_load(path.clone()),
             _ => self.load_comparison(dropped_paths),
         }
     }

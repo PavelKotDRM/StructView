@@ -32,6 +32,5 @@ pub(super) enum VisualizationMode {
 #[derive(Debug, Default)]
 pub(super) struct VisualizationCache {
     pub(super) table: Option<TableData>,
-    pub(super) graph: Option<RelationshipGraph>,
     pub(super) schema: Option<Result<SchemaDiagram, String>>,
 }

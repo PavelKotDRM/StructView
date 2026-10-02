@@ -83,6 +83,8 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         }
         TextKey::Error => "Ошибка",
         TextKey::DataParseError => "Ошибка разбора данных:",
+        TextKey::LoadingFile => "Загрузка файла…",
+        TextKey::BackgroundOperationFailed => "Не удалось выполнить фоновую операцию:",
         TextKey::CopyValue => "📋  Копировать значение",
         TextKey::CopyKey => "🔑  Копировать ключ",
         TextKey::CopyPath => "📍  Копировать путь",
@@ -164,6 +166,7 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphNodes => "Сущности",
         TextKey::GraphEdges => "Связи",
         TextKey::GraphNoEntities => "Сущности с идентификаторами не найдены.",
+        TextKey::GraphCalculating => "Вычисление графа связей…",
         TextKey::GraphNoRelationships => {
             "Узлы есть, но распознаваемые ссылки между ними не найдены."
         }

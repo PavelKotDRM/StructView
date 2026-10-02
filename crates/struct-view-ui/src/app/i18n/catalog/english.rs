@@ -85,6 +85,8 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         }
         TextKey::Error => "Error",
         TextKey::DataParseError => "Data parsing error:",
+        TextKey::LoadingFile => "Loading file…",
+        TextKey::BackgroundOperationFailed => "Background operation failed:",
         TextKey::CopyValue => "📋  Copy value",
         TextKey::CopyKey => "🔑  Copy key",
         TextKey::CopyPath => "📍  Copy path",
@@ -162,6 +164,7 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphNodes => "Entities",
         TextKey::GraphEdges => "Links",
         TextKey::GraphNoEntities => "No entities with identifiers were found.",
+        TextKey::GraphCalculating => "Building relationship graph…",
         TextKey::GraphNoRelationships => {
             "Entities were found, but no supported references connect them."
         }

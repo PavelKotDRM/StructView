@@ -116,10 +116,12 @@ impl StructViewApp {
 
     pub(super) fn clear_document_state(&mut self) {
         self.clear_history();
+        self.file_load_receiver = None;
         self.root = None;
         self.comparison = None;
         self.visualization = VisualizationMode::Tree;
         self.visualization_cache = VisualizationCache::default();
+        self.graph_calculation = super::super::views::GraphCalculationState::default();
         self.visible_rows = VisibleRows::default();
         self.visible_rows_dirty = true;
         self.parse_error = None;
@@ -145,6 +147,7 @@ impl StructViewApp {
         self.comparison = None;
         self.visualization = previous_document.visualization;
         self.visualization_cache = VisualizationCache::default();
+        self.graph_calculation = super::super::views::GraphCalculationState::default();
         self.visible_rows = VisibleRows::default();
         self.visible_rows_dirty = true;
         self.parse_error = None;

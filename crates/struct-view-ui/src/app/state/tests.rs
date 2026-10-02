@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use super::{
     AppMode, HISTORY_LIMIT, InlineEditEvent, StructViewApp, VisualizationMode, edit_child_at_path,
@@ -6,6 +8,16 @@ use super::{
 };
 use crate::clipboard::ClipboardEntry;
 use struct_view_core::parser::{DataFormat, JsonValueType, node_to_value, parse_data};
+
+fn shape_contains_text(shape: &egui::epaint::Shape, expected: &str) -> bool {
+    match shape {
+        egui::epaint::Shape::Text(text) => text.galley.job.text == expected,
+        egui::epaint::Shape::Vec(shapes) => shapes
+            .iter()
+            .any(|shape| shape_contains_text(shape, expected)),
+        _ => false,
+    }
+}
 
 #[test]
 fn constructor_offers_comments_and_metadata_only_for_supported_formats() {
@@ -19,6 +31,63 @@ fn constructor_offers_comments_and_metadata_only_for_supported_formats() {
         field_value_types(DataFormat::Json5, false, true),
         vec![JsonValueType::Comment]
     );
+}
+
+#[test]
+fn pending_file_load_shows_a_status_indicator() {
+    let mut app = StructViewApp::default();
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    app.file_load_receiver = Some(receiver);
+    let context = egui::Context::default();
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(500.0, 100.0),
+        )),
+        ..Default::default()
+    };
+    let output = context.run_ui(input, |ui| app.show_bottom_panel(ui));
+    let loading_label = app.locale.text(super::super::i18n::TextKey::LoadingFile);
+    let is_visible = output
+        .shapes
+        .iter()
+        .any(|shape| shape_contains_text(&shape.shape, loading_label));
+    output.drop_without_applying_deltas();
+
+    assert!(is_visible, "The loading status should remain visible");
+}
+
+#[test]
+fn file_load_runs_in_background_and_applies_the_result_when_polled() {
+    let path = std::env::temp_dir().join(format!(
+        "struct_view-background-load-test-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"value":1}"#).unwrap();
+    let mut app = StructViewApp::default();
+
+    app.request_file_load(path.clone());
+    assert!(
+        app.file_load_receiver.is_some(),
+        "Requesting a file should return while the worker is running"
+    );
+
+    let context = egui::Context::default();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.file_load_receiver.is_some() && Instant::now() < deadline {
+        app.poll_file_load(&context);
+        if app.file_load_receiver.is_some() {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    assert!(app.file_load_receiver.is_none(), "The worker should finish");
+    assert_eq!(app.file_state.path, Some(path.clone()));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        1
+    );
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]

@@ -99,6 +99,8 @@ struct_view first.json second.yaml third.toml
 ```
 
 You can also choose a file through `File -> Open…` or drop it onto the window.
+Single-file loads run in the background and show a loading indicator in the
+status bar.
 Use `File -> Compare files…` to select two or more files for comparison.
 Use `File -> New file…`, choose a filename with a `.json`, `.yaml`, `.yml`,
 `.toml`, or `.json5` extension, and start adding data to the empty object in
@@ -114,7 +116,13 @@ The interface provides:
   table, and schema diagram;
 - a relationship graph for objects with `id`, `_id`, or `$id` identifiers and
   references such as `$ref`, `user_id`, and `depends_on`; ambiguous duplicate
-  identifiers are not linked;
+  identifiers are not linked; explicit JSON `{graph, nodes, edges}` documents,
+  undirected JSON adjacency maps, weighted undirected YAML matrices, and TOML
+  `[graph]`, `[entities]`, `[relations].edges` graph documents, including
+  bipartite TOML graphs with `[partitions]` and `[relations].pairs`, plus
+  directed multigraphs with `[nodes]` and `[[edges]]`, are also supported.
+  Parallel edges are kept distinct. Layout is calculated in the background
+  with a progress indicator;
 - a flattened path/value/type table that follows the search filter and can be
   exported as CSV;
 - a schema diagram for JSON Schema and OpenAPI component/inline path schemas;

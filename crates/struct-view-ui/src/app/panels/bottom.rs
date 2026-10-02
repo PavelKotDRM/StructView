@@ -38,6 +38,10 @@ impl StructViewApp {
                     ui.label(RichText::new(locale.text(TextKey::Placeholder)).color(Color32::GRAY));
                 }
 
+                if self.file_load_receiver.is_some() {
+                    ui.add(egui::Spinner::new());
+                    ui.label(locale.text(TextKey::LoadingFile));
+                }
                 self.show_toast_label(ui);
             });
         });

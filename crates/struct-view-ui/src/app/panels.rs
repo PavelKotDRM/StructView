@@ -18,9 +18,7 @@ use super::views::{
     comparison_column_width, comparison_value_color, export_table_csv as table_csv, show_diff,
     show_difference_legend, show_graph, show_schema, show_table,
 };
-use super::visualization::{
-    VisualizationMode, build_relationship_graph, build_schema_diagram, build_table,
-};
+use super::visualization::{VisualizationMode, build_schema_diagram, build_table};
 
 mod bottom;
 mod central;

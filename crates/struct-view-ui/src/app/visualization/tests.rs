@@ -73,6 +73,283 @@ fn graph_resolves_entity_ids_and_dependency_fields() {
 }
 
 #[test]
+fn graph_reads_explicit_json_nodes_and_edges() {
+    let root = parse_data(
+        r#"{
+            "graph": {"name": "Order processing", "type": "directed"},
+            "nodes": [
+                {"id": "created", "label": "Created"},
+                {"id": "paid", "label": "Paid"},
+                {"id": "shipped", "label": "Shipped"},
+                {"id": "cancelled", "label": "Cancelled"}
+            ],
+            "edges": [
+                {"source": "created", "target": "paid"},
+                {"source": "paid", "target": "shipped"},
+                {"source": "created", "target": "cancelled"}
+            ]
+        }"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+
+    assert_eq!(graph.nodes.len(), 4);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Created", "Paid", "Shipped", "Cancelled"]
+    );
+    assert_eq!(
+        graph.edges,
+        [
+            GraphEdge {
+                source: 0,
+                target: 1,
+                label: String::new(),
+            },
+            GraphEdge {
+                source: 0,
+                target: 3,
+                label: String::new(),
+            },
+            GraphEdge {
+                source: 1,
+                target: 2,
+                label: String::new(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn graph_reads_weighted_undirected_yaml_adjacency_matrix() {
+    let root = parse_data(
+        r#"
+            graph:
+              name: "Расстояния между городами"
+              type: "weighted_undirected"
+              weight_unit: "км"
+              node_order: ["Москва", "Тверь", "Тула"]
+              adjacency_matrix:
+                - [0, 180, 190]
+                - [180, 0, null]
+                - [190, null, 0]
+        "#,
+        Some(DataFormat::Yaml),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+
+    assert!(!graph.directed);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>(),
+        ["Москва", "Тверь", "Тула"]
+    );
+    assert_eq!(
+        graph.edges,
+        [
+            GraphEdge {
+                source: 0,
+                target: 1,
+                label: "180 км".to_string(),
+            },
+            GraphEdge {
+                source: 0,
+                target: 2,
+                label: "190 км".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn graph_reads_explicit_toml_entities_and_relation_tuples() {
+    let root = parse_data(
+        r#"
+            [graph]
+            name = "Store"
+            directed = true
+            entity_count = 3
+            relation_count = 2
+
+            [entities]
+            customer = "Buyer"
+            order = "Order"
+            product = "Product"
+
+            [relations]
+            edges = [
+                ["customer", "order", "places", "1:N"],
+                ["order", "product", "contains", "1:N"],
+            ]
+        "#,
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+
+    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.edges.len(), 2);
+    assert!(graph.nodes.iter().any(|node| {
+        node.id == "customer" && node.label == "Buyer" && node.path == "entities.customer"
+    }));
+    assert!(graph.edges.iter().any(|edge| {
+        graph.nodes[edge.source].id == "customer"
+            && graph.nodes[edge.target].id == "order"
+            && edge.label == "places (1:N)"
+    }));
+    assert!(graph.edges.iter().any(|edge| {
+        graph.nodes[edge.source].id == "order"
+            && graph.nodes[edge.target].id == "product"
+            && edge.label == "contains (1:N)"
+    }));
+}
+
+#[test]
+fn graph_reads_bipartite_toml_partitions_labels_and_pairs() {
+    let root = parse_data(
+        r#"
+            [graph]
+            name = "Сотрудники и проекты"
+            type = "bipartite"
+            directed = false
+
+            [partitions]
+            employees = ["anna", "boris", "vera"]
+            projects = ["shop", "analytics"]
+
+            [labels]
+            anna = "Анна"
+            boris = "Борис"
+            vera = "Вера"
+            shop = "Магазин"
+            analytics = "Аналитика"
+
+            [relations]
+            pairs = [
+                ["anna", "shop"],
+                ["boris", "shop"],
+                ["boris", "analytics"],
+                ["vera", "analytics"],
+            ]
+        "#,
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+
+    assert!(!graph.directed);
+    assert_eq!(
+        graph.bipartition,
+        Some(["employees".to_string(), "projects".to_string()])
+    );
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node.label.as_str(), node.partition))
+            .collect::<Vec<_>>(),
+        [
+            ("anna", "Анна", Some(0)),
+            ("boris", "Борис", Some(0)),
+            ("vera", "Вера", Some(0)),
+            ("shop", "Магазин", Some(1)),
+            ("analytics", "Аналитика", Some(1)),
+        ]
+    );
+    assert_eq!(graph.edges.len(), 4);
+    assert!(
+        graph
+            .edges
+            .iter()
+            .all(|edge| graph.nodes[edge.source].partition != graph.nodes[edge.target].partition)
+    );
+}
+
+#[test]
+fn graph_reads_toml_directed_multigraph_and_keeps_parallel_edges() {
+    let root = parse_data(
+        r#"
+            [graph]
+            name = "Связи между организациями"
+            type = "directed_multigraph"
+
+            [nodes]
+            a = "Альфа"
+            b = "Бета"
+            c = "Гамма"
+
+            [[edges]]
+            id = "e1"
+            source = "a"
+            target = "b"
+            relation = "поставляет товары"
+            contract = "SUP-001"
+
+            [[edges]]
+            id = "e2"
+            source = "a"
+            target = "b"
+            relation = "оказывает поддержку"
+            contract = "SUPPORT-002"
+
+            [[edges]]
+            id = "e3"
+            source = "b"
+            target = "c"
+            relation = "перевозит грузы"
+            contract = "LOG-003"
+        "#,
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+    let parallel_edges = graph
+        .edges
+        .iter()
+        .filter(|edge| graph.nodes[edge.source].id == "a" && graph.nodes[edge.target].id == "b")
+        .collect::<Vec<_>>();
+
+    assert!(graph.directed);
+    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.edges.len(), 3);
+    assert_eq!(parallel_edges.len(), 2);
+    assert!(parallel_edges[0].label.contains("SUP-001"));
+    assert!(parallel_edges[1].label.contains("SUPPORT-002"));
+}
+
+#[test]
+fn graph_metadata_counts_are_not_inferred_as_relationships() {
+    let root = parse_data(
+        r#"
+            [graph]
+            name = "Store"
+            directed = true
+            entity_count = 100
+            relation_count = 104
+        "#,
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+
+    assert!(build_relationship_graph(&root).nodes.is_empty());
+}
+
+#[test]
 fn graph_resolves_json_schema_references_and_skips_ambiguous_ids() {
     let root = parse_data(
         r##"{"$defs":{"User":{"type":"object"},"Pet":{"$ref":"#/$defs/User"}}}"##,

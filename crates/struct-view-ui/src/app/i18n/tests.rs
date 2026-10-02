@@ -18,6 +18,9 @@ fn both_catalogs_have_core_translations() {
         assert!(!locale.text(TextKey::RegexSearch).is_empty());
         assert!(!locale.text(TextKey::RegexSearchHelp).is_empty());
         assert!(!locale.text(TextKey::RegexSearchError).is_empty());
+        assert!(!locale.text(TextKey::LoadingFile).is_empty());
+        assert!(!locale.text(TextKey::BackgroundOperationFailed).is_empty());
+        assert!(!locale.text(TextKey::GraphCalculating).is_empty());
         assert!(!locale.text(TextKey::RegexBuilder).is_empty());
         assert!(!locale.text(TextKey::RegexAddLiteral).is_empty());
         assert!(!locale.text(TextKey::CopyStructure).is_empty());
