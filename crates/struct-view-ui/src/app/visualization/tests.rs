@@ -127,6 +127,60 @@ fn graph_reads_explicit_json_nodes_and_edges() {
 }
 
 #[test]
+fn graph_reads_all_explicit_json_graph_types() {
+    for (graph_type, directed, multigraph) in [
+        ("directed", true, false),
+        ("weighted_directed", true, false),
+        ("undirected", false, false),
+        ("weighted_undirected", false, false),
+        ("directed_multigraph", true, true),
+        ("undirected_multigraph", false, true),
+    ] {
+        let input = serde_json::json!({
+            "graph": {
+                "type": graph_type,
+                "weight_unit": "kg"
+            },
+            "nodes": [
+                {"id": "a"},
+                {"id": "b"}
+            ],
+            "edges": [
+                {
+                    "source": "a",
+                    "target": "b",
+                    "label": "connects",
+                    "weight": 0
+                },
+                {
+                    "source": "a",
+                    "target": "b",
+                    "label": "connects",
+                    "weight": 0
+                }
+            ]
+        })
+        .to_string();
+        let root = parse_data(&input, Some(DataFormat::Json)).unwrap().0;
+        let graph = build_relationship_graph(&root);
+
+        assert_eq!(graph.directed, directed, "{graph_type}");
+        assert_eq!(
+            graph.edges.len(),
+            if multigraph { 2 } else { 1 },
+            "{graph_type}"
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .all(|edge| edge.label == "connects · 0 kg"),
+            "{graph_type}"
+        );
+    }
+}
+
+#[test]
 fn graph_reads_weighted_undirected_yaml_adjacency_matrix() {
     let root = parse_data(
         r#"
@@ -136,9 +190,9 @@ fn graph_reads_weighted_undirected_yaml_adjacency_matrix() {
               weight_unit: "км"
               node_order: ["Москва", "Тверь", "Тула"]
               adjacency_matrix:
-                - [0, 180, 190]
+                - [0, 180, 0]
                 - [180, 0, null]
-                - [190, null, 0]
+                - [0, null, 0]
         "#,
         Some(DataFormat::Yaml),
     )
@@ -166,7 +220,7 @@ fn graph_reads_weighted_undirected_yaml_adjacency_matrix() {
             GraphEdge {
                 source: 0,
                 target: 2,
-                label: "190 км".to_string(),
+                label: "0 км".to_string(),
             },
         ]
     );
@@ -252,8 +306,8 @@ fn graph_reads_bipartite_toml_partitions_labels_and_pairs() {
 
     assert!(!graph.directed);
     assert_eq!(
-        graph.bipartition,
-        Some(["employees".to_string(), "projects".to_string()])
+        graph.partition_names,
+        Some(vec!["employees".to_string(), "projects".to_string()])
     );
     assert_eq!(
         graph
@@ -275,6 +329,98 @@ fn graph_reads_bipartite_toml_partitions_labels_and_pairs() {
             .edges
             .iter()
             .all(|edge| graph.nodes[edge.source].partition != graph.nodes[edge.target].partition)
+    );
+}
+
+#[test]
+fn graph_reads_toml_multipartite_partitions_and_cross_partition_pairs() {
+    let root = parse_data(
+        r#"
+            [graph]
+            name = "People, projects, and regions"
+            type = "multipartite"
+            directed = false
+
+            [partitions]
+            people = ["anna", "boris"]
+            projects = ["shop"]
+            regions = ["north", "south"]
+
+            [labels]
+            anna = "Анна"
+            boris = "Борис"
+            shop = "Магазин"
+            north = "Север"
+            south = "Юг"
+
+            [relations]
+            pairs = [
+                ["anna", "shop", "работает над"],
+                ["shop", "north", "расположен в"],
+                ["boris", "south", "живёт в"],
+                ["anna", "boris", "в той же доле"],
+            ]
+        "#,
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+    let mut relationships = graph
+        .edges
+        .iter()
+        .map(|edge| {
+            (
+                graph.nodes[edge.source].id.clone(),
+                graph.nodes[edge.target].id.clone(),
+                edge.label.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    relationships.sort();
+
+    assert!(!graph.directed);
+    assert_eq!(
+        graph.partition_names,
+        Some(vec![
+            "people".to_string(),
+            "projects".to_string(),
+            "regions".to_string()
+        ])
+    );
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node.partition))
+            .collect::<Vec<_>>(),
+        [
+            ("anna", Some(0)),
+            ("boris", Some(0)),
+            ("shop", Some(1)),
+            ("north", Some(2)),
+            ("south", Some(2)),
+        ]
+    );
+    assert_eq!(
+        relationships,
+        [
+            (
+                "anna".to_string(),
+                "shop".to_string(),
+                "работает над".to_string()
+            ),
+            (
+                "boris".to_string(),
+                "south".to_string(),
+                "живёт в".to_string()
+            ),
+            (
+                "shop".to_string(),
+                "north".to_string(),
+                "расположен в".to_string()
+            ),
+        ]
     );
 }
 
@@ -329,6 +475,46 @@ fn graph_reads_toml_directed_multigraph_and_keeps_parallel_edges() {
     assert_eq!(parallel_edges.len(), 2);
     assert!(parallel_edges[0].label.contains("SUP-001"));
     assert!(parallel_edges[1].label.contains("SUPPORT-002"));
+}
+
+#[test]
+fn graph_reads_toml_undirected_multigraph_and_keeps_parallel_edges() {
+    let root = parse_data(
+        r#"
+            [graph]
+            type = "undirected_multigraph"
+
+            [nodes]
+            first = "First"
+            second = "Second"
+
+            [[edges]]
+            source = "second"
+            target = "first"
+            relation = "first relation"
+
+            [[edges]]
+            source = "first"
+            target = "second"
+            relation = "second relation"
+        "#,
+        Some(DataFormat::Toml),
+    )
+    .unwrap()
+    .0;
+    let graph = build_relationship_graph(&root);
+
+    assert!(!graph.directed);
+    assert_eq!(graph.edges.len(), 2);
+    assert!(graph.edges.iter().all(|edge| edge.source < edge.target));
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .map(|edge| edge.label.as_str())
+            .collect::<Vec<_>>(),
+        ["first relation", "second relation"]
+    );
 }
 
 #[test]

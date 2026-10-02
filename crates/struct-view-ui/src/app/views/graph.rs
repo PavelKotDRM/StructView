@@ -81,7 +81,7 @@ pub(in crate::app) struct GraphRoutingLayout {
     node_positions: Vec<Pos2>,
     edge_paths: Vec<Vec<Pos2>>,
     edge_labels: Vec<Option<GraphEdgeLabelLayout>>,
-    bipartition_labels: Option<[String; 2]>,
+    partition_labels: Option<Vec<String>>,
     content_size: Vec2,
 }
 
@@ -146,7 +146,7 @@ pub(in crate::app) fn show_graph(
                 .iter()
                 .map(|position| *position + canvas_offset)
                 .collect::<Vec<_>>();
-            if let Some(partition_labels) = &routing.bipartition_labels {
+            if let Some(partition_labels) = &routing.partition_labels {
                 let header_font = FontId::proportional(13.0);
                 for (partition, label) in partition_labels.iter().enumerate() {
                     let center_x = canvas.left()
@@ -400,11 +400,14 @@ pub(in crate::app) fn show_graph(
 
 pub(super) fn build_graph_routing_layout(graph: &RelationshipGraph) -> GraphRoutingLayout {
     let node_count = graph.nodes.len();
-    let (node_positions, content_size) = if graph.bipartition.is_some() {
-        let mut partition_rows = [0; 2];
+    let (node_positions, content_size) = if let Some(partition_names) = &graph.partition_names {
+        let mut partition_rows = vec![0; partition_names.len()];
         let mut positions = vec![Pos2::ZERO; node_count];
         for (index, node) in graph.nodes.iter().enumerate() {
-            let partition = node.partition.unwrap_or(0).min(1);
+            let partition = node
+                .partition
+                .unwrap_or(0)
+                .min(partition_rows.len().saturating_sub(1));
             let row = partition_rows[partition];
             partition_rows[partition] += 1;
             positions[index] = Pos2::new(
@@ -412,10 +415,13 @@ pub(super) fn build_graph_routing_layout(graph: &RelationshipGraph) -> GraphRout
                 24.0 + row as f32 * GRAPH_STEP.y + GRAPH_NODE_SIZE.y / 2.0,
             );
         }
-        let rows = partition_rows[0].max(partition_rows[1]);
+        let rows = partition_rows.iter().copied().max().unwrap_or_default();
         (
             positions,
-            Vec2::new(2.0 * GRAPH_STEP.x + 48.0, rows as f32 * GRAPH_STEP.y + 48.0),
+            Vec2::new(
+                partition_rows.len() as f32 * GRAPH_STEP.x + 48.0,
+                rows as f32 * GRAPH_STEP.y + 48.0,
+            ),
         )
     } else {
         let columns = ((node_count as f32).sqrt().ceil() as usize).max(1);
@@ -493,7 +499,7 @@ pub(super) fn build_graph_routing_layout(graph: &RelationshipGraph) -> GraphRout
         node_positions,
         edge_paths: routed_edges,
         edge_labels,
-        bipartition_labels: graph.bipartition.clone(),
+        partition_labels: graph.partition_names.clone(),
         content_size,
     }
 }
@@ -519,7 +525,7 @@ fn relationship_graph_fingerprint(graph: &RelationshipGraph) -> u64 {
         edge.label.hash(&mut hasher);
     }
     graph.directed.hash(&mut hasher);
-    graph.bipartition.hash(&mut hasher);
+    graph.partition_names.hash(&mut hasher);
     hasher.finish()
 }
 

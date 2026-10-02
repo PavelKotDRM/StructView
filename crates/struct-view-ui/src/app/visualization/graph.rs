@@ -26,7 +26,7 @@ pub(in crate::app) struct RelationshipGraph {
     pub(in crate::app) nodes: Vec<GraphNode>,
     pub(in crate::app) edges: Vec<GraphEdge>,
     pub(in crate::app) directed: bool,
-    pub(in crate::app) bipartition: Option<[String; 2]>,
+    pub(in crate::app) partition_names: Option<Vec<String>>,
 }
 
 impl Default for RelationshipGraph {
@@ -35,14 +35,14 @@ impl Default for RelationshipGraph {
             nodes: Vec::new(),
             edges: Vec::new(),
             directed: true,
-            bipartition: None,
+            partition_names: None,
         }
     }
 }
 
 /// Построить граф по полям `id`, `_id`, `$id`, `$ref` и именам зависимостей.
 pub(in crate::app) fn build_relationship_graph(root: &JsonNode) -> RelationshipGraph {
-    if let Some(graph) = build_bipartite_graph(root) {
+    if let Some(graph) = build_partitioned_graph(root) {
         return graph;
     }
     if let Some((nodes, edges, directed)) = explicit_toml_multigraph_parts(root) {
@@ -86,14 +86,17 @@ pub(in crate::app) fn build_relationship_graph(root: &JsonNode) -> RelationshipG
     graph
 }
 
-fn build_bipartite_graph(root: &JsonNode) -> Option<RelationshipGraph> {
+fn build_partitioned_graph(root: &JsonNode) -> Option<RelationshipGraph> {
     if root.value_type != JsonValueType::Object {
         return None;
     }
     let metadata = object_child(root, "graph")?;
-    if metadata.value_type != JsonValueType::Object
-        || !object_scalar(metadata, &["type"])?.eq_ignore_ascii_case("bipartite")
-    {
+    if metadata.value_type != JsonValueType::Object {
+        return None;
+    }
+    let graph_type = object_scalar(metadata, &["type"])?.to_ascii_lowercase();
+    let is_bipartite = graph_type == "bipartite";
+    if !is_bipartite && graph_type != "multipartite" {
         return None;
     }
 
@@ -114,28 +117,29 @@ fn build_bipartite_graph(root: &JsonNode) -> Option<RelationshipGraph> {
         .iter()
         .filter(|partition| partition.value_type != JsonValueType::Comment)
         .collect::<Vec<_>>();
-    let [left_partition, right_partition] = partition_entries.as_slice() else {
-        return None;
-    };
-    if left_partition.value_type != JsonValueType::Array
-        || right_partition.value_type != JsonValueType::Array
+    if partition_entries.len() < 2
+        || (is_bipartite && partition_entries.len() != 2)
+        || partition_entries
+            .iter()
+            .any(|partition| partition.value_type != JsonValueType::Array)
     {
         return None;
     }
-    let left_name = left_partition.key.as_deref()?.to_string();
-    let right_name = right_partition.key.as_deref()?.to_string();
+    let partition_names = partition_entries
+        .iter()
+        .map(|partition| partition.key.as_deref().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
     let directed = object_child(metadata, "directed")
         .and_then(scalar_value)
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
 
     let mut graph = RelationshipGraph {
         directed,
-        bipartition: Some([left_name, right_name]),
+        partition_names: Some(partition_names),
         ..Default::default()
     };
     let mut aliases: HashMap<String, Vec<usize>> = HashMap::new();
-    for (partition_index, partition) in [*left_partition, *right_partition].into_iter().enumerate()
-    {
+    for (partition_index, partition) in partition_entries.into_iter().enumerate() {
         for member in &partition.children {
             let Some(id) = scalar_value(member) else {
                 continue;

@@ -69,23 +69,189 @@ document. Select a node to work with it or open its context menu.
 Use the view selector to switch between:
 
 - **Tree** — browse the nested document.
-- **Graph** — inspect links inferred from common identifiers such as `id`,
-  `_id`, and `$id`, and reference fields such as `$ref`, `user_id`, and
-  `depends_on`. These links are inferred; duplicate identifiers that make a
-  link ambiguous are not connected. Explicit JSON graphs with `graph`, `nodes`,
-  and `edges`, undirected JSON adjacency maps, weighted undirected YAML
-  matrices, and TOML catalogs with `[graph]`, `[entities]`, and
-  `[relations].edges` are also supported. Bipartite TOML graphs can define
-  `[partitions]`, `[labels]`, and `[relations].pairs`; the two groups are shown
-  in separate columns. TOML directed multigraphs with `[nodes]` and `[[edges]]`
-  preserve parallel edges. Hover a shortened edge label to see its full text.
-  Layout is calculated in the background, with a progress indicator while it is
-  being built.
+- **Graph** — inspect inferred or explicitly described relationships. The
+  supported graph shapes and examples are listed in [Graph input formats](#graph-input-formats).
+  Hover a shortened edge label to see its full text. Layout is calculated in
+  the background, with a progress indicator while it is being built.
 - **Table** — see flattened paths, values, and types. The table follows the
   active search filter and can be exported as CSV.
 - **Schema** — inspect JSON Schema or OpenAPI component and inline path
   schemas. For an ordinary data document, StructView infers a schema from the
   sample; that inferred view is not a formal contract.
+
+### Graph input formats
+
+The graph view recognizes graph-shaped data inside the supported JSON, JSON5,
+YAML, and TOML documents. It does not import standalone DOT, GraphML, or GEXF
+files. Select **View → Graph** after opening a document.
+
+#### Inferred entity relationships
+
+Objects with `id`, `_id`, or `$id` become graph nodes. Their display label is
+taken from `name`, `title`, or `label` when available. Fields such as `$ref`,
+`user_id`, `parent_id`, and `depends_on` create links to matching IDs. A
+reference may also be a JSON Pointer, such as `#/$defs/User`. Ambiguous
+duplicate IDs are deliberately left unlinked.
+
+```json
+{
+  "services": [
+    {"id": "api", "name": "API", "depends_on": ["db", "cache"]},
+    {"id": "db", "name": "Database"},
+    {"id": "cache", "name": "Cache"}
+  ]
+}
+```
+
+Objects under JSON Schema `definitions`, `$defs`, and `schemas` are also
+recognized as entities, so `$ref` links between them appear in the graph.
+
+#### Explicit node and edge lists
+
+Use an object with `graph`, `nodes`, and `edges`. Each node is an object with
+`id`, `_id`, or `$id`; `name`, `title`, or `label` sets its display label.
+Each edge uses `source` and `target` (or `from` and `to`). Edge labels may
+include `label`, `name`, or `relation`; `weight` or `value`; and optional
+`cardinality`, `contract`, or edge ID fields. `graph.weight_unit` is appended
+to numeric weights.
+
+```json
+{
+  "graph": {
+    "name": "Build pipeline",
+    "type": "weighted_directed",
+    "weight_unit": "ms"
+  },
+  "nodes": [
+    {"id": "compile", "label": "Compile"},
+    {"id": "test", "label": "Test"}
+  ],
+  "edges": [
+    {"source": "compile", "target": "test", "relation": "runs before", "weight": 120}
+  ]
+}
+```
+
+The `graph.type` values are `directed`, `weighted_directed`, `undirected`,
+`weighted_undirected`, `directed_multigraph`, and `undirected_multigraph`.
+Multigraph types keep parallel edges, including edges with the same endpoints.
+
+#### Undirected adjacency lists
+
+Set `graph.type` to `undirected` and provide an `adjacency` object whose keys
+are nodes and whose arrays list their neighbors. A neighbor that has no key of
+its own is still added as a node. Symmetric entries are deduplicated.
+
+```json
+{
+  "graph": {"type": "undirected"},
+  "adjacency": {
+    "anna": ["boris"],
+    "boris": ["anna"],
+    "isolated": []
+  }
+}
+```
+
+#### Weighted undirected adjacency matrices
+
+Set `graph.type` to `weighted_undirected`, provide `node_order`, and use a
+square, symmetric `adjacency_matrix` in that order. The graph view reads the
+upper triangle and ignores the diagonal. A numeric cell is an edge weight,
+including `0`; use `null` to mean that no edge exists. Thus, a zero-weight edge
+and a missing edge are distinct.
+
+```yaml
+graph:
+  type: weighted_undirected
+  weight_unit: km
+  node_order: [A, B, C]
+  adjacency_matrix:
+    - [0, 12, null]
+    - [12, 0, 0]
+    - [null, 0, 0]
+```
+
+This describes edges `A—B` with weight `12 km` and `B—C` with weight `0 km`;
+there is no edge between `A` and `C`.
+
+#### TOML entity-relation catalogs
+
+For named entities and labeled relations, provide all four metadata fields
+shown below. `edges` contains tuples `[source_id, target_id, label,
+cardinality?]`. Set `directed = false` for undirected relations.
+
+```toml
+[graph]
+name = "Store"
+directed = true
+entity_count = 2
+relation_count = 1
+
+[entities]
+customer = "Buyer"
+order = "Order"
+
+[relations]
+edges = [["customer", "order", "places", "1:N"]]
+```
+
+#### Bipartite and multipartite graphs
+
+List at least two named partitions as arrays of node IDs, then refer to those
+IDs in `[relations].pairs`. A pair may connect any two different partitions;
+same-partition pairs are ignored. IDs should be unique across all partitions.
+Use `type = "bipartite"` for exactly two partitions and
+`type = "multipartite"` for two or more partitions. Each partition is laid out
+in its own column. `directed` is optional and defaults to `false`.
+
+```toml
+[graph]
+type = "multipartite"
+directed = false
+
+[partitions]
+people = ["ada"]
+projects = ["compiler"]
+organizations = ["lab"]
+
+[labels]
+ada = "Ada"
+compiler = "Compiler"
+lab = "Research lab"
+
+[relations]
+pairs = [
+  ["ada", "compiler", "writes"],
+  ["compiler", "lab", "belongs to"],
+]
+```
+
+#### TOML multigraphs
+
+Use a `[nodes]` table mapping node IDs to labels and one `[[edges]]` table per
+edge. `graph.type` must be `directed_multigraph` or `undirected_multigraph`.
+Parallel edges are kept; edge records accept the same endpoint and label
+fields as the explicit node/edge-list form.
+
+```toml
+[graph]
+type = "directed_multigraph"
+
+[nodes]
+api = "API"
+database = "Database"
+
+[[edges]]
+source = "api"
+target = "database"
+relation = "reads"
+
+[[edges]]
+source = "api"
+target = "database"
+relation = "writes"
+```
 
 ## 3. Find a key, value, or path
 

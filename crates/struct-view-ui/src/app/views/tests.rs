@@ -327,26 +327,32 @@ fn graph_reads_undirected_json_adjacency_and_deduplicates_symmetric_links() {
 }
 
 #[test]
-fn bipartite_graph_renders_its_partitions_in_separate_columns() {
+fn multipartite_graph_renders_each_partition_in_a_separate_column() {
     let root = struct_view_core::parser::parse_data(
         r#"
             [graph]
-            name = "Employees and projects"
-            type = "bipartite"
+            name = "Employees, projects, and regions"
+            type = "multipartite"
             directed = false
 
             [partitions]
             employees = ["anna", "boris"]
             projects = ["shop", "analytics"]
+            regions = ["europe"]
 
             [labels]
             anna = "Anna"
             boris = "Boris"
             shop = "Shop"
             analytics = "Analytics"
+            europe = "Europe"
 
             [relations]
-            pairs = [["anna", "shop"], ["boris", "analytics"]]
+            pairs = [
+                ["anna", "shop"],
+                ["boris", "analytics"],
+                ["shop", "europe"],
+            ]
         "#,
         Some(DataFormat::Toml),
     )
@@ -357,7 +363,7 @@ fn bipartite_graph_renders_its_partitions_in_separate_columns() {
     let mut input = window_input();
     input.screen_rect = Some(egui::Rect::from_min_size(
         egui::Pos2::ZERO,
-        egui::vec2(1000.0, 400.0),
+        egui::vec2(1400.0, 400.0),
     ));
     let output = context.run_ui(input, |ui| {
         render_graph(
@@ -376,16 +382,19 @@ fn bipartite_graph_renders_its_partitions_in_separate_columns() {
     };
     let anna_x = text_center_x("Anna");
     let shop_x = text_center_x("Shop");
-    let employee_partition_visible = text_shapes(&output.shapes)
-        .iter()
-        .any(|shape| shape.galley.job.text == "employees");
-    let project_partition_visible = text_shapes(&output.shapes)
-        .iter()
-        .any(|shape| shape.galley.job.text == "projects");
+    let europe_x = text_center_x("Europe");
+    let visible_partitions = ["employees", "projects", "regions"]
+        .into_iter()
+        .all(|partition| {
+            text_shapes(&output.shapes)
+                .iter()
+                .any(|shape| shape.galley.job.text == partition)
+        });
     output.drop_without_applying_deltas();
 
     assert!(shop_x > anna_x + super::GRAPH_STEP.x / 2.0);
-    assert!(employee_partition_visible && project_partition_visible);
+    assert!(europe_x > shop_x + super::GRAPH_STEP.x / 2.0);
+    assert!(visible_partitions);
 }
 
 #[test]
