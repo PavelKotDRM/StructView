@@ -154,6 +154,7 @@ impl StructViewApp {
 
     fn restore_previous_document(&mut self, previous_document: PreviousDocumentState) {
         self.clear_history();
+        self.file_load_receiver = None;
         self.root = Some(previous_document.root);
         self.file_state = previous_document.file_state;
         self.comparison = None;

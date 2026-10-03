@@ -35,6 +35,66 @@ fn pair_diff_classifies_missing_changed_and_unchanged_values() {
 }
 
 #[test]
+fn pair_diff_descends_into_containers_when_a_third_document_has_another_type() {
+    use super::super::state::{ComparisonDocument, ComparisonState};
+    use struct_view_core::diff::compare_values;
+
+    let values = [
+        json!({"items": [1, 2], "unchanged": true}),
+        json!({"items": [1, 3], "unchanged": true}),
+        json!(null),
+    ];
+    let mut comparison = ComparisonState {
+        documents: (0..3)
+            .map(|index| ComparisonDocument {
+                path: format!("{index}.json").into(),
+                size_bytes: 0,
+                load_time_ms: 0,
+                format: DataFormat::Json,
+            })
+            .collect(),
+        differences: compare_values(&values),
+        left_index: 0,
+        right_index: 1,
+        pair_cache: None,
+        previous_document: None,
+    };
+    let context = egui::Context::default();
+    context
+        .run_ui(window_input(), |ui| {
+            super::show_diff(ui, &mut comparison, super::super::i18n::Locale::default());
+        })
+        .drop_without_applying_deltas();
+    let differences = &comparison.pair_cache.as_ref().unwrap().differences;
+    assert_eq!(differences.len(), 1);
+    assert_eq!(differences[0].path, "$.items[1]");
+    assert_eq!(differences[0].values, vec![Some(json!(2)), Some(json!(3))]);
+
+    comparison.left_index = 1;
+    comparison.right_index = 0;
+    context
+        .run_ui(window_input(), |ui| {
+            super::show_diff(ui, &mut comparison, super::super::i18n::Locale::default());
+        })
+        .drop_without_applying_deltas();
+    let differences = &comparison.pair_cache.as_ref().unwrap().differences;
+    assert_eq!(differences[0].values, vec![Some(json!(3)), Some(json!(2))]);
+
+    comparison.right_index = 2;
+    context
+        .run_ui(window_input(), |ui| {
+            super::show_diff(ui, &mut comparison, super::super::i18n::Locale::default());
+        })
+        .drop_without_applying_deltas();
+    let differences = &comparison.pair_cache.as_ref().unwrap().differences;
+    assert_eq!(differences.len(), 1);
+    assert_eq!(
+        differences[0].values,
+        vec![Some(values[1].clone()), Some(json!(null))]
+    );
+}
+
+#[test]
 fn comparison_colors_reflect_added_removed_and_changed_values() {
     let original = json!(1);
     let updated = json!(2);

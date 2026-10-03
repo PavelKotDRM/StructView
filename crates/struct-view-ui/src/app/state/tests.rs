@@ -543,6 +543,14 @@ fn closing_pair_diff_restores_the_previous_document() {
     assert_eq!(app.visualization, VisualizationMode::Table);
     assert!(app.can_undo());
 
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    app.file_load_receiver = Some(receiver);
+    app.load_comparison(vec![selected_document_path.clone()]);
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    app.file_load_receiver = Some(receiver);
+    app.close_file();
+    assert!(app.file_load_receiver.is_none());
+
     app.close_file();
     assert!(app.root.is_none());
     assert!(app.file_state.path.is_none());

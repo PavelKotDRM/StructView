@@ -153,8 +153,11 @@ pub(in crate::app) fn edit_child_at_path(
     let parent = find_parent(root, path);
     let is_index = parent.is_some_and(|parent| parent.value_type == JsonValueType::Array);
 
+    let current = find_node(root, path)
+        .ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?;
+    let new_key = new_key.filter(|key| Some(*key) != current.key.as_deref());
+    let new_key = new_key.map(str::trim);
     if let Some(new_key) = new_key {
-        let new_key = new_key.trim();
         if new_key.is_empty() {
             return Err("Имя поля не может быть пустым".to_string());
         }
@@ -318,6 +321,9 @@ fn parse_typed_child_value(
     }
     if *value_type == JsonValueType::Metadata && node.value_type != JsonValueType::Metadata {
         return Err("Для Metadata введите YAML-тег, например «!custom value»".to_string());
+    }
+    if *value_type == JsonValueType::Float && node.value_type != JsonValueType::Float {
+        return Err("Введите корректное вещественное число".to_string());
     }
     Ok(node)
 }

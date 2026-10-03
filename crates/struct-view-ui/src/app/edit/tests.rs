@@ -93,6 +93,46 @@ fn edit_rejects_invalid_literal() {
 }
 
 #[test]
+fn editing_existing_keys_preserves_whitespace_and_empty_names() {
+    for key in ["", " ", " padded ", "ordinary"] {
+        let source = serde_json::json!({key: 1}).to_string();
+        let mut root = parse_json(&source).unwrap();
+        let path = root.children[0].path.clone();
+        edit_child_at_path(
+            &mut root,
+            &path,
+            Some(key),
+            &JsonValueType::Number,
+            "2",
+            DataFormat::Json,
+        )
+        .unwrap();
+        assert_eq!(node_to_value(&root).unwrap(), serde_json::json!({key: 2}));
+        assert_eq!(root.children[0].path, path);
+    }
+}
+
+#[test]
+fn float_constructor_does_not_accept_a_string_in_place_of_a_number() {
+    let mut root = parse_json("{}").unwrap();
+    for input in ["nan", "+nan", "-nan", "inf", "+inf", "-inf"] {
+        assert!(
+            add_typed_child_at_path(
+                &mut root,
+                "",
+                "value",
+                &JsonValueType::Float,
+                input,
+                DataFormat::Yaml,
+            )
+            .is_err(),
+            "{input}"
+        );
+        assert!(root.children.is_empty());
+    }
+}
+
+#[test]
 fn typed_constructor_adds_values_without_format_literals() {
     for format in [
         DataFormat::Json,

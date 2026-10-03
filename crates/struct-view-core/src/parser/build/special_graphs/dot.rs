@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use graphviz_rust::dot_structures::{
     Attribute, Edge, EdgeTy, Graph, GraphAttributes, Id, NodeId, Stmt, Subgraph, Vertex,
@@ -16,9 +16,16 @@ struct DotDefaults {
 struct DotGraphBuilder {
     nodes: Vec<DotNode>,
     node_indices: HashMap<String, usize>,
-    edges: Vec<Value>,
-    graph_attributes: JsonObject,
+    edges: Vec<DotEdge>,
+    strict_edge_indices: Option<HashMap<(String, String), usize>>,
+    directed: bool,
     subgraphs: Vec<Value>,
+}
+
+struct DotEdge {
+    source: String,
+    target: String,
+    attributes: JsonObject,
 }
 
 struct DotNode {
@@ -26,13 +33,28 @@ struct DotNode {
     attributes: JsonObject,
 }
 
+#[derive(Default)]
+struct DotMembers {
+    nodes: Vec<String>,
+    seen: HashSet<String>,
+}
+
+impl DotMembers {
+    fn insert(&mut self, id: String) {
+        if self.seen.insert(id.clone()) {
+            self.nodes.push(id);
+        }
+    }
+}
+
 impl DotGraphBuilder {
-    fn new() -> Self {
+    fn new(directed: bool, strict: bool) -> Self {
         Self {
             nodes: Vec::new(),
             node_indices: HashMap::new(),
             edges: Vec::new(),
-            graph_attributes: JsonObject::new(),
+            strict_edge_indices: strict.then(HashMap::new),
+            directed,
             subgraphs: Vec::new(),
         }
     }
@@ -42,14 +64,14 @@ impl DotGraphBuilder {
         statements: &[Stmt],
         defaults: &mut DotDefaults,
         graph_attributes: &mut JsonObject,
-        members: &mut Vec<String>,
+        members: &mut DotMembers,
     ) {
         for statement in statements {
             match statement {
                 Stmt::Node(node) => {
                     let id = dot_id(&node.id.0);
                     self.add_node(&id, &defaults.node, &node.attributes);
-                    push_unique(members, id);
+                    members.insert(id);
                 }
                 Stmt::Edge(edge) => {
                     self.process_edge(edge, defaults, members);
@@ -70,7 +92,7 @@ impl DotGraphBuilder {
                 },
                 Stmt::Subgraph(subgraph) => {
                     for id in self.process_subgraph(subgraph, defaults) {
-                        push_unique(members, id);
+                        members.insert(id);
                     }
                 }
             }
@@ -84,7 +106,7 @@ impl DotGraphBuilder {
     ) -> Vec<String> {
         let mut defaults = parent_defaults.clone();
         let mut attributes = JsonObject::new();
-        let mut members = Vec::new();
+        let mut members = DotMembers::default();
         self.process_statements(
             &subgraph.stmts,
             &mut defaults,
@@ -96,14 +118,14 @@ impl DotGraphBuilder {
         entry.insert("id".to_string(), Value::String(dot_id(&subgraph.id)));
         entry.insert(
             "nodes".to_string(),
-            Value::Array(members.iter().cloned().map(Value::String).collect()),
+            Value::Array(members.nodes.iter().cloned().map(Value::String).collect()),
         );
         entry.insert("attributes".to_string(), Value::Object(attributes));
         self.subgraphs.push(Value::Object(entry));
-        members
+        members.nodes
     }
 
-    fn process_edge(&mut self, edge: &Edge, defaults: &DotDefaults, members: &mut Vec<String>) {
+    fn process_edge(&mut self, edge: &Edge, defaults: &DotDefaults, members: &mut DotMembers) {
         let vertices = match &edge.ty {
             EdgeTy::Pair(source, target) => vec![source, target],
             EdgeTy::Chain(vertices) => vertices.iter().collect(),
@@ -114,20 +136,29 @@ impl DotGraphBuilder {
             .collect::<Vec<_>>();
         let mut attributes = defaults.edge.clone();
         merge_dot_attributes(&mut attributes, &edge.attributes);
-        let edge_id = attributes
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-
         for pair in groups.windows(2) {
             for source in &pair[0] {
                 for target in &pair[1] {
-                    self.edges.push(edge_record(
-                        source.clone(),
-                        target.clone(),
-                        edge_id.clone(),
-                        attributes.clone(),
-                    ));
+                    if let Some(indices) = &mut self.strict_edge_indices {
+                        let key = if self.directed || source <= target {
+                            (source.clone(), target.clone())
+                        } else {
+                            (target.clone(), source.clone())
+                        };
+                        if let Some(index) = indices.get(&key) {
+                            merge_dot_attributes(
+                                &mut self.edges[*index].attributes,
+                                &edge.attributes,
+                            );
+                            continue;
+                        }
+                        indices.insert(key, self.edges.len());
+                    }
+                    self.edges.push(DotEdge {
+                        source: source.clone(),
+                        target: target.clone(),
+                        attributes: attributes.clone(),
+                    });
                 }
             }
         }
@@ -137,14 +168,14 @@ impl DotGraphBuilder {
         &mut self,
         vertex: &Vertex,
         defaults: &DotDefaults,
-        members: &mut Vec<String>,
+        members: &mut DotMembers,
     ) -> Vec<String> {
         let ids = match vertex {
             Vertex::N(node) => vec![self.add_node(&dot_node_id(node), &defaults.node, &[])],
             Vertex::S(subgraph) => self.process_subgraph(subgraph, defaults),
         };
         for id in &ids {
-            push_unique(members, id.clone());
+            members.insert(id.clone());
         }
         ids
     }
@@ -175,18 +206,16 @@ pub(super) fn parse(input: &str) -> Result<Value, String> {
         Graph::DiGraph { id, strict, stmts } => (dot_id(&id), true, strict, stmts),
     };
 
-    let mut builder = DotGraphBuilder::new();
+    let mut builder = DotGraphBuilder::new(directed, strict);
     let mut defaults = DotDefaults::default();
-    let mut members = Vec::new();
-    let mut graph_attributes = std::mem::take(&mut builder.graph_attributes);
+    let mut members = DotMembers::default();
+    let mut graph_attributes = JsonObject::new();
     builder.process_statements(
         &statements,
         &mut defaults,
         &mut graph_attributes,
         &mut members,
     );
-    builder.graph_attributes = graph_attributes;
-
     let mut metadata = Map::new();
     metadata.insert("strict".to_string(), Value::Bool(strict));
     if !builder.subgraphs.is_empty() {
@@ -194,20 +223,32 @@ pub(super) fn parse(input: &str) -> Result<Value, String> {
     }
     Ok(graph_document(
         Some(name),
-        if directed {
-            "directed_multigraph"
-        } else {
-            "undirected_multigraph"
+        match (directed, strict) {
+            (true, true) => "directed",
+            (false, true) => "undirected",
+            (true, false) => "directed_multigraph",
+            (false, false) => "undirected_multigraph",
         },
         "dot",
-        builder.graph_attributes,
+        graph_attributes,
         metadata,
         builder
             .nodes
             .into_iter()
             .map(|node| node_record(node.id, node.attributes))
             .collect(),
-        builder.edges,
+        builder
+            .edges
+            .into_iter()
+            .map(|edge| {
+                let id = edge
+                    .attributes
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                edge_record(edge.source, edge.target, id, edge.attributes)
+            })
+            .collect(),
     ))
 }
 
@@ -217,9 +258,11 @@ fn dot_node_id(node: &NodeId) -> String {
 
 fn dot_id(id: &Id) -> String {
     match id {
-        Id::Html(value) | Id::Escaped(value) | Id::Plain(value) | Id::Anonymous(value) => {
-            value.clone()
-        }
+        Id::Escaped(value) => value[1..value.len() - 1]
+            .replace("\\\r\n", "")
+            .replace("\\\n", "")
+            .replace("\\\"", "\""),
+        Id::Html(value) | Id::Plain(value) | Id::Anonymous(value) => value.clone(),
     }
 }
 
@@ -241,10 +284,4 @@ fn insert_dot_attribute(target: &mut JsonObject, attribute: &Attribute) {
         Value::String(value)
     };
     target.insert(key, value);
-}
-
-fn push_unique(items: &mut Vec<String>, item: String) {
-    if !items.contains(&item) {
-        items.push(item);
-    }
 }

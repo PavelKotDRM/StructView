@@ -40,10 +40,8 @@ pub(super) fn replace_node_at_path(
 ) -> bool {
     if node.path == path {
         let mut updated = replacement.clone();
-        updated.key = new_key
-            .map(|key| key.trim().to_string())
-            .or_else(|| node.key.clone());
-        updated.yaml_key = if new_key.is_some_and(|key| Some(key.trim()) != node.key.as_deref()) {
+        updated.key = new_key.map(str::to_string).or_else(|| node.key.clone());
+        updated.yaml_key = if new_key.is_some_and(|key| Some(key) != node.key.as_deref()) {
             None
         } else {
             node.yaml_key.clone()

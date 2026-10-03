@@ -522,6 +522,180 @@ fn graphml_rejects_mixed_edge_directions() {
 }
 
 #[test]
+fn xml_graphs_reject_attribute_name_collisions_instead_of_losing_values() {
+    let sources = [
+        (
+            DataFormat::GraphMl,
+            r#"<graphml>
+              <key id="first" for="node" attr.name="score"/>
+              <key id="second" for="node" attr.name="score"/>
+              <graph edgedefault="directed"><node id="a">
+                <data key="first">one</data><data key="second">two</data>
+              </node></graph>
+            </graphml>"#,
+        ),
+        (
+            DataFormat::Gexf,
+            r#"<gexf><graph>
+              <attributes class="node">
+                <attribute id="first" title="score"/>
+                <attribute id="second" title="score"/>
+              </attributes>
+              <nodes><node id="a"><attvalues>
+                <attvalue for="first" value="one"/>
+                <attvalue for="second" value="two"/>
+              </attvalues></node></nodes>
+            </graph></gexf>"#,
+        ),
+    ];
+    for (format, source) in sources {
+        assert!(parse_data(source, Some(format)).is_err(), "{format}");
+    }
+}
+
+#[test]
+fn xml_attribute_defaults_are_overridden_only_by_the_same_key() {
+    let graphml = r#"<graphml>
+        <key id="score" for="node" attr.name="score"><default>default</default></key>
+        <graph edgedefault="directed"><node id="a"><data key="score">explicit</data></node></graph>
+    </graphml>"#;
+    let gexf = r#"<gexf><graph>
+        <attributes class="node"><attribute id="score" title="score"><default>default</default></attribute></attributes>
+        <nodes><node id="a"><attvalues><attvalue for="score" value="explicit"/></attvalues></node></nodes>
+    </graph></gexf>"#;
+    for (format, source) in [(DataFormat::GraphMl, graphml), (DataFormat::Gexf, gexf)] {
+        let root = parse_data(source, Some(format)).unwrap().0;
+        assert_eq!(
+            node_to_value(&root).unwrap()["nodes"][0]["attributes"]["score"],
+            "explicit"
+        );
+    }
+
+    let colliding_default = graphml.replace(
+        "<graph ",
+        r#"<key id="other" for="node" attr.name="score"><default>other</default></key><graph "#,
+    );
+    assert!(parse_data(&colliding_default, Some(DataFormat::GraphMl)).is_err());
+}
+
+#[test]
+fn gexf_rejects_conflicting_native_and_user_attributes() {
+    let source = r#"<gexf><graph>
+        <attributes class="node"><attribute id="label" title="label"/></attributes>
+        <nodes><node id="a" label="native"><attvalues><attvalue for="label" value="data"/></attvalues></node></nodes>
+    </graph></gexf>"#;
+    assert!(parse_data(source, Some(DataFormat::Gexf)).is_err());
+}
+
+#[test]
+fn xml_extension_metadata_does_not_overwrite_user_data() {
+    for (format, source) in [
+        (
+            DataFormat::GraphMl,
+            r#"<graphml><graph edgedefault="directed">
+                <node id="a" color="red"><data key="xml_attributes">user data</data></node>
+            </graph></graphml>"#,
+        ),
+        (
+            DataFormat::GraphMl,
+            r#"<graphml><graph edgedefault="directed">
+                <node id="a"><data key="xml_extensions">user data</data><extra/></node>
+            </graph></graphml>"#,
+        ),
+        (
+            DataFormat::Gexf,
+            r#"<gexf><graph><nodes><node id="a">
+                <attvalues><attvalue for="xml_extensions" value="user data"/></attvalues><extra/>
+            </node></nodes></graph></gexf>"#,
+        ),
+    ] {
+        assert!(parse_data(source, Some(format)).is_err(), "{format}");
+    }
+    let source = r#"<graphml><graph edgedefault="directed">
+        <node id="a"><data key="xml_extensions">user data</data></node>
+    </graph></graphml>"#;
+    let root = parse_data(source, Some(DataFormat::GraphMl)).unwrap().0;
+    assert_eq!(
+        node_to_value(&root).unwrap()["nodes"][0]["attributes"]["xml_extensions"],
+        "user data"
+    );
+}
+
+#[test]
+fn strict_dot_graphs_merge_repeated_edges_without_reapplying_defaults() {
+    for (source, format_type) in [
+        (
+            r#"strict digraph { edge [color=red]; a -> b [weight=1]; edge [color=blue]; a -> b [label="updated"]; }"#,
+            "directed",
+        ),
+        (
+            r#"strict graph { edge [color=red]; a -- b [weight=1]; edge [color=blue]; b -- a [label="updated"]; }"#,
+            "undirected",
+        ),
+    ] {
+        let root = parse_data(source, Some(DataFormat::Dot)).unwrap().0;
+        let value = node_to_value(&root).unwrap();
+        assert_eq!(value["graph"]["type"], format_type);
+        let edges = value["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["attributes"]["color"], "red");
+        assert_eq!(edges[0]["label"], "updated");
+        assert_eq!(edges[0]["weight"], 1);
+    }
+    let root = parse_data("digraph { a -> b; a -> b; }", Some(DataFormat::Dot))
+        .unwrap()
+        .0;
+    assert_eq!(
+        node_to_value(&root).unwrap()["edges"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn dot_quoted_ids_and_attributes_are_normalized_without_losing_escapes() {
+    let root = parse_data(
+        r#"digraph "network" {
+            a [label="say \"hello\"", path="C:\data", escaped="line\nnext"];
+            "a" -> "b" [id="edge-1", weight="2"];
+            b;
+        }"#,
+        Some(DataFormat::Dot),
+    )
+    .unwrap()
+    .0;
+    let value = node_to_value(&root).unwrap();
+    assert_eq!(value["graph"]["name"], "network");
+    assert_eq!(value["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(value["nodes"][0]["id"], "a");
+    assert_eq!(value["nodes"][0]["label"], "say \"hello\"");
+    assert_eq!(value["nodes"][0]["attributes"]["path"], r"C:\data");
+    assert_eq!(value["nodes"][0]["attributes"]["escaped"], r"line\nnext");
+    assert_eq!(value["edges"][0]["source"], "a");
+    assert_eq!(value["edges"][0]["target"], "b");
+    assert_eq!(value["edges"][0]["edge_id"], "edge-1");
+    assert_eq!(value["edges"][0]["weight"], 2);
+}
+
+#[test]
+fn dot_subgraph_members_keep_first_seen_order_and_exclude_duplicates() {
+    let root = parse_data(
+        "digraph { subgraph cluster { a; b; a -> b; b -> c; a; } }",
+        Some(DataFormat::Dot),
+    )
+    .unwrap()
+    .0;
+    let value = node_to_value(&root).unwrap();
+    assert_eq!(
+        value["graph"]["subgraphs"][0]["nodes"],
+        serde_json::json!(["a", "b", "c"])
+    );
+    assert_eq!(value["edges"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn graphml_ignores_external_doctypes_but_rejects_internal_subsets() {
     let source = r#"
         <!DOCTYPE graphml [<!ENTITY node_id "a">]>

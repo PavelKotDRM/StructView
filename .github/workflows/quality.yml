@@ -1,6 +1,8 @@
 name: Quality checks
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -44,7 +46,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run tests
-        run: cargo test --locked --all-targets --all-features
+        run: cargo test --locked --workspace --all-targets --all-features
+
+      - name: Run documentation tests
+        run: cargo test --locked --workspace --all-features --doc
 
       - name: Run Clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

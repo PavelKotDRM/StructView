@@ -208,6 +208,8 @@ from the JSON value `null`. Switch between the all-files comparison table and a
 side-by-side diff; when more than two files are loaded, choose either version
 from the diff selectors. The comparison is read-only; use `File -> Open…` or
 `File -> Close file` to return to the regular document view.
+The selected pair is compared recursively independently of the other loaded
+files, even when another file has a different container type.
 
 ### Format behavior and limitations
 
@@ -230,6 +232,12 @@ Comments are normalized to standalone lines at the start of the output;
 original comment positions and styles, YAML anchors, and formatting are not
 preserved. Conversion to strict JSON drops comments, and trailing commas are
 normalized.
+
+Editing an existing field preserves its exact name, including empty names and
+leading or trailing spaces. Newly entered field names are trimmed and must not
+be empty. The float constructor rejects text that the selected format would
+interpret as a string. CSV exports use the same atomic file replacement as
+document saves, so a failed write does not truncate an existing file.
 
 ### Copying structures between files
 
@@ -398,13 +406,16 @@ Exit codes:
 Check formatting, run tests, and perform static analysis:
 
 ```sh
-cargo fmt --all --check
-cargo test --workspace --all-targets
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
+cargo test --locked --workspace --all-targets --all-features
+cargo test --locked --workspace --all-features --doc
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 ```
 
-GitHub Actions can run the `Quality checks` workflow manually from the Actions
-tab. Pushing a version tag that matches `Cargo.toml`, for example `v0.1.0`,
+GitHub Actions runs the `Quality checks` workflow on pushes and pull requests;
+it can also be started manually from the Actions tab. Checks cover every
+workspace crate, CLI integration tests, and documentation examples.
+Pushing a version tag that matches `Cargo.toml`, for example `v0.1.0`,
 builds binaries for Linux, Windows, and macOS and publishes them as a GitHub
 Release.
 

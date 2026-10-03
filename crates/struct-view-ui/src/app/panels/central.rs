@@ -183,7 +183,7 @@ impl StructViewApp {
             {
                 path.set_extension("csv");
             }
-            match std::fs::write(&path, content) {
+            match struct_view_core::files::write_text_atomic(&path, &content) {
                 Ok(()) => self.show_toast(self.locale.text(TextKey::TableExported)),
                 Err(error) => self.show_error(&self.locale.save_error(&error.to_string())),
             }

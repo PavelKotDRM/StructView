@@ -69,8 +69,8 @@ pub(super) fn parse_graphml(input: &str) -> Result<Value, String> {
             return Err(format!("ID узла GraphML повторяется: {id}"));
         }
         let mut attributes = graphml_data(element, "node", &keys, &keys_by_id)?;
-        add_xml_attributes(&mut attributes, element, &["id"]);
-        add_xml_extensions(&mut attributes, element, &["data"]);
+        add_xml_attributes(&mut attributes, element, &["id"])?;
+        add_xml_extensions(&mut attributes, element, &["data"])?;
         nodes.push(node_record(id, attributes));
     }
 
@@ -96,8 +96,8 @@ pub(super) fn parse_graphml(input: &str) -> Result<Value, String> {
             &mut attributes,
             element,
             &["id", "source", "target", "directed"],
-        );
-        add_xml_extensions(&mut attributes, element, &["data"]);
+        )?;
+        add_xml_extensions(&mut attributes, element, &["data"])?;
         edges.push(edge_record(
             source,
             target,
@@ -108,8 +108,8 @@ pub(super) fn parse_graphml(input: &str) -> Result<Value, String> {
     let directed = uniform_direction(directions, default_directed, "GraphML")?;
 
     let mut graph_attributes = graphml_data(*graph, "graph", &keys, &keys_by_id)?;
-    add_xml_attributes(&mut graph_attributes, *graph, &["id", "edgedefault"]);
-    add_xml_extensions(&mut graph_attributes, *graph, &["node", "edge", "data"]);
+    add_xml_attributes(&mut graph_attributes, *graph, &["id", "edgedefault"])?;
+    add_xml_extensions(&mut graph_attributes, *graph, &["node", "edge", "data"])?;
 
     let mut metadata = Map::new();
     metadata.insert(
@@ -167,10 +167,10 @@ pub(super) fn parse_gexf(input: &str) -> Result<Value, String> {
         }
         let mut attributes = gexf_data(element, "node", &definitions, &definitions_by_key)?;
         if let Some(label) = element.attribute("label") {
-            attributes.insert("label".to_string(), Value::String(label.to_string()));
+            insert_native_attribute(&mut attributes, "label", Value::String(label.to_string()))?;
         }
-        add_xml_attributes(&mut attributes, element, &["id", "label"]);
-        add_xml_extensions(&mut attributes, element, &["attvalues"]);
+        add_xml_attributes(&mut attributes, element, &["id", "label"])?;
+        add_xml_extensions(&mut attributes, element, &["attvalues"])?;
         nodes.push(node_record(id, attributes));
     }
 
@@ -197,17 +197,17 @@ pub(super) fn parse_gexf(input: &str) -> Result<Value, String> {
 
         let mut attributes = gexf_data(element, "edge", &definitions, &definitions_by_key)?;
         if let Some(label) = element.attribute("label") {
-            attributes.insert("label".to_string(), Value::String(label.to_string()));
+            insert_native_attribute(&mut attributes, "label", Value::String(label.to_string()))?;
         }
         if let Some(weight) = element.attribute("weight") {
-            attributes.insert("weight".to_string(), parse_weight(weight)?);
+            insert_native_attribute(&mut attributes, "weight", parse_weight(weight)?)?;
         }
         add_xml_attributes(
             &mut attributes,
             element,
             &["id", "source", "target", "label", "weight"],
-        );
-        add_xml_extensions(&mut attributes, element, &["attvalues"]);
+        )?;
+        add_xml_extensions(&mut attributes, element, &["attvalues"])?;
         edges.push(edge_record(
             source,
             target,
@@ -217,19 +217,13 @@ pub(super) fn parse_gexf(input: &str) -> Result<Value, String> {
     }
     let directed = uniform_direction(directions, default_directed, "GEXF")?;
 
-    let mut graph_attributes = Map::new();
-    add_xml_attributes(&mut graph_attributes, *graph, &["defaultedgetype"]);
-    graph_attributes.extend(gexf_data(
-        *graph,
-        "graph",
-        &definitions,
-        &definitions_by_key,
-    )?);
+    let mut graph_attributes = gexf_data(*graph, "graph", &definitions, &definitions_by_key)?;
+    add_xml_attributes(&mut graph_attributes, *graph, &["defaultedgetype"])?;
     add_xml_extensions(
         &mut graph_attributes,
         *graph,
         &["attributes", "nodes", "edges"],
-    );
+    )?;
 
     let mut metadata = Map::new();
     metadata.insert(
@@ -296,11 +290,18 @@ fn graphml_data(
     keys_by_id: &HashMap<&str, &GraphMlKey>,
 ) -> Result<JsonObject, String> {
     let mut attributes = JsonObject::new();
+    let mut names = HashMap::new();
     for key in keys {
         if (key.domain == domain || key.domain == "all")
             && let Some(value) = &key.default
         {
-            attributes.insert(key.name.clone(), value.clone());
+            insert_data_attribute(
+                &mut attributes,
+                &mut names,
+                &key.name,
+                &key.id,
+                value.clone(),
+            )?;
         }
     }
 
@@ -326,15 +327,18 @@ fn graphml_data(
         let name = definition.map_or(key_id.as_str(), |definition| definition.name.as_str());
         let value_type = definition.map_or("string", |definition| definition.value_type.as_str());
         let value = text_content(data);
-        attributes.insert(
-            name.to_string(),
+        insert_data_attribute(
+            &mut attributes,
+            &mut names,
+            name,
+            &key_id,
             parse_typed_value(&value, value_type, &key_id)?,
-        );
+        )?;
         if element_children(data).next().is_some() {
             rich_data.push(xml_element_value(data));
         }
     }
-    append_xml_values(&mut attributes, "xml_extensions", rich_data);
+    append_xml_values(&mut attributes, "xml_extensions", rich_data)?;
     Ok(attributes)
 }
 
@@ -392,11 +396,18 @@ fn gexf_data(
     definitions_by_key: &HashMap<String, &GexfAttribute>,
 ) -> Result<JsonObject, String> {
     let mut attributes = JsonObject::new();
+    let mut names = HashMap::new();
     for definition in definitions {
         if definition.domain == domain
             && let Some(value) = &definition.default
         {
-            attributes.insert(definition.title.clone(), value.clone());
+            insert_data_attribute(
+                &mut attributes,
+                &mut names,
+                &definition.title,
+                &definition.id,
+                value.clone(),
+            )?;
         }
     }
     let mut seen = HashSet::new();
@@ -415,13 +426,52 @@ fn gexf_data(
                 .attribute("value")
                 .map(str::to_string)
                 .unwrap_or_else(|| text_content(entry));
-            attributes.insert(
-                name.to_string(),
+            insert_data_attribute(
+                &mut attributes,
+                &mut names,
+                name,
+                &id,
                 parse_typed_value(&value, value_type, &id)?,
-            );
+            )?;
         }
     }
     Ok(attributes)
+}
+
+fn insert_data_attribute(
+    attributes: &mut JsonObject,
+    names: &mut HashMap<String, String>,
+    name: &str,
+    id: &str,
+    value: Value,
+) -> Result<(), String> {
+    if let Some(previous_id) = names.get(name)
+        && previous_id != id
+    {
+        return Err(format!(
+            "Имя атрибута {name:?} совпадает для разных XML-ключей: {previous_id} и {id}"
+        ));
+    }
+    names.insert(name.to_string(), id.to_string());
+    attributes.insert(name.to_string(), value);
+    Ok(())
+}
+
+fn insert_native_attribute(
+    attributes: &mut JsonObject,
+    name: &str,
+    value: Value,
+) -> Result<(), String> {
+    if attributes
+        .get(name)
+        .is_some_and(|existing| existing != &value)
+    {
+        return Err(format!(
+            "Атрибут GEXF {name:?} имеет разные значения в XML и пользовательских данных"
+        ));
+    }
+    attributes.insert(name.to_string(), value);
+    Ok(())
 }
 
 fn gexf_attribute_value(attribute: &GexfAttribute) -> Value {
@@ -608,7 +658,11 @@ fn strip_external_doctype(input: &str) -> Result<Cow<'_, str>, String> {
     Ok(Cow::Borrowed(input))
 }
 
-fn add_xml_attributes(attributes: &mut JsonObject, element: Node<'_, '_>, excluded: &[&str]) {
+fn add_xml_attributes(
+    attributes: &mut JsonObject,
+    element: Node<'_, '_>,
+    excluded: &[&str],
+) -> Result<(), String> {
     let mut xml_attributes = Map::new();
     for attribute in element.attributes() {
         if excluded.contains(&attribute.name()) {
@@ -621,28 +675,48 @@ fn add_xml_attributes(attributes: &mut JsonObject, element: Node<'_, '_>, exclud
         xml_attributes.insert(name, Value::String(attribute.value().to_string()));
     }
     if !xml_attributes.is_empty() {
+        if attributes.contains_key("xml_attributes") {
+            return Err(
+                "XML-метаданные xml_attributes конфликтуют с пользовательскими данными".to_string(),
+            );
+        }
         attributes.insert("xml_attributes".to_string(), Value::Object(xml_attributes));
     }
+    Ok(())
 }
 
-fn add_xml_extensions(attributes: &mut JsonObject, element: Node<'_, '_>, excluded: &[&str]) {
+fn add_xml_extensions(
+    attributes: &mut JsonObject,
+    element: Node<'_, '_>,
+    excluded: &[&str],
+) -> Result<(), String> {
     let extensions = element_children(element)
         .filter(|child| !excluded.contains(&child.tag_name().name()))
         .map(xml_element_value)
         .collect::<Vec<_>>();
-    append_xml_values(attributes, "xml_extensions", extensions);
+    append_xml_values(attributes, "xml_extensions", extensions)
 }
 
-fn append_xml_values(attributes: &mut JsonObject, key: &str, values: Vec<Value>) {
+fn append_xml_values(
+    attributes: &mut JsonObject,
+    key: &str,
+    values: Vec<Value>,
+) -> Result<(), String> {
     if values.is_empty() {
-        return;
+        return Ok(());
     }
     match attributes.get_mut(key) {
         Some(Value::Array(existing)) => existing.extend(values),
-        _ => {
+        None => {
             attributes.insert(key.to_string(), Value::Array(values));
         }
+        Some(_) => {
+            return Err(format!(
+                "XML-метаданные {key} конфликтуют с пользовательскими данными"
+            ));
+        }
     }
+    Ok(())
 }
 
 fn xml_element_value(element: Node<'_, '_>) -> Value {

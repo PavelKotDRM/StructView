@@ -1,7 +1,7 @@
 use super::*;
 
 use struct_view_core::parser::{DataFormat, parse_data};
-use struct_view_core::search::SearchState;
+use struct_view_core::search::{SearchOptions, SearchState};
 
 #[test]
 fn table_paths_and_csv_preserve_nested_fields() {
@@ -792,4 +792,49 @@ fn schema_key_value_search_matches_the_same_field_and_type() {
             .collect::<Vec<_>>(),
         ["$.name"]
     );
+}
+
+#[test]
+fn inferred_schema_keeps_field_names_through_yaml_tags() {
+    let root = parse_data(
+        "secret: !custom value\nprofile: !custom {name: Ada}",
+        Some(DataFormat::Yaml),
+    )
+    .unwrap()
+    .0;
+    let diagram = build_schema_diagram(&root).unwrap();
+    let row = diagram
+        .rows
+        .iter()
+        .find(|row| row.path == "$.secret")
+        .unwrap();
+    assert_eq!(row.key.as_deref(), Some("secret"));
+    assert_eq!(row.required, Some(true));
+    let mut search = SearchState::default();
+    search.search_with_options(
+        &root,
+        "secret",
+        SearchOptions {
+            search_keys: true,
+            search_values: false,
+            search_paths: false,
+            exact_match: true,
+            ..Default::default()
+        },
+    );
+    let indices = schema_visible_indices(&diagram, &search).unwrap();
+    assert_eq!(indices.len(), 1);
+    assert_eq!(diagram.rows[indices[0]].path, "$.secret");
+    let profile = diagram
+        .rows
+        .iter()
+        .find(|row| row.path == "$.profile")
+        .unwrap();
+    assert_eq!(profile.key.as_deref(), Some("profile"));
+    let name = diagram
+        .rows
+        .iter()
+        .find(|row| row.path == "$.profile.name")
+        .unwrap();
+    assert_eq!(name.key.as_deref(), Some("name"));
 }

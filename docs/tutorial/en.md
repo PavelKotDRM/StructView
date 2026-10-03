@@ -92,7 +92,8 @@ Imported DOT, GraphML, and GEXF files are read-only. The importer converts them
 to a normalized `graph`/`nodes`/`edges` document while retaining graph
 direction, node IDs and labels, parallel edges, weights, and supported
 attributes. Imported graphs use `directed_multigraph` or
-`undirected_multigraph` so duplicate edges are not lost. GraphML key
+`undirected_multigraph` so duplicate edges are not lost, except for strict DOT
+graphs, which use `directed` or `undirected`. GraphML key
 definitions and GEXF attribute definitions are kept in the `graph` metadata;
 other XML extension elements are kept under `xml_extensions`.
 
@@ -100,6 +101,10 @@ DOT graph attributes and node/edge attributes are retained, and chained edges
 are expanded into individual edges. Subgraphs are flattened for graph display;
 their IDs, member nodes, and attributes are kept in `graph.subgraphs`. Source
 comments and formatting are not retained.
+Quoted DOT IDs and attributes are decoded without retaining surrounding
+quotes; Graphviz label escapes such as `\n` remain intact. In strict graphs,
+repeated edges update the existing edge's explicitly supplied attributes
+instead of creating parallel edges or reapplying changed defaults.
 
 GraphML and GEXF inputs must contain one graph with a uniform edge direction.
 Mixed directed and undirected edges are rejected. Nested GraphML graphs and
@@ -108,6 +113,12 @@ without loading a DTD; internal DTD entities are not supported. GEXF `mutual`
 edges are converted to undirected edges; dynamic timing and visualization
 extensions are retained as metadata, but the graph view displays a static
 topology.
+XML attributes whose distinct keys map to the same output name are rejected
+instead of silently overwriting data. An explicit value can override the
+default for its own key. GEXF native `label` or `weight` values must not
+conflict with user-defined attributes of the same name.
+Generated `xml_attributes` and `xml_extensions` metadata must not overwrite
+user-defined values with those names; such conflicts are also reported.
 
 Convert an imported graph from **File → Convert to → JSON, YAML, or TOML** (or
 JSON5). The source file stays open and is not overwritten. The CLI can write

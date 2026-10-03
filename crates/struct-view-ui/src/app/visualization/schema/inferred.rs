@@ -59,20 +59,24 @@ fn collect_inferred_rows(
     if node.value_type == JsonValueType::Comment {
         return;
     }
-    if node.value_type == JsonValueType::Metadata {
-        for child in &node.children {
-            if child.value_type != JsonValueType::Comment {
-                collect_inferred_rows(child, path, parent_path, rows, object_counts);
-            }
-        }
-        return;
+    let key = node.key.as_deref();
+    let mut node = node;
+    while node.value_type == JsonValueType::Metadata {
+        let Some(value) = node
+            .children
+            .iter()
+            .find(|child| child.value_type != JsonValueType::Comment)
+        else {
+            return;
+        };
+        node = value;
     }
 
     let row = rows.entry(path.to_string()).or_default();
     row.types
         .insert(schema_node_type(&node.value_type).to_string());
     if let Some(parent_path) = parent_path {
-        row.key = node.key.clone();
+        row.key = key.map(str::to_string);
         row.occurrences += 1;
         row.parent_path = Some(parent_path.to_string());
     }

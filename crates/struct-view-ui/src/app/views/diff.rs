@@ -1,6 +1,6 @@
 use super::super::state::PairDifferenceCache;
 use super::*;
-use struct_view_core::diff::values_equal;
+use struct_view_core::diff::{compare_pair_at_path, values_equal};
 
 /// Отрисовать парный diff с выбором сравниваемых файлов.
 pub(in crate::app) fn show_diff(
@@ -51,12 +51,11 @@ pub(in crate::app) fn show_diff(
         let differences = comparison
             .differences
             .iter()
-            .filter(|difference| {
+            .flat_map(|difference| {
                 let left = difference.values.get(left_index).and_then(Option::as_ref);
                 let right = difference.values.get(right_index).and_then(Option::as_ref);
-                pair_change(left, right).is_some()
+                compare_pair_at_path(&difference.path, left, right)
             })
-            .cloned()
             .collect();
         comparison.pair_cache = Some(PairDifferenceCache {
             left_index,
@@ -114,8 +113,8 @@ pub(in crate::app) fn show_diff(
                     ui.end_row();
 
                     for difference in pair_differences {
-                        let left = difference.values.get(left_index).and_then(Option::as_ref);
-                        let right = difference.values.get(right_index).and_then(Option::as_ref);
+                        let left = difference.values[0].as_ref();
+                        let right = difference.values[1].as_ref();
                         let (change_type, left_color, right_color) = match pair_change(left, right)
                         {
                             Some(PairChange::Added) => {

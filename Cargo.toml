@@ -9,7 +9,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 license = "MIT"
 
@@ -45,6 +45,9 @@ struct-view-build-info = { path = "crates/struct-view-build-info" }
 struct-view-cli = { path = "crates/struct-view-cli" }
 struct-view-core = { path = "crates/struct-view-core" }
 struct-view-ui = { path = "crates/struct-view-ui" }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
