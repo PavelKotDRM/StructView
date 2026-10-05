@@ -663,21 +663,29 @@ Release.
 
 Cargo workspace crates:
 
+- [`struct-view-core`](crates/struct-view-core/README.md) — parsing, document
+  trees, search, and comparison;
+- [`struct-view-cli`](crates/struct-view-cli/README.md) — command-line parsing
+  and headless commands;
+- [`struct-view-ui`](crates/struct-view-ui/README.md) — native GUI, views,
+  editing, and clipboard;
+- [`struct-view-build-info`](crates/struct-view-build-info/README.md) — shared
+  compile-time build metadata.
+
+The root `struct_view` crate is the executable entry point and compatibility
+facade; its documentation is this README. Its source layout is:
+
 ```text
-crates/
-  struct-view-core/       parsing, document trees, search, and comparison
-  struct-view-cli/        command-line parsing and headless commands
-  struct-view-ui/         native GUI, editing, views, and clipboard
-  struct-view-build-info/ shared compile-time build metadata
 src/
-  lib.rs                  compatibility facade over the workspace crates
-  main.rs                 executable entry point
-  console.rs              platform-specific console integration
+├── main.rs      executable entry point and command dispatch
+├── lib.rs       compatibility facade re-exporting workspace crates
+└── console.rs   platform-specific console integration
 ```
 
-The `struct-view-build-info` crate embeds the Rust version, target platform,
-build time, and optimization mode. This information is available through
-`--version` and the `Help` menu.
+Each workspace crate's README contains its source tree and module
+responsibilities. The `struct-view-build-info` crate embeds the Rust version,
+target platform, build time, and optimization mode. This information is
+available through `--version` and the `Help` menu.
 
 ## License
 
