@@ -3,24 +3,38 @@ use super::*;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::hash::{Hash, Hasher};
+use std::thread;
 
-const GRAPH_PARALLEL_EDGE_THRESHOLD: usize = 64;
-const GRAPH_MAX_ROUTING_WORKERS: usize = 8;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::app) enum GraphRoutingWorkerSetting {
+    #[default]
+    Automatic,
+    Manual(usize),
+}
 
-pub(super) fn graph_routing_worker_count(edge_count: usize) -> usize {
-    if edge_count < GRAPH_PARALLEL_EDGE_THRESHOLD {
-        return 1;
-    }
+pub(in crate::app) fn available_graph_routing_workers() -> usize {
     match thread::available_parallelism() {
-        Ok(count) => count
-            .get()
-            .saturating_sub(1)
-            .clamp(1, GRAPH_MAX_ROUTING_WORKERS),
+        Ok(count) => count.get(),
         Err(error) => {
             eprintln!("Cannot determine graph routing parallelism: {error}; using one worker");
             1
         }
     }
+}
+
+pub(in crate::app) fn graph_routing_worker_count(
+    edge_count: usize,
+    setting: GraphRoutingWorkerSetting,
+) -> usize {
+    if edge_count == 0 {
+        return 1;
+    }
+    let available = available_graph_routing_workers();
+    match setting {
+        GraphRoutingWorkerSetting::Automatic => available,
+        GraphRoutingWorkerSetting::Manual(count) => count.clamp(1, available),
+    }
+    .min(edge_count)
 }
 
 #[cfg(test)]
@@ -43,9 +57,7 @@ pub(super) fn route_graph_edges_with_progress(
     if endpoints.is_empty() {
         return Vec::new();
     }
-    let workers = worker_count
-        .clamp(1, GRAPH_MAX_ROUTING_WORKERS)
-        .min(endpoints.len());
+    let workers = worker_count.max(1).min(endpoints.len());
     if workers == 1 {
         begin_graph_stage(progress, GraphStage::Sequential, endpoints.len(), 1);
         let mut routes = Vec::with_capacity(endpoints.len());
@@ -85,50 +97,52 @@ fn resolve_graph_route_conflicts(
     progress: Option<&GraphProgressTracker>,
 ) -> Vec<Vec<Pos2>> {
     let mut routes = Vec::with_capacity(endpoints.len());
+    let mut route_index = GraphRouteSegmentIndex::new(&[]);
     begin_graph_stage(progress, GraphStage::Conflicts, endpoints.len(), workers);
-    // Fixed wave boundaries keep the result independent of worker count and completion order.
-    for batch_start in (0..endpoints.len()).step_by(GRAPH_MAX_ROUTING_WORKERS) {
-        let batch_end = (batch_start + GRAPH_MAX_ROUTING_WORKERS).min(endpoints.len());
-        while routes.len() < batch_end {
-            let start = routes.len();
-            let mut wave_end = start + 1;
-            while wave_end < batch_end
-                && !graph_route_conflicts(&candidates[wave_end], &candidates[start..wave_end])
-            {
-                wave_end += 1;
+    while routes.len() < endpoints.len() {
+        let start = routes.len();
+        let batch_end = (start + workers).min(endpoints.len());
+        let mut proposals = vec![Vec::new(); batch_end - start];
+        let chunk_size = proposals.len().div_ceil(workers);
+        let prepare = |offset: usize, chunk: &mut [Vec<Pos2>]| {
+            for (local_index, proposal) in chunk.iter_mut().enumerate() {
+                let index = start + offset + local_index;
+                let earlier_candidates = &candidates[start..index];
+                *proposal = if route_index.conflicts_route(&candidates[index])
+                    || graph_route_conflicts(&candidates[index], earlier_candidates)
+                {
+                    let (source, target) = endpoints[index];
+                    let mut blockers = routes.clone();
+                    blockers.extend_from_slice(earlier_candidates);
+                    grid.route_edge_with_ports(source, target, ports[index], &blockers)
+                } else {
+                    candidates[index].clone()
+                };
             }
-            let mut proposals = vec![Vec::new(); wave_end - start];
-            let chunk_size = proposals.len().div_ceil(workers);
-            let prepare = |offset: usize, chunk: &mut [Vec<Pos2>]| {
-                for (local_index, proposal) in chunk.iter_mut().enumerate() {
-                    let index = start + offset + local_index;
-                    *proposal = if graph_route_conflicts(&candidates[index], &routes) {
-                        let (source, target) = endpoints[index];
-                        grid.route_edge_with_ports(source, target, ports[index], &routes)
-                    } else {
-                        candidates[index].clone()
-                    };
+        };
+        if proposals.len() == 1 {
+            prepare(0, &mut proposals);
+        } else {
+            thread::scope(|scope| {
+                for (chunk_index, chunk) in proposals.chunks_mut(chunk_size).enumerate() {
+                    let prepare = &prepare;
+                    scope.spawn(move || prepare(chunk_index * chunk_size, chunk));
                 }
-            };
-            if proposals.len() == 1 {
-                prepare(0, &mut proposals);
+            });
+        }
+        // Proposals share a snapshot; reroute stale ones as they reach the deterministic commit order.
+        for (offset, proposal) in proposals.into_iter().enumerate() {
+            if route_index.conflicts_route(&proposal) {
+                let index = start + offset;
+                let (source, target) = endpoints[index];
+                let rerouted = grid.route_edge_with_ports(source, target, ports[index], &routes);
+                route_index.insert_route(&rerouted);
+                routes.push(rerouted);
             } else {
-                thread::scope(|scope| {
-                    for (chunk_index, chunk) in proposals.chunks_mut(chunk_size).enumerate() {
-                        let prepare = &prepare;
-                        scope.spawn(move || prepare(chunk_index * chunk_size, chunk));
-                    }
-                });
-            }
-            // At least the first proposal is valid for the snapshot. Recompute the remaining
-            // suffix if a newly accepted route invalidates a speculative proposal.
-            for proposal in proposals {
-                if graph_route_conflicts(&proposal, &routes[start..]) {
-                    break;
-                }
+                route_index.insert_route(&proposal);
                 routes.push(proposal);
-                advance_graph_progress(progress);
             }
+            advance_graph_progress(progress);
         }
     }
     routes
@@ -713,18 +727,46 @@ impl GraphRouteSegmentIndex {
     }
 
     pub(in crate::app::views) fn new(routes: &[Vec<Pos2>]) -> Self {
-        let segments = routes
-            .iter()
-            .flat_map(|route| route.windows(2))
-            .map(|segment| [segment[0], segment[1]])
-            .collect::<Vec<_>>();
-        let mut buckets: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-        for (index, segment) in segments.iter().enumerate() {
-            for cell in Self::cells(segment[0], segment[1]) {
-                buckets.entry(cell).or_default().push(index);
-            }
+        let mut index = Self {
+            segments: Vec::new(),
+            buckets: HashMap::new(),
+        };
+        for route in routes {
+            index.insert_route(route);
         }
-        Self { segments, buckets }
+        index
+    }
+
+    fn insert_route(&mut self, route: &[Pos2]) {
+        for segment in route.windows(2) {
+            let index = self.segments.len();
+            let segment = [segment[0], segment[1]];
+            for cell in Self::cells(segment[0], segment[1]) {
+                self.buckets.entry(cell).or_default().push(index);
+            }
+            self.segments.push(segment);
+        }
+    }
+
+    fn conflicts_route(&self, route: &[Pos2]) -> bool {
+        route.windows(2).any(|segment| {
+            let mut indices = Self::cells(segment[0], segment[1])
+                .filter_map(|cell| self.buckets.get(&cell))
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
+            indices.sort_unstable();
+            indices.dedup();
+            indices.into_iter().any(|index| {
+                segments_within_clearance(
+                    segment[0],
+                    segment[1],
+                    self.segments[index][0],
+                    self.segments[index][1],
+                    GRAPH_EDGE_CLEARANCE,
+                )
+            })
+        })
     }
 
     fn penalty(&self, start: Pos2, end: Pos2) -> f32 {

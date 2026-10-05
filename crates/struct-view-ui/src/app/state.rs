@@ -30,7 +30,7 @@ use super::theme::SyntaxColors;
 use super::tree::{
     AddChildRequest, EditFieldRequest, InlineEditEvent, SelectionRequest, VisibleRows,
 };
-use super::views::GraphCalculationState;
+use super::views::{GraphCalculationState, GraphRoutingWorkerSetting};
 use super::visualization::{VisualizationCache, VisualizationMode};
 
 mod editing;
@@ -239,6 +239,7 @@ pub struct StructViewApp {
     pub(super) visualization_cache: VisualizationCache,
     /// Асинхронное построение модели и маршрутов графа связей.
     pub(super) graph_calculation: GraphCalculationState,
+    pub(super) graph_routing_workers: GraphRoutingWorkerSetting,
     pub(super) structure_view: super::views::structure::StructureView,
     /// Открытый конструктор добавления или редактирования поля.
     pub(super) field_dialog: Option<FieldDialog>,
@@ -294,6 +295,7 @@ impl Default for StructViewApp {
             visualization: VisualizationMode::default(),
             visualization_cache: VisualizationCache::default(),
             graph_calculation: GraphCalculationState::default(),
+            graph_routing_workers: GraphRoutingWorkerSetting::default(),
             structure_view: super::views::structure::StructureView::default(),
             field_dialog: None,
             field_dialog_docking: DockingState::default(),

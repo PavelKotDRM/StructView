@@ -35,7 +35,11 @@ pub(super) use diff::{
     comparison_column_width, comparison_value_color, show_diff, show_difference_legend,
 };
 pub(super) use graph::headless_graph_image as graph_image_for_headless;
+pub(super) use graph::headless_graph_image_with_progress as graph_image_with_progress_for_headless;
 pub(super) use graph::{GraphCalculationState, export_graph_image, show_graph};
 pub(super) use graph::{GraphExportFormat, GraphExportStyle, graph_view_menu};
+pub(in crate::app) use graph::{
+    GraphRoutingWorkerSetting, available_graph_routing_workers, graph_routing_worker_count,
+};
 pub(super) use schema::show_schema;
 pub(super) use table::{export_table_csv, show_table};

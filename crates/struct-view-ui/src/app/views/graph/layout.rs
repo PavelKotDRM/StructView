@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub(in crate::app::views) fn build_graph_routing_layout(
     graph: &RelationshipGraph,
 ) -> GraphRoutingLayout {
-    build_graph_routing_layout_with_progress(graph, None)
+    build_graph_routing_layout_with_progress(graph, GraphRoutingWorkerSetting::Automatic, None)
 }
 
 pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
@@ -209,6 +209,7 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
 
 pub(super) fn build_graph_routing_layout_with_progress(
     graph: &RelationshipGraph,
+    worker_setting: GraphRoutingWorkerSetting,
     progress: Option<&GraphProgressTracker>,
 ) -> GraphRoutingLayout {
     begin_graph_stage(progress, GraphStage::Layout, 0, 1);
@@ -234,7 +235,7 @@ pub(super) fn build_graph_routing_layout_with_progress(
         &routing_grid,
         &edge_endpoints,
         &edge_ports,
-        graph_routing_worker_count(graph.edges.len()),
+        graph_routing_worker_count(graph.edges.len(), worker_setting),
         progress,
     );
     for point in routed_edges.iter().flatten() {

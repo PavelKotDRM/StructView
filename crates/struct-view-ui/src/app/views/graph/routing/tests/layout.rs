@@ -94,7 +94,8 @@ fn graph_progress_records_all_stages_and_completion() {
     let root = struct_view_core::parser::parse_json(r#"[{"id":"a","depends_on":"b"},{"id":"b"}]"#)
         .unwrap();
     let progress = Arc::new(Mutex::new(GraphProgress::default()));
-    let result = build_graph_calculation(root, &progress).unwrap();
+    let result =
+        build_graph_calculation(root, GraphRoutingWorkerSetting::Automatic, &progress).unwrap();
     let snapshot = progress.lock().unwrap();
     assert_eq!(
         snapshot
@@ -113,6 +114,36 @@ fn graph_progress_records_all_stages_and_completion() {
     assert_eq!(snapshot.total, result.graph.edges.len());
     assert!(snapshot.stage.is_none());
     assert!(snapshot.finished.unwrap() >= snapshot.timings.iter().map(|(_, time)| *time).sum());
+}
+
+#[test]
+fn headless_graph_image_reports_finished_progress_and_stage_timings() {
+    let root = struct_view_core::parser::parse_json(r#"[{"id":"a","depends_on":"b"},{"id":"b"}]"#)
+        .unwrap();
+    let snapshots = Arc::new(Mutex::new(Vec::new()));
+    let reported = Arc::clone(&snapshots);
+    crate::app::headless::graph_image_with_progress(&root, false, false, move |snapshot| {
+        reported.lock().unwrap().push(snapshot);
+    })
+    .unwrap();
+
+    let snapshots = snapshots.lock().unwrap();
+    let final_snapshot = snapshots
+        .last()
+        .expect("A final progress snapshot is reported");
+    assert!(final_snapshot.finished);
+    assert!(
+        final_snapshot
+            .timings
+            .iter()
+            .any(|(stage, _)| *stage == "Routing links sequentially")
+    );
+    assert!(
+        final_snapshot
+            .timings
+            .iter()
+            .any(|(stage, _)| *stage == "Rendering graph image")
+    );
 }
 
 #[test]

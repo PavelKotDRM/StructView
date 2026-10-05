@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::app::headless::GraphProgressSnapshot;
 use struct_view_core::graph::EdgeDirection;
 use struct_view_core::parser::JsonNode;
 
@@ -40,10 +41,13 @@ pub(super) use routing::{
     segments_within_clearance,
 };
 pub(super) use routing::{GraphRoutingGrid, graph_edge_color, graph_edge_ports};
+pub(in crate::app) use routing::{
+    GraphRoutingWorkerSetting, available_graph_routing_workers, graph_routing_worker_count,
+};
 use routing::{
     arrow_head_wings, closest_point_on_segment, draw_arrow_head, edge_arrowheads,
-    graph_routing_worker_count, point_to_segment_distance, relationship_graph_fingerprint,
-    route_graph_edges_with_progress, segment_intersects_rect, segments_intersect,
+    point_to_segment_distance, relationship_graph_fingerprint, route_graph_edges_with_progress,
+    segment_intersects_rect, segments_intersect,
 };
 
 pub(super) const GRAPH_DIM_FACTOR: f32 = 0.18;
@@ -53,14 +57,60 @@ pub(in crate::app) fn headless_graph_image(
     png: bool,
     dark: bool,
 ) -> Result<Vec<u8>, String> {
-    let graph = try_build_relationship_graph(root)?;
-    if graph.nodes.is_empty() {
-        return Err("No graph entities found".to_string());
-    }
-    let routing = build_graph_routing_layout_with_progress(&graph, None);
-    render_graph_image(
-        &graph,
-        &routing,
+    headless_graph_image_with_progress(root, png, dark, None)
+}
+
+pub(in crate::app) fn headless_graph_image_with_progress(
+    root: &JsonNode,
+    png: bool,
+    dark: bool,
+    report_progress: Option<std::sync::Arc<dyn Fn(GraphProgressSnapshot) + Send + Sync>>,
+) -> Result<Vec<u8>, String> {
+    let progress = Arc::new(Mutex::new(GraphProgress::default()));
+    let reporter = if let Some(report_progress) = report_progress {
+        let progress = Arc::clone(&progress);
+        Some(
+            thread::Builder::new()
+                .name("struct-view-graph-progress".to_string())
+                .spawn(move || {
+                    loop {
+                        let snapshot = {
+                            let progress = progress.lock().expect("graph progress lock poisoned");
+                            GraphProgressSnapshot::from(&progress)
+                        };
+                        let finished = snapshot.finished;
+                        report_progress(snapshot);
+                        if finished {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(250));
+                    }
+                })
+                .map_err(|error| format!("Cannot start graph progress reporter: {error}"))?,
+        )
+    } else {
+        None
+    };
+    let result = build_graph_calculation(
+        root.clone(),
+        GraphRoutingWorkerSetting::Automatic,
+        &progress,
+    );
+    let calculation = match result {
+        Ok(calculation) => calculation,
+        Err(error) => {
+            if let Some(reporter) = reporter {
+                reporter
+                    .join()
+                    .map_err(|_| "Graph progress reporter terminated unexpectedly".to_string())?;
+            }
+            return Err(error);
+        }
+    };
+    begin_graph_stage(Some(&progress), GraphStage::Rendering, 0, 1);
+    let rendered = render_graph_image(
+        &calculation.graph,
+        &calculation.routing,
         if png {
             GraphExportFormat::Png
         } else {
@@ -72,7 +122,17 @@ pub(in crate::app) fn headless_graph_image(
             GraphExportStyle::LightTransparent
         },
     )
-    .map_err(|error| format!("Graph export error: {error}"))
+    .map_err(|error| format!("Graph export error: {error}"));
+    progress
+        .lock()
+        .expect("graph progress lock poisoned")
+        .finish();
+    if let Some(reporter) = reporter {
+        reporter
+            .join()
+            .map_err(|_| "Graph progress reporter terminated unexpectedly".to_string())?;
+    }
+    rendered
 }
 const GRAPH_EDGE_LABEL_CHAR_WIDTH: f32 = 8.0;
 const GRAPH_EDGE_LABEL_HEIGHT: f32 = 16.0;
@@ -93,9 +153,22 @@ enum GraphStage {
     Conflicts,
     Sequential,
     Labels,
+    Rendering,
 }
 
 impl GraphStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Entities => "Extracting entities and relationships",
+            Self::Layout => "Preparing graph layout",
+            Self::Preliminary => "Calculating preliminary routes",
+            Self::Conflicts => "Checking and resolving route conflicts",
+            Self::Sequential => "Routing links sequentially",
+            Self::Labels => "Placing relationship labels",
+            Self::Rendering => "Rendering graph image",
+        }
+    }
+
     fn text_key(self) -> TextKey {
         match self {
             Self::Entities => TextKey::GraphStageEntities,
@@ -104,6 +177,7 @@ impl GraphStage {
             Self::Conflicts => TextKey::GraphStageConflicts,
             Self::Sequential => TextKey::GraphStageSequential,
             Self::Labels => TextKey::GraphStageLabels,
+            Self::Rendering => TextKey::GraphStageRendering,
         }
     }
 }
@@ -117,6 +191,30 @@ struct GraphProgress {
     workers: usize,
     timings: Vec<(GraphStage, Duration)>,
     finished: Option<Duration>,
+}
+
+impl GraphProgressSnapshot {
+    fn from(progress: &GraphProgress) -> Self {
+        Self {
+            stage: progress.stage.map(GraphStage::label),
+            completed: progress.completed,
+            total: progress.total,
+            workers: progress.workers,
+            elapsed: progress
+                .finished
+                .unwrap_or_else(|| progress.started.elapsed())
+                .as_secs_f64(),
+            stage_elapsed: progress
+                .stage
+                .map_or(0.0, |_| progress.stage_started.elapsed().as_secs_f64()),
+            timings: progress
+                .timings
+                .iter()
+                .map(|(stage, duration)| (stage.label(), duration.as_secs_f64()))
+                .collect(),
+            finished: progress.finished.is_some(),
+        }
+    }
 }
 
 impl Default for GraphProgress {
@@ -138,6 +236,7 @@ impl Default for GraphProgress {
 impl GraphProgress {
     fn begin(&mut self, stage: GraphStage, total: usize, workers: usize) {
         self.end_stage();
+        self.finished = None;
         self.stage = Some(stage);
         self.stage_started = Instant::now();
         self.completed = 0;
@@ -183,7 +282,12 @@ fn advance_graph_progress(progress: Option<&GraphProgressTracker>) {
 }
 
 impl GraphCalculationState {
-    pub(in crate::app) fn ensure_started(&mut self, root: &JsonNode, ctx: &egui::Context) {
+    pub(in crate::app) fn ensure_started(
+        &mut self,
+        root: &JsonNode,
+        worker_setting: GraphRoutingWorkerSetting,
+        ctx: &egui::Context,
+    ) {
         if self.receiver.is_some() || self.result.is_some() || self.error.is_some() {
             return;
         }
@@ -195,7 +299,7 @@ impl GraphCalculationState {
         match thread::Builder::new()
             .name("struct-view-graph-layout".to_string())
             .spawn(move || {
-                let result = build_graph_calculation(root, &progress);
+                let result = build_graph_calculation(root, worker_setting, &progress);
                 let _ = sender.send(result);
             }) {
             Ok(_) => {
@@ -329,6 +433,7 @@ pub(in crate::app) struct GraphRoutingLayout {
 
 fn build_graph_calculation(
     root: JsonNode,
+    worker_setting: GraphRoutingWorkerSetting,
     progress: &GraphProgressTracker,
 ) -> Result<GraphCalculationResult, String> {
     begin_graph_stage(Some(progress), GraphStage::Entities, 0, 1);
@@ -342,7 +447,7 @@ fn build_graph_calculation(
             return Err(error);
         }
     };
-    let routing = build_graph_routing_layout_with_progress(&graph, Some(progress));
+    let routing = build_graph_routing_layout_with_progress(&graph, worker_setting, Some(progress));
     progress
         .lock()
         .expect("graph progress lock poisoned")

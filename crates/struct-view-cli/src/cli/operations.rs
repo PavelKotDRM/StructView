@@ -1,10 +1,15 @@
+use std::io::IsTerminal;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use indicatif::{ProgressBar, ProgressStyle};
 use struct_view_core::files::write_bytes_atomic;
 use struct_view_core::parser::{DataFormat, JsonValueType, parse_data, serialize_node};
 use struct_view_core::search::{SearchOptions, SearchState};
 use struct_view_ui::app::headless;
+use struct_view_ui::app::headless::GraphProgressSnapshot;
 use struct_view_ui::clipboard;
 
 use super::{Command, Source};
@@ -62,6 +67,85 @@ pub struct OperationOptions {
     pub dark: bool,
     pub part: NodePart,
     pub raw: bool,
+}
+
+struct CliGraphProgress {
+    current: Mutex<Option<(&'static str, ProgressBar)>>,
+}
+
+impl Default for CliGraphProgress {
+    fn default() -> Self {
+        Self {
+            current: Mutex::new(None),
+        }
+    }
+}
+
+impl CliGraphProgress {
+    fn report(&self, snapshot: GraphProgressSnapshot) {
+        let mut current = self
+            .current
+            .lock()
+            .expect("CLI graph progress lock poisoned");
+        if snapshot.finished {
+            let progress = current
+                .take()
+                .map(|(_, progress)| progress)
+                .unwrap_or_else(ProgressBar::new_spinner);
+            progress.finish_with_message(format!(
+                "Graph image calculated in {:.2}s",
+                snapshot.elapsed
+            ));
+            for (stage, duration) in snapshot.timings {
+                progress.println(format!("  {stage}: {duration:.2}s"));
+            }
+            return;
+        }
+
+        let Some(stage) = snapshot.stage else {
+            return;
+        };
+        if current
+            .as_ref()
+            .is_none_or(|(current_stage, _)| *current_stage != stage)
+        {
+            if let Some((_, previous)) = current.take() {
+                previous.finish();
+            }
+            let progress = if snapshot.total > 0 {
+                ProgressBar::new(snapshot.total as u64).with_style(cli_progress_style(false))
+            } else {
+                ProgressBar::new_spinner()
+                    .with_style(cli_progress_style(true))
+                    .with_prefix(format!("{stage} · {} workers", snapshot.workers))
+            };
+            if snapshot.total == 0 {
+                progress.enable_steady_tick(Duration::from_millis(100));
+            }
+            *current = Some((stage, progress));
+        }
+        if let Some((_, progress)) = current.as_ref() {
+            progress.set_prefix(format!("{} · {} workers", stage, snapshot.workers));
+            progress.set_message(format!("{:.1}s", snapshot.stage_elapsed));
+            progress.set_length(snapshot.total as u64);
+            progress.set_position(snapshot.completed as u64);
+        }
+    }
+}
+
+fn cli_progress_style(spinner: bool) -> ProgressStyle {
+    let template = if spinner {
+        "{prefix:.bold} {spinner} {msg}"
+    } else {
+        "{prefix:.bold} [{bar:40.cyan/blue}] {percent:>3}% {pos}/{len} {msg}"
+    };
+    match ProgressStyle::with_template(template) {
+        Ok(style) => style.progress_chars("##-"),
+        Err(error) => {
+            eprintln!("Cannot configure CLI progress bar: {error}");
+            ProgressStyle::default_bar()
+        }
+    }
 }
 
 pub(super) fn parse(name: &str, args: &[String]) -> Result<OperationOptions, String> {
@@ -374,12 +458,33 @@ fn is_edit(operation: Operation) -> bool {
 
 pub(super) fn run(options: &OperationOptions) -> Result<bool, String> {
     let operation = options.operation;
-    let (mut root, format) = if operation == Operation::New {
+    let show_progress = std::io::stderr().is_terminal()
+        && matches!(
+            operation,
+            Operation::Table | Operation::Schema | Operation::Graph
+        );
+    let input_started = Instant::now();
+    let input_progress = show_progress.then(|| cli_spinner("Reading and parsing input"));
+    let parsed = if operation == Operation::New {
         parse_data("{}", Some(DataFormat::Json)).map_err(|error| error.to_string())?
     } else {
-        parse_data(&options.input.read()?, options.input.format_hint())
-            .map_err(|error| format!("Parse error: {error}"))?
+        match parse_data(&options.input.read()?, options.input.format_hint()) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                if let Some(progress) = input_progress {
+                    progress.finish_with_message("Input parsing failed");
+                }
+                return Err(format!("Parse error: {error}"));
+            }
+        }
     };
+    let (mut root, format) = parsed;
+    if let Some(progress) = input_progress {
+        progress.finish_with_message(format!(
+            "Input ready ({:.2}s)",
+            input_started.elapsed().as_secs_f64()
+        ));
+    }
     if is_edit(operation) && !format.is_serializable() {
         return Err(
             "Imported graph documents are read-only; convert them before editing".to_string(),
@@ -408,6 +513,18 @@ pub(super) fn run(options: &OperationOptions) -> Result<bool, String> {
     if let Some(error) = &search.error {
         return Err(format!("Invalid regular expression: {error}"));
     }
+    let operation_started = Instant::now();
+    let operation_progress =
+        if show_progress && !matches!(operation, Operation::Graph if options.image.is_some()) {
+            Some(cli_spinner(match operation {
+                Operation::Table => "Building table",
+                Operation::Schema => "Building schema",
+                Operation::Graph => "Building graph",
+                _ => unreachable!(),
+            }))
+        } else {
+            None
+        };
     let bytes = match operation {
         Operation::Get if options.raw || options.part != NodePart::Value => {
             let node = headless::node_at_path(&root, path)?;
@@ -441,6 +558,15 @@ pub(super) fn run(options: &OperationOptions) -> Result<bool, String> {
         Operation::Schema => serde_json::to_vec_pretty(&headless::schema(&root, &search)?)
             .map_err(|error| error.to_string())?,
         Operation::Graph => match options.image {
+            Some(image) if std::io::stderr().is_terminal() => {
+                let reporter = Arc::new(CliGraphProgress::default());
+                headless::graph_image_with_progress(
+                    &root,
+                    image == ImageFormat::Png,
+                    options.dark,
+                    move |snapshot| reporter.report(snapshot),
+                )?
+            }
             Some(image) => headless::graph_image(&root, image == ImageFormat::Png, options.dark)?,
             None => serde_json::to_vec_pretty(&headless::graph(&root)?)
                 .map_err(|error| error.to_string())?,
@@ -525,6 +651,18 @@ pub(super) fn run(options: &OperationOptions) -> Result<bool, String> {
             serialize_node(node, target, options.minify)?.into_bytes()
         }
     };
+    if let Some(progress) = operation_progress {
+        let name = match operation {
+            Operation::Table => "Table",
+            Operation::Schema => "Schema",
+            Operation::Graph => "Graph",
+            _ => unreachable!(),
+        };
+        progress.finish_with_message(format!(
+            "{name} calculation completed ({:.2}s)",
+            operation_started.elapsed().as_secs_f64()
+        ));
+    }
     let destination = if options.in_place {
         match &options.input {
             Source::File(path) => Some(path),
@@ -551,6 +689,13 @@ pub(super) fn run(options: &OperationOptions) -> Result<bool, String> {
             .map_err(|error| format!("Output error: {error}"))?;
     }
     Ok(true)
+}
+
+fn cli_spinner(message: &str) -> ProgressBar {
+    let progress = ProgressBar::new_spinner().with_style(cli_progress_style(true));
+    progress.set_prefix(message.to_string());
+    progress.enable_steady_tick(Duration::from_millis(100));
+    progress
 }
 
 #[cfg(test)]

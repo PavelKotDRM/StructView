@@ -57,7 +57,11 @@ impl StructViewApp {
                 }
                 VisualizationMode::Graph => {
                     if let Some(root) = &self.root {
-                        self.graph_calculation.ensure_started(root, ui.ctx());
+                        self.graph_calculation.ensure_started(
+                            root,
+                            self.graph_routing_workers,
+                            ui.ctx(),
+                        );
                     }
                     if let Some(error) = self.graph_calculation.error() {
                         ui.colored_label(

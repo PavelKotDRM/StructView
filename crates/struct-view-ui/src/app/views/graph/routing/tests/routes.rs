@@ -90,6 +90,40 @@ fn indexed_graph_penalties_match_exhaustive_segment_checks() {
 }
 
 #[test]
+fn indexed_graph_conflicts_match_exhaustive_checks_when_routes_are_added_incrementally() {
+    let routes = vec![
+        vec![Pos2::new(-300.0, -20.0), Pos2::new(700.0, -20.0)],
+        vec![Pos2::new(128.0, -400.0), Pos2::new(128.0, 800.0)],
+        vec![Pos2::new(-300.0, 700.0), Pos2::new(700.0, -300.0)],
+        vec![
+            Pos2::new(256.0, 0.0),
+            Pos2::new(256.0, 128.0),
+            Pos2::new(384.0, 128.0),
+        ],
+    ];
+    let mut index = GraphRouteSegmentIndex::new(&[]);
+    let mut accepted = Vec::new();
+    for route in &routes {
+        for x in [-308.0, -128.0, 0.0, 120.0, 128.0, 136.0, 256.0, 708.0] {
+            for y in [-400.0, -28.0, -20.0, -12.0, 0.0, 128.0, 800.0] {
+                let candidate = [
+                    Pos2::new(x, y),
+                    Pos2::new(x + 50.0, y),
+                    Pos2::new(x + 50.0, y + 30.0),
+                ];
+                assert_eq!(
+                    index.conflicts_route(&candidate),
+                    graph_route_conflicts(&candidate, &accepted),
+                    "{candidate:?}",
+                );
+            }
+        }
+        index.insert_route(route);
+        accepted.push(route.clone());
+    }
+}
+
+#[test]
 fn dense_parallel_conflict_resolution_is_deterministic_and_preserves_ports() {
     let (grid, _, _) = routing_fixture(4);
     let endpoints = vec![(0, 2); 12];
@@ -180,10 +214,30 @@ fn parallel_graph_routing_resolves_crossing_parallel_and_reciprocal_edges() {
 
 #[test]
 fn graph_routing_handles_empty_and_small_graphs_without_parallel_workers() {
-    assert_eq!(graph_routing_worker_count(0), 1);
     assert_eq!(
-        graph_routing_worker_count(GRAPH_PARALLEL_EDGE_THRESHOLD - 1),
+        graph_routing_worker_count(0, GraphRoutingWorkerSetting::Automatic),
         1
+    );
+    let available = available_graph_routing_workers();
+    assert_eq!(
+        graph_routing_worker_count(usize::MAX, GraphRoutingWorkerSetting::Automatic),
+        available
+    );
+    assert_eq!(
+        graph_routing_worker_count(3, GraphRoutingWorkerSetting::Automatic),
+        available.min(3)
+    );
+    assert_eq!(
+        graph_routing_worker_count(usize::MAX, GraphRoutingWorkerSetting::Manual(usize::MAX)),
+        available
+    );
+    assert_eq!(
+        graph_routing_worker_count(3, GraphRoutingWorkerSetting::Manual(8)),
+        3
+    );
+    assert_eq!(
+        graph_routing_worker_count(3, GraphRoutingWorkerSetting::Manual(2)),
+        2
     );
     let (grid, _, _) = routing_fixture(1);
     assert!(route_graph_edges(&grid, &[], &[], 8).is_empty());

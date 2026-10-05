@@ -618,6 +618,11 @@ styling on a transparent canvas; `--dark` uses an opaque dark canvas.
 PNG retains the entire graph and is downscaled when necessary to at most
 16 million pixels; SVG retains vector detail. Interactive zoom, selection,
 themes, language, and undo/redo are not CLI document operations.
+When stderr is an interactive terminal, graph image exports show per-stage
+progress bars with route counts, worker counts, elapsed time, and stage timings.
+Table, schema, and graph-model exports show activity spinners while reading,
+parsing, and calculating. Progress is written to stderr and is omitted when
+stderr is redirected, so machine-readable stdout stays unchanged.
 
 The CLI reuses a window-free API in the UI crate for editing, clipboard
 envelopes, and visualization models, and the existing in-memory graph renderer

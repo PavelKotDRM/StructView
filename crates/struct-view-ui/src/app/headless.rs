@@ -3,6 +3,7 @@
 //! Image rendering uses an in-memory egui context, not a native window or display.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 use struct_view_core::parser::{DataFormat, JsonNode, JsonValueType};
@@ -10,6 +11,19 @@ use struct_view_core::search::SearchState;
 
 use super::{edit, visualization};
 use crate::clipboard::{decode_structures, encode_structures};
+
+/// Snapshot of an in-progress graph image calculation.
+#[derive(Debug, Clone)]
+pub struct GraphProgressSnapshot {
+    pub stage: Option<&'static str>,
+    pub completed: usize,
+    pub total: usize,
+    pub workers: usize,
+    pub elapsed: f64,
+    pub stage_elapsed: f64,
+    pub timings: Vec<(&'static str, f64)>,
+    pub finished: bool,
+}
 
 /// Resolve a path emitted by search, accepting `$` as the root.
 pub fn node_at_path<'a>(root: &'a JsonNode, path: &str) -> Result<&'a JsonNode, String> {
@@ -150,4 +164,19 @@ pub fn graph(root: &JsonNode) -> Result<Value, String> {
 /// Render the full graph to SVG or PNG with the GUI's layout and image limits.
 pub fn graph_image(root: &JsonNode, png: bool, dark: bool) -> Result<Vec<u8>, String> {
     super::views::graph_image_for_headless(root, png, dark)
+}
+
+/// Render a graph image and report calculation progress as snapshots.
+pub fn graph_image_with_progress(
+    root: &JsonNode,
+    png: bool,
+    dark: bool,
+    report_progress: impl Fn(GraphProgressSnapshot) + Send + Sync + 'static,
+) -> Result<Vec<u8>, String> {
+    super::views::graph_image_with_progress_for_headless(
+        root,
+        png,
+        dark,
+        Some(Arc::new(report_progress)),
+    )
 }
