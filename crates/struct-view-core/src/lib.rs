@@ -4,6 +4,7 @@
 
 pub mod diff;
 pub mod files;
+pub mod graph;
 mod numbers;
 pub mod parser;
 pub mod search;

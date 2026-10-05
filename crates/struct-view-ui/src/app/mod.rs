@@ -32,6 +32,7 @@
 
 mod docking;
 mod edit;
+pub mod headless;
 mod i18n;
 mod panels;
 mod state;

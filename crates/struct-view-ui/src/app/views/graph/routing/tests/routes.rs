@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn self_loops_route_outside_cards_with_distinct_ports_and_parallel_tracks() {
+    let positions = [Pos2::new(160.0, 100.0), Pos2::new(500.0, 100.0)];
+    let grid = GraphRoutingGrid::new(&positions);
+    let endpoints = [(0, 0), (0, 0), (1, 1), (0, 1)];
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let serial = route_graph_edges(&grid, &endpoints, &ports, 1);
+    let parallel = route_graph_edges(&grid, &endpoints, &ports, 4);
+    for routes in [&serial, &parallel] {
+        for (index, route) in routes.iter().enumerate() {
+            assert!(
+                route
+                    .iter()
+                    .all(|point| point.x.is_finite() && point.y.is_finite())
+            );
+            assert!(route.windows(2).all(|segment| segment[0] != segment[1]));
+            if endpoints[index].0 == endpoints[index].1 {
+                assert!(route.len() >= 4, "{route:?}");
+                assert_ne!(route.first(), route.last());
+                for rect in &grid.node_rects {
+                    assert!(
+                        route
+                            .windows(2)
+                            .all(|segment| !segment_crosses_rect_interior(
+                                segment[0], segment[1], *rect
+                            )),
+                        "{route:?}"
+                    );
+                }
+            }
+        }
+        assert_ne!(routes[0], routes[1]);
+    }
+    assert_eq!(serial[0].first(), parallel[0].first());
+    assert_eq!(serial[0].last(), parallel[0].last());
+}
+
+#[test]
+fn reverse_edges_change_layout_and_direction_changes_invalidate_cache() {
+    let root = struct_view_core::parser::parse_json(r#"{"graph":{"type":"directed"},"nodes":[{"id":"a"},{"id":"b"}],"edges":[{"source":"a","target":"b"}]}"#).unwrap();
+    let mut graph = build_relationship_graph(&root);
+    let forward = graph_node_positions(&graph);
+    let fingerprint = relationship_graph_fingerprint(&graph);
+    graph.edges[0].direction = EdgeDirection::Reverse;
+    let reverse = graph_node_positions(&graph);
+    assert!(forward[0].x < forward[1].x);
+    assert!(reverse[1].x < reverse[0].x);
+    assert_ne!(fingerprint, relationship_graph_fingerprint(&graph));
+    graph.edges[0].direction = EdgeDirection::Bidirectional;
+    let mutual = graph_node_positions(&graph);
+    assert_eq!(mutual[0].x, mutual[1].x);
+}
+
+#[test]
 fn indexed_graph_penalties_match_exhaustive_segment_checks() {
     let routes = vec![
         vec![Pos2::new(-300.0, -20.0), Pos2::new(700.0, -20.0)],

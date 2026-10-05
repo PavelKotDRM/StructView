@@ -5,7 +5,9 @@ use graphviz_rust::dot_structures::{
 };
 use serde_json::{Map, Value};
 
-use super::{JsonObject, edge_record, graph_document, node_record};
+use super::{
+    EdgeDirection, JsonObject, edge_record, graph_document, node_record, set_edge_direction,
+};
 
 #[derive(Clone, Default)]
 struct DotDefaults {
@@ -221,6 +223,24 @@ pub(super) fn parse(input: &str) -> Result<Value, String> {
     if !builder.subgraphs.is_empty() {
         metadata.insert("subgraphs".to_string(), Value::Array(builder.subgraphs));
     }
+    let edges = builder
+        .edges
+        .into_iter()
+        .map(|edge| {
+            let direction = match edge.attributes.get("dir").and_then(Value::as_str) {
+                Some(value) => EdgeDirection::parse(value)?,
+                None => EdgeDirection::from_directed(directed),
+            };
+            let id = edge
+                .attributes
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let mut record = edge_record(edge.source, edge.target, id, edge.attributes);
+            set_edge_direction(&mut record, direction);
+            Ok(record)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(graph_document(
         Some(name),
         match (directed, strict) {
@@ -237,18 +257,7 @@ pub(super) fn parse(input: &str) -> Result<Value, String> {
             .into_iter()
             .map(|node| node_record(node.id, node.attributes))
             .collect(),
-        builder
-            .edges
-            .into_iter()
-            .map(|edge| {
-                let id = edge
-                    .attributes
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                edge_record(edge.source, edge.target, id, edge.attributes)
-            })
-            .collect(),
+        edges,
     ))
 }
 

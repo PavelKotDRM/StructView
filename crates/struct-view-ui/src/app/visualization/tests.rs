@@ -4,6 +4,216 @@ use struct_view_core::parser::{DataFormat, parse_data};
 use struct_view_core::search::{SearchOptions, SearchState};
 
 #[test]
+fn graph_node_hover_information_preserves_all_attributes_in_all_formats() {
+    for source in [
+        r#"{"graph":{"type":"directed","nodes":[{"id":"a","label":"Alpha","role":"Gateway","active":false,"count":0,"empty":"","nullable":null,"config":{"region":"West","ports":[80,443]},"tags":[],"custom.key":"custom"}],"edges":[]}}"#,
+        r#"{"directed":true,"nodes":{"a":{"label":"Alpha","role":"Gateway","active":false,"count":0,"empty":"","nullable":null,"config":{"region":"West","ports":[80,443]},"tags":[],"custom.key":"custom"}},"edges":[]}"#,
+        r#"{"items":[{"id":"a","label":"Alpha","role":"Gateway","active":false,"count":0,"empty":"","nullable":null,"config":{"region":"West","ports":[80,443]},"tags":[],"custom.key":"custom"}]}"#,
+        r#"{"elements":[{"data":{"id":"a","label":"Alpha","role":"Gateway","active":false,"count":0,"empty":"","nullable":null,"config":{"region":"West","ports":[80,443]},"tags":[],"custom.key":"custom"},"position":{"x":12,"y":34}}]}"#,
+    ] {
+        let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+        for format in DataFormat::ALL {
+            // TOML has no null: test it separately from formats which retain null.
+            let mut serializable = root.clone();
+            fn remove_null(node: &mut struct_view_core::parser::JsonNode) {
+                node.children.retain(|child| {
+                    child.value_type != struct_view_core::parser::JsonValueType::Null
+                });
+                for child in &mut node.children {
+                    remove_null(child);
+                }
+            }
+            if format == DataFormat::Toml {
+                remove_null(&mut serializable);
+            }
+            let text =
+                struct_view_core::parser::serialize_node(&serializable, format, false).unwrap();
+            let parsed = parse_data(&text, Some(format)).unwrap().0;
+            let graph = try_build_relationship_graph(&parsed).unwrap();
+            let node = &graph.nodes[0];
+            let prefix = if source.contains("elements") {
+                "data."
+            } else {
+                ""
+            };
+            for (key, value) in [
+                ("role", "\"Gateway\""),
+                ("active", "false"),
+                ("count", "0"),
+                ("empty", "\"\""),
+                ("config.region", "\"West\""),
+                ("config.ports[0]", "80"),
+                ("config.ports[1]", "443"),
+                ("tags", "[0]"),
+            ] {
+                assert!(
+                    node.attributes
+                        .contains(&(format!("{prefix}{key}"), value.to_string())),
+                    "{format:?}: {:?}",
+                    node.attributes
+                );
+            }
+            if format != DataFormat::Toml {
+                assert!(
+                    node.attributes
+                        .contains(&(format!("{prefix}nullable"), "null".to_string()))
+                );
+            }
+            assert!(
+                node.attributes
+                    .iter()
+                    .any(|(key, value)| key.contains("custom.key") && value == "\"custom\"")
+            );
+            let tooltip = node.hover_text();
+            assert!(tooltip.contains("role: \"Gateway\""));
+            assert!(tooltip.contains(&node.path));
+            assert_eq!(graph.nodes.len(), 1);
+            assert!(graph.edges.is_empty());
+            if !prefix.is_empty() {
+                assert!(
+                    node.attributes
+                        .contains(&("position.x".to_string(), "12".to_string()))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn graph_node_attributes_keep_native_dates_and_yaml_tags() {
+    for (format, source, expected) in [
+        (
+            DataFormat::Toml,
+            "directed = true\nedges = []\n[[nodes]]\nid = 'a'\ncreated = 2026-10-05T11:21:00\n",
+            "2026-10-05T11:21:00",
+        ),
+        (
+            DataFormat::Yaml,
+            "directed: true\nnodes:\n  - id: a\n    role: !Role Gateway\nedges: []\n",
+            "Gateway",
+        ),
+    ] {
+        let root = parse_data(source, Some(format)).unwrap().0;
+        let graph = try_build_relationship_graph(&root).unwrap();
+        assert!(graph.nodes[0].hover_text().contains(expected));
+    }
+    let root = parse_data(
+        r#"{"graph":{"type":"directed"},"adjacency":{"a":{"b":2}}}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    assert!(
+        try_build_relationship_graph(&root)
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|node| node.attributes.is_empty())
+    );
+}
+
+#[test]
+fn graph_edge_hover_information_preserves_custom_fields_in_all_formats() {
+    for source in [
+        r#"{"graph":{"type":"directed"},"nodes":["a","b"],"edges":[{"source":"a","target":"b","status":"online","active":false,"empty":"","config":{"latency":12,"ports":[80,443]},"tags":[]}]}"#,
+        r#"{"graph":{"type":"directed","nodes":["a","b"],"links":{"ab":{"source":"a","target":"b","status":"online","active":false,"empty":"","config":{"latency":12,"ports":[80,443]},"tags":[]}}}}"#,
+        r#"{"directed":true,"multigraph":true,"graph":{},"nodes":[{"id":"a"},{"id":"b"}],"adjacency":[[{"id":"b","key":0,"status":"online","active":false,"empty":"","config":{"latency":12,"ports":[80,443]},"tags":[]}],[]]}"#,
+        r#"{"directed":true,"nodes":["a","b"],"adjacency":{"a":[{"target":"b","status":"online","active":false,"empty":"","config":{"latency":12,"ports":[80,443]},"tags":[]}],"b":[]}}"#,
+        r#"{"directed":true,"nodes":["a","b"],"edges":[["a","b",{"status":"online","active":false,"empty":"","config":{"latency":12,"ports":[80,443]},"tags":[]}]]}"#,
+        r#"{"elements":{"nodes":[{"data":{"id":"a"}},{"data":{"id":"b"}}],"edges":[{"data":{"source":"a","target":"b","status":"online","active":false,"empty":"","config":{"latency":12,"ports":[80,443]},"tags":[]},"classes":"channel"}]}}"#,
+        r#"{"elements":[{"data":{"id":"a"}},{"data":{"id":"b"}},{"data":{"source":"a","target":"b","status":"online","active":false,"empty":"","config":{"latency":12,"ports":[80,443]},"tags":[]},"classes":"channel"}]}"#,
+    ] {
+        let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+        for format in DataFormat::ALL {
+            let text = struct_view_core::parser::serialize_node(&root, format, false).unwrap();
+            let parsed = parse_data(&text, Some(format)).unwrap().0;
+            let graph = try_build_relationship_graph(&parsed).unwrap();
+            assert_eq!(graph.edges.len(), 1);
+            let edge = &graph.edges[0];
+            let prefix = if source.contains("elements") {
+                "data."
+            } else {
+                ""
+            };
+            for (key, value) in [
+                ("status", "\"online\""),
+                ("active", "false"),
+                ("empty", "\"\""),
+                ("config.latency", "12"),
+                ("config.ports[0]", "80"),
+                ("config.ports[1]", "443"),
+                ("tags", "[0]"),
+            ] {
+                assert!(
+                    edge.attributes
+                        .contains(&(format!("{prefix}{key}"), value.to_string())),
+                    "{format:?}: {:?}",
+                    edge.attributes
+                );
+            }
+            assert!(edge.hover_text().contains("status: \"online\""));
+            if !prefix.is_empty() {
+                assert!(
+                    edge.attributes
+                        .contains(&("classes".to_string(), "\"channel\"".to_string()))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn graph_parallel_and_mirrored_edges_do_not_lose_custom_fields() {
+    for (source, expected_count) in [
+        (
+            r#"{"directed":true,"multigraph":true,"nodes":["a","b"],"edges":[{"source":"a","target":"b","status":"primary"},{"source":"a","target":"b","status":"backup"}]}"#,
+            2,
+        ),
+        (
+            r#"{"directed":true,"nodes":["a","b"],"edges":[{"source":"a","target":"b","status":"primary"},{"source":"a","target":"b","status":"backup"}]}"#,
+            1,
+        ),
+        (
+            r#"{"directed":false,"multigraph":true,"nodes":[{"id":"a"},{"id":"b"}],"adjacency":[[{"id":"b","key":0,"status":"primary"}],[{"id":"a","key":0,"status":"backup"}]]}"#,
+            1,
+        ),
+    ] {
+        let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+        let graph = try_build_relationship_graph(&root).unwrap();
+        assert_eq!(graph.edges.len(), expected_count);
+        let attributes = graph
+            .edges
+            .iter()
+            .flat_map(|edge| &edge.attributes)
+            .collect::<Vec<_>>();
+        assert!(
+            attributes
+                .iter()
+                .any(|(key, value)| key == "status" && value == "\"primary\"")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|(key, value)| key == "status" && value == "\"backup\"")
+        );
+    }
+}
+
+#[test]
+fn imported_graph_nodes_and_edges_keep_custom_attributes_for_hover() {
+    for source in [
+        r#"digraph { a [role="Gateway"]; b; a -> b [status="online"]; }"#,
+        r#"<graphml><key id="role" for="node" attr.name="role" attr.type="string"/><key id="status" for="edge" attr.name="status" attr.type="string"/><graph edgedefault="directed"><node id="a"><data key="role">Gateway</data></node><node id="b"/><edge source="a" target="b"><data key="status">online</data></edge></graph></graphml>"#,
+        r#"<gexf><graph defaultedgetype="directed"><attributes class="node"><attribute id="role" title="role" type="string"/></attributes><attributes class="edge"><attribute id="status" title="status" type="string"/></attributes><nodes><node id="a"><attvalues><attvalue for="role" value="Gateway"/></attvalues></node><node id="b"/></nodes><edges><edge source="a" target="b"><attvalues><attvalue for="status" value="online"/></attvalues></edge></edges></graph></gexf>"#,
+    ] {
+        let root = parse_data(source, None).unwrap().0;
+        let graph = try_build_relationship_graph(&root).unwrap();
+        assert!(graph.nodes[0].hover_text().contains("Gateway"));
+        assert!(graph.edges[0].hover_text().contains("online"));
+    }
+}
+
+#[test]
 fn table_paths_and_csv_preserve_nested_fields() {
     let root = parse_data(
         r#"["line, one",{"quoted\"key":true}]"#,
@@ -68,6 +278,8 @@ fn graph_resolves_entity_ids_and_dependency_fields() {
             source: 0,
             target: 1,
             label: "depends_on".to_string(),
+            direction: struct_view_core::graph::EdgeDirection::Directed,
+            attributes: Vec::new(),
         }]
     );
 }
@@ -111,19 +323,244 @@ fn graph_reads_explicit_json_nodes_and_edges() {
                 source: 0,
                 target: 1,
                 label: String::new(),
+                direction: struct_view_core::graph::EdgeDirection::Directed,
+                attributes: vec![
+                    ("source".to_string(), "\"created\"".to_string()),
+                    ("target".to_string(), "\"paid\"".to_string())
+                ],
             },
             GraphEdge {
                 source: 0,
                 target: 3,
                 label: String::new(),
+                direction: struct_view_core::graph::EdgeDirection::Directed,
+                attributes: vec![
+                    ("source".to_string(), "\"created\"".to_string()),
+                    ("target".to_string(), "\"cancelled\"".to_string())
+                ],
             },
             GraphEdge {
                 source: 1,
                 target: 2,
                 label: String::new(),
+                direction: struct_view_core::graph::EdgeDirection::Directed,
+                attributes: vec![
+                    ("source".to_string(), "\"paid\"".to_string()),
+                    ("target".to_string(), "\"shipped\"".to_string())
+                ],
             },
         ]
     );
+}
+
+#[test]
+fn graph_preserves_per_edge_directions_and_loops_in_all_data_formats() {
+    use struct_view_core::graph::EdgeDirection;
+    let source = r#"{
+        "graph":{"type":"mixed_multigraph"},
+        "nodes":[{"id":"a"},{"id":"b"}],
+        "edges":[
+            {"source":"a","target":"b","direction":"directed"},
+            {"source":"a","target":"b","direction":"bidirectional"},
+            {"source":"a","target":"b","direction":"reverse"},
+            {"source":"a","target":"b","direction":"undirected"},
+            {"source":"a","target":"a","direction":"bidirectional"}
+        ]}"#;
+    let (root, _) = parse_data(source, Some(DataFormat::Json)).unwrap();
+    for format in DataFormat::ALL {
+        let text = struct_view_core::parser::serialize_node(&root, format, false).unwrap();
+        let (root, _) = parse_data(&text, Some(format)).unwrap();
+        let graph = try_build_relationship_graph(&root).unwrap();
+        assert_eq!(graph.direction_name(), "mixed");
+        assert_eq!(graph.edges.len(), 5);
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .map(|edge| edge.direction)
+                .collect::<Vec<_>>(),
+            [
+                EdgeDirection::Directed,
+                EdgeDirection::Bidirectional,
+                EdgeDirection::Reverse,
+                EdgeDirection::Undirected,
+                EdgeDirection::Bidirectional
+            ]
+        );
+        assert_eq!(graph.edges[4].source, graph.edges[4].target);
+    }
+    for direction in ["bidirectional", "mutual", "both"] {
+        let (root, _) = parse_data(&format!(r#"{{"graph":{{"type":"bidirectional"}},"nodes":[{{"id":"a"}},{{"id":"b"}}],"edges":[{{"source":"a","target":"b","direction":"{direction}"}}]}}"#), Some(DataFormat::Json)).unwrap();
+        assert_eq!(
+            build_relationship_graph(&root).edges[0].direction,
+            EdgeDirection::Bidirectional
+        );
+    }
+}
+
+#[test]
+fn graph_direction_errors_are_not_silently_rendered_as_forward_arrows() {
+    for field in [
+        r#""direction":"invalid""#,
+        r#""direction":{}"#,
+        r#""directed":"invalid""#,
+    ] {
+        let root = parse_data(&format!(r#"{{"graph":{{"type":"directed"}},"nodes":[{{"id":"a"}},{{"id":"b"}}],"edges":[{{"source":"a","target":"b",{field}}}]}}"#), Some(DataFormat::Json)).unwrap().0;
+        assert!(try_build_relationship_graph(&root).is_err());
+    }
+}
+#[test]
+fn nested_mesh_graph_keeps_exact_nodes_edges_weights_directions_and_paths() {
+    use struct_view_core::graph::EdgeDirection;
+    let source = r#"{"graph":{"id":"mesh_network","type":"undirected","nodes":[
+            {"id":"A","label":"Node A","role":"Gateway"},{"id":"B","label":"Node B","role":"Router"},
+            {"id":"C","label":"Node C","role":"Core"},{"id":"D","label":"Node D","role":"Router"},
+            {"id":"E","label":"Node E","role":"Gateway"}],"edges":[
+            {"source":"A","target":"B","weight":1.5,"bidirectional":true},
+            {"source":"A","target":"C","weight":2.0,"bidirectional":true},
+            {"source":"B","target":"C","weight":1.0,"bidirectional":true},
+            {"source":"B","target":"D","weight":3.2,"bidirectional":true},
+            {"source":"C","target":"D","weight":1.8,"bidirectional":true},
+            {"source":"C","target":"E","weight":2.5,"bidirectional":true},
+            {"source":"D","target":"E","weight":1.2,"bidirectional":true}]}}"#;
+    let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+    for format in DataFormat::ALL {
+        let text = struct_view_core::parser::serialize_node(&root, format, false).unwrap();
+        let parsed = parse_data(&text, Some(format)).unwrap().0;
+        let graph = try_build_relationship_graph(&parsed).unwrap();
+        assert_eq!(graph.nodes.len(), 5);
+        assert_eq!(graph.edges.len(), 7);
+        assert_eq!(graph.direction_name(), "bidirectional");
+        assert_eq!(graph.nodes[0].label, "Node A");
+        assert_eq!(graph.nodes[0].path, "graph.nodes[0]");
+        assert!(graph.nodes.iter().all(|node| node.id != "mesh_network"));
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .map(|edge| (edge.source, edge.target, edge.label.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (0, 1, "1.5"),
+                (0, 2, "2.0"),
+                (1, 2, "1.0"),
+                (1, 3, "3.2"),
+                (2, 3, "1.8"),
+                (2, 4, "2.5"),
+                (3, 4, "1.2")
+            ]
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .all(|edge| edge.direction == EdgeDirection::Bidirectional)
+        );
+    }
+}
+
+#[test]
+fn bidirectional_boolean_and_nested_graph_validation_are_explicit() {
+    use struct_view_core::graph::EdgeDirection;
+    let root = parse_data(
+        r#"{"graph":{"type":"directed","nodes":{"a":"A","b":"B"},"edges":[
+            {"source":"a","target":"b","bidirectional":false},
+            {"source":"a","target":"b","bidirectional":true}]}}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    let graph = try_build_relationship_graph(&root).unwrap();
+    assert_eq!(graph.edges.len(), 2);
+    assert_eq!(graph.edges[0].direction, EdgeDirection::Directed);
+    assert_eq!(graph.edges[1].direction, EdgeDirection::Bidirectional);
+    for source in [
+        r#"{"graph":{"type":"directed","nodes":[]}}"#,
+        r#"{"graph":{"type":"unknown","nodes":[],"edges":[]}}"#,
+        r#"{"graph":{"type":"directed","nodes":[],"edges":"invalid"}}"#,
+        r#"{"graph":{"type":"directed","nodes":[],"edges":[]},"nodes":[]}"#,
+        r#"{"graph":{"type":"directed"},"nodes":[{"id":"a"},{"id":"b"}],"edges":[{"source":"a","target":"b","bidirectional":"true"}]}"#,
+        r#"{"graph":{"type":"directed"},"nodes":[{"id":"a"},{"id":"b"}],"edges":[{"source":"a","target":"b","direction":"reverse","bidirectional":true}]}"#,
+    ] {
+        let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+        assert!(try_build_relationship_graph(&root).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn graph_tuple_formats_and_adjacency_preserve_loop_and_direction_semantics() {
+    use struct_view_core::graph::EdgeDirection;
+    for (source, expected) in [
+        (
+            r#"{"graph":{"type":"undirected"},"adjacency":{"a":["a","b"],"b":["a"]}}"#,
+            vec![EdgeDirection::Undirected; 2],
+        ),
+        (
+            r#"{"graph":{"type":"weighted_undirected","node_order":["a","b"],"adjacency_matrix":[[2,3],[3,0]]}}"#,
+            vec![EdgeDirection::Undirected; 2],
+        ),
+        (
+            r#"{"graph":{"name":"entities","directed":true,"entity_count":2,"relation_count":2},"entities":{"a":"A","b":"B"},"relations":{"edges":[["a","a","loop","","bidirectional"],["a","b","back","","reverse"]]}}"#,
+            vec![EdgeDirection::Bidirectional, EdgeDirection::Reverse],
+        ),
+        (
+            r#"{"graph":{"type":"bipartite","direction":"bidirectional"},"partitions":{"left":["a"],"right":["b"]},"relations":{"pairs":[["a","b","both"],["a","a","loop","reverse"]]}}"#,
+            vec![EdgeDirection::Reverse, EdgeDirection::Bidirectional],
+        ),
+        (
+            r#"{"graph":{"type":"mixed_multigraph"},"nodes":{"a":"A","b":"B"},"edges":[{"source":"a","target":"a","direction":"both"},{"source":"a","target":"b","directed":false}]}"#,
+            vec![EdgeDirection::Bidirectional, EdgeDirection::Undirected],
+        ),
+    ] {
+        let root = parse_data(source, Some(DataFormat::Json)).unwrap().0;
+        let graph = try_build_relationship_graph(&root).unwrap();
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .map(|edge| edge.direction)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(graph.edges.iter().any(|edge| edge.source == edge.target));
+    }
+    let root = parse_data(r#"[{"id":"a","ref":"a"}]"#, Some(DataFormat::Json))
+        .unwrap()
+        .0;
+    assert_eq!(build_relationship_graph(&root).edges.len(), 1);
+}
+
+#[test]
+fn graph_adjacency_and_matrix_support_direction_defaults_without_losing_tiny_loops() {
+    use struct_view_core::graph::EdgeDirection;
+    for (kind, direction) in [
+        ("directed", EdgeDirection::Directed),
+        ("bidirectional", EdgeDirection::Bidirectional),
+        ("undirected", EdgeDirection::Undirected),
+    ] {
+        let root = parse_data(
+            &format!(r#"{{"graph":{{"type":"{kind}"}},"adjacency":{{"a":["a","b"],"b":[]}}}}"#),
+            Some(DataFormat::Json),
+        )
+        .unwrap()
+        .0;
+        let graph = try_build_relationship_graph(&root).unwrap();
+        assert_eq!(graph.edges.len(), 2);
+        assert!(graph.edges.iter().all(|edge| edge.direction == direction));
+        let root = parse_data(&format!(r#"{{"graph":{{"type":"weighted_{kind}","node_order":["a","b"],"adjacency_matrix":[[1e-1000,2],[null,0]]}}}}"#), Some(DataFormat::Json)).unwrap().0;
+        let graph = try_build_relationship_graph(&root).unwrap();
+        assert_eq!(
+            graph.edges.len(),
+            2,
+            "tiny nonzero diagonal must not disappear"
+        );
+        assert!(graph.edges.iter().all(|edge| edge.direction == direction));
+    }
+    let root = parse_data(r#"{"graph":{"type":"directed","direction":"reverse","node_order":["a","b"],"adjacency_matrix":[[0,null],[3,0]]}}"#, Some(DataFormat::Json)).unwrap().0;
+    let graph = try_build_relationship_graph(&root).unwrap();
+    assert_eq!(graph.edges.len(), 1);
+    assert_eq!(graph.edges[0].direction, EdgeDirection::Reverse);
+    assert_eq!((graph.edges[0].source, graph.edges[0].target), (1, 0));
 }
 
 #[test]
@@ -216,11 +653,15 @@ fn graph_reads_weighted_undirected_yaml_adjacency_matrix() {
                 source: 0,
                 target: 1,
                 label: "180 км".to_string(),
+                direction: struct_view_core::graph::EdgeDirection::Undirected,
+                attributes: Vec::new(),
             },
             GraphEdge {
                 source: 0,
                 target: 2,
                 label: "0 км".to_string(),
+                direction: struct_view_core::graph::EdgeDirection::Undirected,
+                attributes: Vec::new(),
             },
         ]
     );

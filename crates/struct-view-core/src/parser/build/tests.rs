@@ -505,7 +505,7 @@ fn special_graphs_convert_to_json_yaml_and_toml() {
 }
 
 #[test]
-fn graphml_rejects_mixed_edge_directions() {
+fn graphml_preserves_mixed_edge_directions() {
     let source = r#"
         <graphml xmlns="http://graphml.graphdrawing.org/xmlns">
           <graph edgedefault="directed">
@@ -517,8 +517,84 @@ fn graphml_rejects_mixed_edge_directions() {
           </graph>
         </graphml>
     "#;
-    let error = parse_data(source, Some(DataFormat::GraphMl)).unwrap_err();
-    assert!(error.message.contains("одновременно ориентированные"));
+    let (root, _) = parse_data(source, Some(DataFormat::GraphMl)).unwrap();
+    let value = node_to_value(&root).unwrap();
+    assert_eq!(value["graph"]["type"], "mixed_multigraph");
+    assert_eq!(value["edges"][0]["direction"], "undirected");
+    assert_eq!(value["edges"][1]["direction"], "directed");
+}
+
+#[test]
+fn special_graphs_preserve_arrow_directions_defaults_and_loops() {
+    let sources = [
+        (
+            DataFormat::Dot,
+            r#"digraph {
+            edge [dir=both]; a -> b; a -> a [dir=back];
+            a -> b [dir=none]; b -> a [dir=forward];
+        }"#,
+            vec!["bidirectional", "reverse", "undirected", "directed"],
+        ),
+        (
+            DataFormat::Gexf,
+            r#"<gexf><graph defaultedgetype="mutual">
+            <nodes><node id="a"/><node id="b"/></nodes><edges>
+            <edge source="a" target="b"/>
+            <edge source="a" target="a" type="directed"/>
+            <edge source="a" target="b" type="undirected"/>
+            </edges></graph></gexf>"#,
+            vec!["bidirectional", "directed", "undirected"],
+        ),
+        (
+            DataFormat::GraphMl,
+            r#"<graphml>
+            <key id="d" for="edge" attr.name="direction" attr.type="string"/>
+            <graph edgedefault="undirected"><node id="a"/><node id="b"/>
+            <edge source="a" target="b"><data key="d">bidirectional</data></edge>
+            <edge source="a" target="a" directed="true"/>
+            <edge source="a" target="b"/>
+            </graph></graphml>"#,
+            vec!["bidirectional", "directed", "undirected"],
+        ),
+    ];
+    for (format, source, expected) in sources {
+        let (root, _) = parse_data(source, Some(format)).unwrap();
+        let original = node_to_value(&root).unwrap();
+        assert_eq!(
+            original["edges"][1]["source"],
+            original["edges"][1]["target"]
+        );
+        let edges = original["edges"].as_array().unwrap();
+        assert_eq!(
+            edges
+                .iter()
+                .map(|edge| edge["direction"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for target in DataFormat::ALL {
+            let converted = serialize_node(&root, target, false).unwrap();
+            let (roundtrip, _) = parse_data(&converted, Some(target)).unwrap();
+            assert_eq!(
+                node_to_value(&roundtrip).unwrap(),
+                original,
+                "{format} -> {target}"
+            );
+        }
+    }
+    for (format, source) in [
+        (DataFormat::Dot, "digraph {a -> b [dir=invalid]}"),
+        (
+            DataFormat::Gexf,
+            r#"<gexf><graph defaultedgetype="invalid"/></gexf>"#,
+        ),
+        (
+            DataFormat::GraphMl,
+            r#"<graphml><key id="d" for="edge" attr.name="direction"/><graph edgedefault="directed"><node id="a"/><edge source="a" target="a"><data key="d">invalid</data></edge></graph></graphml>"#,
+        ),
+    ] {
+        assert!(parse_data(source, Some(format)).is_err());
+    }
 }
 
 #[test]

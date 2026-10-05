@@ -3,7 +3,7 @@
 /// Тип значения узла структурированных данных.
 ///
 /// Используется для цветовой маркировки узлов дерева.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsonValueType {
     /// Объект `{…}`
     Object,

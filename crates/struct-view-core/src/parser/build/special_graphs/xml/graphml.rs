@@ -77,23 +77,31 @@ pub(super) fn parse_graphml(input: &str) -> Result<Value, String> {
             .map(|value| parse_xml_bool(value, "GraphML edge directed"))
             .transpose()?
             .unwrap_or(default_directed);
-        directions.insert(directed);
-
+        let direction = EdgeDirection::from_directed(directed);
         let mut attributes = graphml_data(element, "edge", &keys, &keys_by_id)?;
+        let direction = match attributes.get("direction") {
+            Some(Value::String(value)) => EdgeDirection::parse(value)?,
+            Some(_) => return Err("GraphML direction data must be a string".to_string()),
+            None => direction,
+        };
+        directions.insert(direction);
         add_xml_attributes(
             &mut attributes,
             element,
             &["id", "source", "target", "directed"],
         )?;
         add_xml_extensions(&mut attributes, element, &["data"])?;
-        edges.push(edge_record(
+        let mut edge = edge_record(
             source,
             target,
             element.attribute("id").map(str::to_string),
             attributes,
-        ));
+        );
+        set_edge_direction(&mut edge, direction);
+        edges.push(edge);
     }
-    let directed = uniform_direction(directions, default_directed, "GraphML")?;
+    let graph_type =
+        direction_graph_type(directions, EdgeDirection::from_directed(default_directed));
 
     let mut graph_attributes = graphml_data(*graph, "graph", &keys, &keys_by_id)?;
     add_xml_attributes(&mut graph_attributes, *graph, &["id", "edgedefault"])?;
@@ -109,7 +117,7 @@ pub(super) fn parse_graphml(input: &str) -> Result<Value, String> {
             .attribute("id")
             .map(str::to_string)
             .or_else(|| graph_attributes.get("name").and_then(value_as_string)),
-        graph_type(directed),
+        graph_type,
         "graphml",
         graph_attributes,
         metadata,

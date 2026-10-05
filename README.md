@@ -3,7 +3,8 @@
 A fast, cross-platform viewer and editor for structured data. The application
 displays JSON, YAML, TOML, and JSON5 as an interactive tree, imports Graphviz
 DOT, GraphML, and GEXF graphs for inspection and conversion, and provides
-headless commands for formatting, validation, search, and comparison.
+headless commands for formatting, validation, search, comparison, editing,
+and table, schema, and graph export.
 
 [Русская версия документации](docs/README.ru.md)
 
@@ -22,6 +23,8 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 - a regex builder for escaped literal text and common pattern fragments;
 - switchable tree, relationship graph, flattened table, and schema views;
 - graph links inferred from common entity identifiers and reference fields;
+- per-edge directed, undirected, bidirectional, and reverse links, mixed graphs,
+  and self-loops in the GUI and graph exports;
 - CSV export of table rows, respecting the active search filter;
 - JSON Schema and OpenAPI schema views, including component and inline path
   schemas, with inferred sample structure for ordinary data documents;
@@ -178,6 +181,8 @@ The interface provides:
   displaced-label leaders are checked against nodes, labels, routes, and other
   leaders. Where a clear direct leader is impossible, matching numbered
   markers identify the connection and its label without a long crossing line.
+  Numbered connection markers reserve space around arrowheads, including when
+  dense routes require fallback placement; the same rule applies to SVG/PNG.
 - a flattened path/value/type table that follows the search filter and can be
   exported as CSV;
 - a schema diagram for JSON Schema and OpenAPI component/inline path schemas;
@@ -316,8 +321,9 @@ Russian catalogs are maintained separately.
 The release binary can be run directly. During development, use the same
 commands through `cargo run --`.
 
-CLI commands, options, help text, and runtime messages use English. Command and
-option names are language-independent.
+CLI commands, options, help text, and command diagnostics use English.
+Details from the shared parsers and editing validators may be localized.
+Command and option names are language-independent.
 
 ### Formatting
 
@@ -426,6 +432,136 @@ for a path that does not exist in a file, while JSON `null` is printed as
 `null`. It returns exit code `0` when all inputs are identical and exit code
 `1` when differences or a data error are found. `compare` is accepted as an
 alias for `diff`.
+
+### Reading, creating, and editing documents
+
+All commands run without a native window. A missing input file or `-` reads
+stdin. Document output goes to stdout unless `--output FILE` or, for edits,
+`--in-place` is specified. Writes use atomic replacement and are attempted only
+after parsing, editing, and serialization succeed.
+
+```sh
+struct_view new empty.json
+struct_view new --to yaml
+struct_view convert data.json --to yaml
+struct_view get user.name data.json
+struct_view get user.name data.json --raw
+struct_view get user.name data.json --part key
+struct_view get user.name data.json --part path
+struct_view add '$' data.json --key enabled --type boolean --value true
+struct_view add users data.json --type object
+struct_view set user.name data.json --type string --value 'Grace Hopper' --in-place
+struct_view rename user.name display_name data.json --output renamed.json
+struct_view delete data.json --path users[0] --path obsolete --in-place
+```
+
+Paths accept the spelling printed by `find`, including quoted keys such as
+`user["a.b"]`, or the `$`-prefixed paths exported by the table. `$` identifies
+the root. Multiple `--path` selections for `copy` and `delete` are validated
+before modification; selecting a parent and its descendants processes the
+parent only once. Root deletion is not allowed.
+
+`get` prints the serialized value by default. `--part key` or `--part path`
+prints the field name/index or tree path as text. `--raw` prints the text of a
+string, native date/time, or comment without JSON quotes. A root has no key.
+Extracted TOML values other than objects default to JSON because TOML cannot
+serialize a standalone scalar or array document; `--to` explicitly overrides this.
+
+`new` creates an empty object and refuses to replace an existing file.
+`convert`, `new`, `get`, and edits support `--to json|yaml|toml|json5` and
+`--minify`. Without `--to`, an output filename's extension selects the format,
+otherwise the input format is retained. Conflicting `--to` and output
+extensions are rejected. Imported graphs default to JSON for conversion and
+are read-only: they cannot be edited or overwritten, even through an `.xml`
+filename.
+
+`add` and `set` use the same typed constructor as the GUI:
+
+| `--type` | `--value` |
+| --- | --- |
+| `string` | plain text (not a quoted literal) |
+| `number`, `float` | a numeric literal; `float` preserves the float type |
+| `boolean` (or `bool`) | `true` or `false` |
+| `null`, `object`, `array` | no `--value`; new containers are empty |
+| `datetime` | native TOML date/time, TOML documents only |
+| `comment` | comment text, JSON5/YAML/TOML only |
+| `metadata` | tagged YAML value, for example `!custom value` |
+
+`add` requires `--key` when inserting an object field; array elements append.
+`set --key` also renames an object field. Newly entered names are trimmed and
+must be nonempty; duplicate names fail. As in the GUI, setting a container to
+its existing type preserves its children. To insert populated structures, use
+`paste`. Native dates, comments, and YAML tags retain the same format-specific
+restrictions as GUI editing and saving.
+
+### Copying and pasting structures
+
+```sh
+struct_view copy source.json --path user --path settings --output selection.json
+struct_view paste '$' target.json --from selection.json --in-place
+struct_view copy source.json --path user | struct_view paste '$' target.json --in-place
+struct_view copy source.json --path user --clipboard
+struct_view paste '$' target.json --clipboard --output pasted.json
+```
+
+`copy` emits the same JSON selection envelope as the GUI, retaining field names
+and nested structure. `paste` accepts that envelope or ordinary JSON from
+`--from FILE` (or `-`), defaulting to stdin. Only one source can be stdin.
+Unkeyed root objects merge their fields into objects; root arrays append their
+elements to arrays. Keyed entries retain names in objects and append as values
+in arrays. Duplicate object keys fail rather than overwrite.
+
+`--clipboard` explicitly uses the system clipboard instead of the selection
+stream. This option requires an accessible platform clipboard; all other
+operations, including image export, work without a display server.
+
+### Table, schema, and graph exports
+
+```sh
+struct_view table data.json --output table.csv
+struct_view table data.json --query name --keys --exact
+struct_view schema data.json --output schema.json
+struct_view schema api.yaml --query id --keys
+struct_view graph network.graphml --output graph.json
+struct_view graph network.graphml --output graph.svg
+struct_view graph network.graphml --output graph.png --dark
+```
+
+`table` exports the GUI's flattened CSV with `path,value,type` columns, including
+containers, empty values, comments, and native types. `table` and `schema`
+accept `--query` and all `find` search flags; an empty result is a successful
+empty export (CSV header or empty schema rows).
+
+`schema` exports the GUI diagram model, not a newly generated JSON Schema
+contract: `source` is `json-schema`, `openapi`, or `inferred`; `title` is optional;
+`rows` contain `key`, `path`, `type`, `required`, `constraints`, and `reference`.
+Sample-derived schemas are explicitly marked `inferred`.
+
+`graph` exports the GUI relationship model as JSON: `directed`, `direction`, `partitions`,
+`nodes` (`id`, `label`, `path`, `partition`), and `edges`
+(`source`, `target`, `label`, `direction`). The summary `direction` is `mixed`
+when edge directions differ; `directed` means at least one edge has an arrow.
+Edge directions are `directed`, `undirected`, `bidirectional`, or `reverse`.
+Edge endpoints are zero-based node indexes;
+parallel edges and partitions are retained. No recognized entities is an error.
+Self-loops are routed outside their node and retained in all graph outputs.
+See [per-edge direction and self-loops](docs/tutorial/en.md#per-edge-direction-and-self-loops)
+for input fields, DOT `dir`, GEXF `mutual`, and GraphML direction rules.
+The GUI and CLI also share adapters for node-link/NetworkX, Cytoscape,
+keyed dictionaries, edge tuples, and adjacency lists in JSON, JSON5, YAML,
+and TOML. See [supported graph structures](docs/tutorial/en.md#supported-graph-structures)
+for shapes, defaults, and validation rules.
+An `.svg` or `.png` output extension selects image export; alternatively use
+`--image svg|png --output FILE`. Images require an output file and use the GUI's
+full graph layout and unabridged relationship labels. The default is light
+styling on a transparent canvas; `--dark` uses an opaque dark canvas.
+PNG retains the entire graph and is downscaled when necessary to at most
+16 million pixels; SVG retains vector detail. Interactive zoom, selection,
+themes, language, and undo/redo are not CLI document operations.
+
+The CLI reuses a window-free API in the UI crate for editing, clipboard
+envelopes, and visualization models, and the existing in-memory graph renderer
+for SVG/PNG. It does not initialize the native GUI.
 
 ### Common options
 

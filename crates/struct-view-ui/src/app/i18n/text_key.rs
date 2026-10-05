@@ -184,6 +184,8 @@ pub(in crate::app) enum TextKey {
     GraphExportDark,
     GraphDirectedLink,
     GraphUndirectedLink,
+    GraphBidirectionalLink,
+    GraphReverseLink,
     GraphLinkSource,
     GraphLinkTarget,
     DiffLeft,

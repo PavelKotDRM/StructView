@@ -190,6 +190,8 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphExportDark => "Тёмная тема / непрозрачный фон",
         TextKey::GraphDirectedLink => "Направленная связь",
         TextKey::GraphUndirectedLink => "Ненаправленная связь",
+        TextKey::GraphBidirectionalLink => "Двунаправленная связь",
+        TextKey::GraphReverseLink => "Обратная связь (от цели к источнику)",
         TextKey::GraphLinkSource => "Узел A / источник",
         TextKey::GraphLinkTarget => "Узел B / цель",
         TextKey::GraphNoRelationships => {

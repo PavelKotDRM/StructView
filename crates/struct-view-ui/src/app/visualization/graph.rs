@@ -1,8 +1,10 @@
 use std::collections::{BTreeSet, HashMap};
 
+use struct_view_core::graph::EdgeDirection;
 use struct_view_core::parser::{JsonNode, JsonValueType};
 
 mod explicit;
+mod shapes;
 
 /// Узел графа сущностей, найденный по идентификатору или определению схемы.
 #[derive(Debug, Clone)]
@@ -12,6 +14,44 @@ pub(in crate::app) struct GraphNode {
     pub(in crate::app) path: String,
     pub(in crate::app) search_paths: Vec<String>,
     pub(in crate::app) partition: Option<usize>,
+    pub(in crate::app) attributes: Vec<(String, String)>,
+}
+
+impl GraphNode {
+    pub(in crate::app) fn hover_text(&self) -> String {
+        let mut text = format!("{}\n{}\n{}", self.label, self.id, self.path);
+        for (key, value) in &self.attributes {
+            text.push_str(&format!("\n{key}: {value}"));
+        }
+        text
+    }
+}
+
+fn record_attributes(record: &JsonNode) -> Vec<(String, String)> {
+    if record.value_type != JsonValueType::Object {
+        return Vec::new();
+    }
+    super::table::build_table(record)
+        .rows
+        .into_iter()
+        .skip(1)
+        .filter(|row| row.value_type != JsonValueType::Comment)
+        .map(|row| {
+            let value = match row.value_type {
+                JsonValueType::Object => format!("{{{}}}", row.child_count),
+                JsonValueType::Array => format!("[{}]", row.child_count),
+                _ => row.value,
+            };
+            (
+                row.path
+                    .strip_prefix("$.")
+                    .or_else(|| row.path.strip_prefix('$'))
+                    .unwrap_or(&row.path)
+                    .to_string(),
+                value,
+            )
+        })
+        .collect()
 }
 
 /// Направленное ребро от сущности, содержащей ссылку, к её целевой сущности.
@@ -20,6 +60,18 @@ pub(in crate::app) struct GraphEdge {
     pub(in crate::app) source: usize,
     pub(in crate::app) target: usize,
     pub(in crate::app) label: String,
+    pub(in crate::app) direction: EdgeDirection,
+    pub(in crate::app) attributes: Vec<(String, String)>,
+}
+
+impl GraphEdge {
+    pub(in crate::app) fn hover_text(&self) -> String {
+        let mut text = format!("{}\ndirection: {}", self.label, self.direction.as_str());
+        for (key, value) in &self.attributes {
+            text.push_str(&format!("\n{key}: {value}"));
+        }
+        text
+    }
 }
 
 /// Граф идентифицированных сущностей и распознанных ссылок между ними.
@@ -42,10 +94,39 @@ impl Default for RelationshipGraph {
     }
 }
 
+impl RelationshipGraph {
+    pub(in crate::app) fn direction_name(&self) -> &'static str {
+        match self.edges.first().map(|edge| edge.direction) {
+            Some(direction) if self.edges.iter().all(|edge| edge.direction == direction) => {
+                direction.as_str()
+            }
+            Some(_) => "mixed",
+            None => EdgeDirection::from_directed(self.directed).as_str(),
+        }
+    }
+}
+
 /// Построить граф по полям `id`, `_id`, `$id`, `$ref` и именам зависимостей.
+#[cfg(test)]
 pub(in crate::app) fn build_relationship_graph(root: &JsonNode) -> RelationshipGraph {
-    if let Some(graph) = explicit::build_supported_graph(root) {
-        return graph;
+    try_build_relationship_graph(root).expect("valid graph fixture")
+}
+
+pub(in crate::app) fn try_build_relationship_graph(
+    root: &JsonNode,
+) -> Result<RelationshipGraph, String> {
+    let explicit_graph = match shapes::build(root)? {
+        Some(graph) => Some(graph),
+        None => explicit::build_supported_graph(root)?,
+    };
+    if let Some(mut graph) = explicit_graph {
+        if !graph.edges.is_empty() {
+            graph.directed = graph
+                .edges
+                .iter()
+                .any(|edge| edge.direction != EdgeDirection::Undirected);
+        }
+        return Ok(graph);
     }
 
     let mut graph = RelationshipGraph::default();
@@ -68,9 +149,11 @@ pub(in crate::app) fn build_relationship_graph(root: &JsonNode) -> RelationshipG
             source,
             target,
             label,
+            direction: EdgeDirection::Directed,
+            attributes: Vec::new(),
         })
         .collect();
-    graph
+    Ok(graph)
 }
 
 fn collect_graph_nodes(
@@ -122,6 +205,7 @@ fn collect_graph_nodes(
                     .chain(node.children.iter().map(|child| child.path.clone()))
                     .collect(),
                 partition: None,
+                attributes: record_attributes(node),
             });
             nodes_by_path.insert(node.path.clone(), index);
             add_graph_alias(aliases, id, index);
@@ -173,7 +257,6 @@ fn collect_graph_edges(
                 for reference in references {
                     if let Some(targets) = aliases.get(&reference)
                         && let [target] = targets.as_slice()
-                        && *target != source
                     {
                         edges.insert((source, *target, label.to_string()));
                     }

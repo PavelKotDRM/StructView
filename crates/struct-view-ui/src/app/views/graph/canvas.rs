@@ -8,6 +8,7 @@ pub(super) struct GraphInteractionState {
     pub(super) selected: HashSet<usize>,
     marquee_start: Option<Pos2>,
     marquee_base: HashSet<usize>,
+    edge_hover: Option<(Pos2, Vec<usize>)>,
 }
 
 impl Default for GraphInteractionState {
@@ -17,6 +18,7 @@ impl Default for GraphInteractionState {
             selected: HashSet::new(),
             marquee_start: None,
             marquee_base: HashSet::new(),
+            edge_hover: None,
         }
     }
 }
@@ -181,13 +183,18 @@ pub(in crate::app) fn show_graph(
         let mut hovered_node = None;
         for (index, node) in graph.nodes.iter().enumerate() {
             let rect = egui::Rect::from_center_size(positions[index], GRAPH_NODE_SIZE * zoom);
-            let response = ui
-                .interact(
-                    rect,
-                    ui.make_persistent_id(("graph-node", &node.path)),
-                    Sense::click(),
-                )
-                .on_hover_text(format!("{}\n{}\n{}", node.label, node.id, node.path));
+            let response = ui.interact(
+                rect,
+                ui.make_persistent_id(("graph-node", &node.path)),
+                Sense::click(),
+            );
+            show_graph_tooltip(&response, |ui| {
+                ui.set_max_width(480.0);
+                ui.strong(&node.label);
+                ui.monospace(&node.id);
+                ui.weak(&node.path);
+                show_graph_attributes(ui, ("graph-node-attributes", &node.path), &node.attributes);
+            });
             if response.hovered() {
                 hovered_node = Some(index);
             }
@@ -286,19 +293,8 @@ pub(in crate::app) fn show_graph(
             for segment in edge_path.windows(2) {
                 painter.line_segment([transform(segment[0]), transform(segment[1])], stroke);
             }
-            let final_segment = edge_path
-                .windows(2)
-                .last()
-                .expect("graph edges must connect distinct nodes");
-            if graph.directed {
-                let direction = (final_segment[1] - final_segment[0]).normalized();
-                draw_arrow_head(
-                    &painter,
-                    transform(final_segment[1]),
-                    direction,
-                    stroke,
-                    zoom,
-                );
+            for (tip, direction) in edge_arrowheads(edge_path, edge.direction) {
+                draw_arrow_head(&painter, transform(tip), direction, stroke, zoom);
             }
         }
         for (edge_index, label) in routing.edge_labels.iter().enumerate() {
@@ -361,12 +357,14 @@ pub(in crate::app) fn show_graph(
                         );
                     }
                 }
-                ui.interact(
+                let response = ui.interact(
                     label_rect,
                     ui.make_persistent_id(("graph-edge-label", edge_index)),
                     Sense::hover(),
-                )
-                .on_hover_ui(|ui| show_graph_edge_information(ui, graph, edge_index, locale));
+                );
+                show_graph_tooltip(&response, |ui| {
+                    show_graph_edge_information(ui, graph, edge_index, locale)
+                });
             }
         }
 
@@ -485,11 +483,13 @@ pub(in crate::app) fn show_graph(
                 id_color,
             );
         }
+        let mut edge_hit = false;
         if interaction.marquee_start.is_none()
             && !ui.input(|input| input.pointer.any_down())
             && let Some(pointer) = ui.input(|input| input.pointer.hover_pos())
             && ui.clip_rect().contains(pointer)
             && canvas.contains(pointer)
+            && ui.ctx().layer_id_at(pointer) == Some(ui.layer_id())
             && !positions.iter().any(|center| {
                 egui::Rect::from_center_size(*center, GRAPH_NODE_SIZE * zoom).contains(pointer)
             })
@@ -504,12 +504,18 @@ pub(in crate::app) fn show_graph(
             let local_pointer = Pos2::ZERO + (pointer - canvas.min) / zoom;
             let edges = graph_edges_at_pointer(&routing.edge_paths, local_pointer, 6.0 / zoom);
             if !edges.is_empty() {
-                ui.interact(
-                    egui::Rect::from_center_size(pointer, Vec2::splat(2.0)),
-                    ui.make_persistent_id(("graph-edge-hover", routing.graph_fingerprint, &edges)),
-                    Sense::hover(),
-                )
-                .on_hover_ui(|ui| {
+                edge_hit = true;
+                interaction.edge_hover = Some((pointer, edges));
+            }
+        }
+        if let Some((pointer, edges)) = &interaction.edge_hover {
+            let response = ui.interact(
+                egui::Rect::from_center_size(*pointer, Vec2::splat(2.0)),
+                ui.make_persistent_id(("graph-edge-hover", routing.graph_fingerprint)),
+                Sense::hover(),
+            );
+            if edge_hit || response.is_tooltip_open() {
+                show_graph_tooltip(&response, |ui| {
                     for (index, &edge_index) in edges.iter().enumerate() {
                         if index > 0 {
                             ui.separator();
@@ -517,6 +523,8 @@ pub(in crate::app) fn show_graph(
                         show_graph_edge_information(ui, graph, edge_index, locale);
                     }
                 });
+            } else {
+                interaction.edge_hover = None;
             }
         }
     });
@@ -555,11 +563,13 @@ fn show_graph_edge_information(
     edge_index: usize,
     locale: Locale,
 ) {
+    ui.set_max_width(480.0);
     let edge = &graph.edges[edge_index];
-    ui.label(locale.text(if graph.directed {
-        TextKey::GraphDirectedLink
-    } else {
-        TextKey::GraphUndirectedLink
+    ui.label(locale.text(match edge.direction {
+        EdgeDirection::Directed => TextKey::GraphDirectedLink,
+        EdgeDirection::Undirected => TextKey::GraphUndirectedLink,
+        EdgeDirection::Bidirectional => TextKey::GraphBidirectionalLink,
+        EdgeDirection::Reverse => TextKey::GraphReverseLink,
     }));
     if !edge.label.is_empty() {
         ui.label(&edge.label);
@@ -577,4 +587,48 @@ fn show_graph_edge_information(
         ));
         ui.weak(&node.path);
     }
+    show_graph_attributes(ui, ("graph-edge-attributes", edge_index), &edge.attributes);
+}
+
+fn show_graph_attributes(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    attributes: &[(String, String)],
+) {
+    if attributes.is_empty() {
+        return;
+    }
+
+    ui.separator();
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(320.0)
+        .show(ui, |ui| {
+            for (key, value) in attributes {
+                ui.add(
+                    egui::Label::new(format!("{key}: {value}"))
+                        .wrap()
+                        .selectable(true),
+                );
+            }
+        });
+}
+
+fn show_graph_tooltip(response: &egui::Response, contents: impl FnOnce(&mut egui::Ui)) {
+    let id = egui::Tooltip::next_tooltip_id(&response.ctx, response.id);
+    let hovered = response.is_tooltip_open()
+        && response
+            .ctx
+            .input(|input| input.pointer.hover_pos())
+            .is_some_and(|pointer| {
+                response.ctx.layer_id_at(pointer)
+                    == Some(egui::LayerId::new(egui::Order::Tooltip, id))
+            });
+    // Normal egui tooltips close on scroll, even when the tooltip contains a scroll area.
+    let tooltip = if hovered {
+        egui::Tooltip::for_widget(response)
+    } else {
+        egui::Tooltip::for_enabled(response)
+    };
+    tooltip.show(contents);
 }

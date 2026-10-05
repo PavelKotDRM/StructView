@@ -15,6 +15,31 @@ pub enum Source {
 }
 
 impl Source {
+    /// Prevent exports from replacing a read-only imported graph source.
+    pub(super) fn check_output(
+        &self,
+        output: Option<&std::path::Path>,
+        format: DataFormat,
+    ) -> Result<(), String> {
+        if format.is_serializable() {
+            return Ok(());
+        }
+        if let (Self::File(input), Some(output)) = (self, output)
+            && output.exists()
+        {
+            let resolve = |path: &std::path::Path| {
+                path.canonicalize()
+                    .map_err(|error| format!("Cannot resolve {}: {error}", path.display()))
+            };
+            if resolve(input)? == resolve(output)? {
+                return Err(
+                    "Imported graph files are read-only and cannot be overwritten".to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Получить подсказку формата из расширения файла.
     pub fn format_hint(&self) -> Option<DataFormat> {
         match self {

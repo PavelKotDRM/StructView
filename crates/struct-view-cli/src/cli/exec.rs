@@ -22,6 +22,7 @@ use super::source::Source;
 /// из headless-режима.
 pub fn run(command: &Command) -> Result<bool, String> {
     match command {
+        Command::Operation(options) => super::operations::run(options),
         Command::Help => {
             write_text(super::HELP)?;
             Ok(true)
@@ -115,6 +116,7 @@ fn run_format(input: &Source, output: Option<&Path>, minify: bool) -> Result<boo
             return Ok(false);
         }
     };
+    input.check_output(output, input_format)?;
     let output_format = match output.and_then(DataFormat::from_path) {
         Some(format) if format.is_serializable() => format,
         Some(format) => {

@@ -61,17 +61,26 @@ pub(in crate::app) fn export_graph_image(
     {
         path.set_extension(extension);
     }
+    let content = render_graph_image(graph, routing, format, style)?;
+    struct_view_core::files::write_bytes_atomic(&path, &content)?;
+    Ok(true)
+}
+
+pub(in crate::app) fn render_graph_image(
+    graph: &RelationshipGraph,
+    routing: &GraphRoutingLayout,
+    format: GraphExportFormat,
+    style: GraphExportStyle,
+) -> io::Result<Vec<u8>> {
     let visuals = match style {
         GraphExportStyle::LightTransparent => egui::Visuals::light(),
         GraphExportStyle::DarkOpaque => egui::Visuals::dark(),
     };
     let svg = graph_svg(graph, routing, &visuals);
-    let content = match format {
-        GraphExportFormat::Svg => svg.into_bytes(),
-        GraphExportFormat::Png => graph_png(&svg)?,
-    };
-    struct_view_core::files::write_bytes_atomic(&path, &content)?;
-    Ok(true)
+    match format {
+        GraphExportFormat::Svg => Ok(svg.into_bytes()),
+        GraphExportFormat::Png => graph_png(&svg),
+    }
 }
 
 fn xml_text(value: &str) -> String {
@@ -176,6 +185,10 @@ fn graph_svg(
             Some(label)
         }).collect::<Vec<_>>();
         resolve_graph_label_leaders(&mut labels, &node_rects, &routing.edge_paths);
+        for (_, anchor) in labels.iter().flatten().filter_map(|label| label.reference) {
+            content_size.x = content_size.x.max(anchor.x + 24.0);
+            content_size.y = content_size.y.max(anchor.y + 24.0);
+        }
         writeln!(svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">"#,
             content_size.x.ceil(), content_size.y.ceil(),
             content_size.x.ceil(), content_size.y.ceil(),
@@ -193,12 +206,13 @@ fn graph_svg(
             let fill = graph_edge_color(&edge.label, colors);
             let points = &routing.edge_paths[index];
             let coordinates = points.iter().map(|point| format!("{},{}", point.x, point.y)).collect::<Vec<_>>().join(" ");
-            writeln!(svg, r#"<polyline points="{coordinates}" fill="none" stroke="{}" stroke-width="1.5"/>"#, color(fill)).unwrap();
-            if graph.directed {
-                let tip = *points.last().expect("graph route must have an endpoint");
-                let direction = (tip - points[points.len() - 2]).normalized();
-                for angle in [2.55, -2.55] {
-                    let wing = tip + Vec2::angled(direction.angle() + angle) * 9.0;
+            let source = &graph.nodes[edge.source];
+            let target = &graph.nodes[edge.target];
+            let tooltip = format!("{}\nsource: {} ({})\ntarget: {} ({})",
+                edge.hover_text(), source.label, source.id, target.label, target.id);
+            writeln!(svg, r#"<polyline points="{coordinates}" fill="none" stroke="{}" stroke-width="1.5"><title>{}</title></polyline>"#, color(fill), xml_text(&tooltip)).unwrap();
+            for (tip, direction) in edge_arrowheads(points, edge.direction) {
+                for wing in arrow_head_wings(tip, direction, 1.0) {
                     writeln!(svg, r#"<path d="M {} {} L {} {}" fill="none" stroke="{}" stroke-width="1.5"/>"#,
                         tip.x, tip.y, wing.x, wing.y, color(fill)).unwrap();
                 }
@@ -233,7 +247,7 @@ fn graph_svg(
         for (node, &center) in graph.nodes.iter().zip(&routing.node_positions) {
             let rect = egui::Rect::from_center_size(center, GRAPH_NODE_SIZE);
             writeln!(svg, r#"<g><title>{}</title><rect x="{}" y="{}" width="{}" height="{}" rx="6" fill="{}" stroke="{}" stroke-width="{}"/>"#,
-                xml_text(&format!("{}\n{}\n{}", node.label, node.id, node.path)),
+                xml_text(&node.hover_text()),
                 rect.left(), rect.top(), rect.width(), rect.height(),
                 opaque_color(visuals.faint_bg_color, visuals.panel_fill),
                 opaque_color(visuals.widgets.noninteractive.bg_stroke.color, visuals.panel_fill),
@@ -297,6 +311,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn graph_exports_arrowheads_at_correct_ends_and_preserves_self_loops() {
+        let root = struct_view_core::parser::parse_json(r#"{"graph":{"type":"directed_multigraph"},"nodes":[{"id":"a"},{"id":"b"}],"edges":[{"source":"a","target":"b"},{"source":"a","target":"a"}]}"#).unwrap();
+        let mut graph = build_relationship_graph(&root);
+        for direction in [
+            EdgeDirection::Directed,
+            EdgeDirection::Undirected,
+            EdgeDirection::Reverse,
+            EdgeDirection::Bidirectional,
+        ] {
+            for edge in &mut graph.edges {
+                edge.direction = direction;
+            }
+            let routing = build_graph_routing_layout(&graph);
+            let arrows_per_edge =
+                usize::from(direction.arrow_at_source()) + usize::from(direction.arrow_at_target());
+            for route in &routing.edge_paths {
+                let arrows = edge_arrowheads(route, direction);
+                assert_eq!(arrows.len(), arrows_per_edge);
+                if direction.arrow_at_source() {
+                    assert!(
+                        arrows.iter().any(|(tip, vector)| *tip == route[0]
+                            && vector.dot(route[1] - route[0]) < 0.0)
+                    );
+                }
+                if direction.arrow_at_target() {
+                    assert!(
+                        arrows
+                            .iter()
+                            .any(|(tip, vector)| *tip == *route.last().unwrap()
+                                && vector.dot(route[route.len() - 2] - *tip) < 0.0)
+                    );
+                }
+            }
+            let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
+            assert_eq!(svg.matches("<polyline").count(), 2);
+            assert_eq!(
+                svg.matches("<path d=").count(),
+                2 * arrows_per_edge * graph.edges.len()
+            );
+            assert_eq!(&graph_png(&svg).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
+        }
+    }
+
+    #[test]
     fn exported_dense_graph_contains_all_relationships_and_callouts() {
         let root = struct_view_core::parser::parse_json(
             r#"[{"id":"source","depends_on":"target"},{"id":"target"}]"#,
@@ -318,7 +376,11 @@ mod tests {
         }
         let last_route = svg.rfind("<polyline").unwrap();
         let last_leader = svg.rfind(r#"stroke-dasharray="3 3""#);
-        let first_label = svg.find(">relationship_").unwrap();
+        let first_label = svg
+            .lines()
+            .find(|line| line.starts_with("<text ") && line.contains(">relationship_"))
+            .and_then(|line| svg.find(line))
+            .unwrap();
         assert!(last_route < first_label);
         if let Some(last_leader) = last_leader {
             assert!(last_leader < first_label);
@@ -424,7 +486,7 @@ mod tests {
     #[test]
     fn svg_and_png_export_full_graph_and_escape_labels() {
         let root = struct_view_core::parser::parse_json(
-            r#"[{"id":"a","name":"A < B & \"C\"","depends_on":"b"},{"id":"b","name":"Цель"}]"#,
+            r#"[{"id":"a","name":"A < B & \"C\"","role":"Gateway <core> & \"router\"","config":{"ports":[80,443]},"depends_on":"b"},{"id":"b","name":"Цель"}]"#,
         )
         .unwrap();
         let graph = build_relationship_graph(&root);
@@ -432,6 +494,10 @@ mod tests {
         let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
         assert!(svg.contains("A &lt; B &amp; &quot;C&quot;"));
         assert!(svg.contains("Цель"));
+        assert!(
+            svg.contains("role: &quot;Gateway &lt;core&gt; &amp; \\&quot;router\\&quot;&quot;")
+        );
+        assert!(svg.contains("config.ports[1]: 443"));
         assert_eq!(svg.matches("<polyline").count(), graph.edges.len());
         assert_eq!(svg.matches("<g>").count(), graph.nodes.len());
         assert!(svg.contains("depends_on"));
@@ -445,6 +511,39 @@ mod tests {
             u32::from_be_bytes(png[20..24].try_into().unwrap()),
             routing.content_size.y.ceil() as u32
         );
+    }
+
+    #[test]
+    fn svg_titles_preserve_node_and_edge_attributes_without_changing_geometry() {
+        let root = struct_view_core::parser::parse_json(
+            r#"{"graph":{"type":"directed"},"nodes":[{"id":"a","label":"Alpha","role":"Gateway"},{"id":"b","label":"Beta"}],"edges":[{"source":"a","target":"b","status":"online <core> & \"secure\"","config":{"ports":[80,443]}}]}"#,
+        ).unwrap();
+        let mut graph = build_relationship_graph(&root);
+        let routing = build_graph_routing_layout(&graph);
+        let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
+        let edge_title = svg
+            .split("<polyline")
+            .nth(1)
+            .unwrap()
+            .split("</polyline>")
+            .next()
+            .unwrap();
+        assert!(edge_title.contains("<title>"));
+        assert!(edge_title.contains("online &lt;core&gt; &amp; \\&quot;secure\\&quot;"));
+        assert!(edge_title.contains("config.ports[1]: 443"));
+        assert!(edge_title.contains("source: Alpha (a)"));
+        assert!(edge_title.contains("target: Beta (b)"));
+        assert!(svg.contains("role: &quot;Gateway&quot;"));
+        for node in &mut graph.nodes {
+            node.attributes.clear();
+        }
+        for edge in &mut graph.edges {
+            edge.attributes.clear();
+        }
+        let without_attributes = build_graph_routing_layout(&graph);
+        assert_eq!(routing.node_positions, without_attributes.node_positions);
+        assert_eq!(routing.edge_paths, without_attributes.edge_paths);
+        assert_eq!(routing.content_size, without_attributes.content_size);
     }
 
     #[test]

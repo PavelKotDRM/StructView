@@ -8,7 +8,9 @@ mod tests;
 
 #[cfg(test)]
 use graph::GraphEdge;
-pub(super) use graph::{RelationshipGraph, build_relationship_graph};
+#[cfg(test)]
+pub(super) use graph::build_relationship_graph;
+pub(super) use graph::{RelationshipGraph, try_build_relationship_graph};
 pub(super) use schema::{
     SchemaDiagram, SchemaSource, build_schema_diagram, schema_visible_indices,
 };

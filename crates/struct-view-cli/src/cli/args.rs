@@ -9,6 +9,8 @@ use super::source::Source;
 /// Разобранная команда командной строки.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// Window-free document editing and view exports.
+    Operation(super::operations::OperationOptions),
     /// Запустить графический интерфейс, опционально открыв файл.
     Gui {
         /// Файл, который нужно открыть при старте.
@@ -78,6 +80,10 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Command, St
     match first.as_str() {
         "-h" | "--help" | "help" => return Ok(Command::Help),
         "-V" | "--version" | "version" => return Ok(Command::Version),
+        "new" | "get" | "add" | "set" | "rename" | "delete" | "copy" | "paste" | "table"
+        | "schema" | "graph" | "convert" => {
+            return super::operations::parse(first, &args[1..]).map(Command::Operation);
+        }
         "format" => return parse_format(&args[1..]),
         "validate" => return parse_validate(&args[1..]),
         "find" => return parse_find(&args[1..]),
@@ -192,7 +198,7 @@ fn parse_validate(args: &[String]) -> Result<Command, String> {
 }
 
 /// Разобрать аргументы подкоманды `find`.
-fn parse_find(args: &[String]) -> Result<Command, String> {
+pub(super) fn parse_find(args: &[String]) -> Result<Command, String> {
     let mut query: Option<String> = None;
     let mut input: Option<Source> = None;
     let mut options = SearchOptions::default();

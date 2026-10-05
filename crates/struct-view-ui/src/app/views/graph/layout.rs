@@ -15,8 +15,14 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
     let mut incoming = vec![Vec::new(); count];
     let mut neighbors = vec![Vec::new(); count];
     for edge in &graph.edges {
-        outgoing[edge.source].push(edge.target);
-        incoming[edge.target].push(edge.source);
+        if edge.direction != EdgeDirection::Reverse {
+            outgoing[edge.source].push(edge.target);
+            incoming[edge.target].push(edge.source);
+        }
+        if edge.direction != EdgeDirection::Directed {
+            outgoing[edge.target].push(edge.source);
+            incoming[edge.source].push(edge.target);
+        }
         neighbors[edge.source].push(edge.target);
         neighbors[edge.target].push(edge.source);
     }
@@ -73,11 +79,13 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
     let mut component_layers = vec![0; component_count];
     // Kosaraju numbers components in topological order.
     let mut component_edges = vec![Vec::new(); component_count];
-    for edge in &graph.edges {
-        let source = component[edge.source];
-        let target = component[edge.target];
-        if source != target {
-            component_edges[source].push(target);
+    for (node, targets) in outgoing.iter().enumerate() {
+        for &target in targets {
+            let source = component[node];
+            let target = component[target];
+            if source != target {
+                component_edges[source].push(target);
+            }
         }
     }
     for source in 0..component_count {
@@ -91,6 +99,10 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
         .collect::<Vec<_>>();
     let mut groups = Vec::new();
     visited.fill(false);
+    let all_undirected = graph
+        .edges
+        .iter()
+        .all(|edge| edge.direction == EdgeDirection::Undirected);
     for start in 0..count {
         if visited[start] {
             continue;
@@ -98,7 +110,7 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
         let mut group = Vec::new();
         let mut queue = std::collections::VecDeque::from([start]);
         visited[start] = true;
-        if !graph.directed {
+        if all_undirected {
             layers[start] = 0;
         }
         while let Some(node) = queue.pop_front() {
@@ -106,7 +118,7 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
             for &target in &neighbors[node] {
                 if !visited[target] {
                     visited[target] = true;
-                    if !graph.directed {
+                    if all_undirected {
                         layers[target] = layers[node] + 1;
                     }
                     queue.push_back(target);
@@ -262,6 +274,14 @@ pub(super) fn build_graph_routing_layout_with_progress(
         })
         .collect::<Vec<_>>();
     resolve_graph_label_leaders(&mut edge_labels, &node_rects, &routed_edges);
+    for (_, anchor) in edge_labels
+        .iter()
+        .flatten()
+        .filter_map(|label| label.reference)
+    {
+        content_size.x = content_size.x.max(anchor.x + 24.0);
+        content_size.y = content_size.y.max(anchor.y + 24.0);
+    }
 
     GraphRoutingLayout {
         graph_fingerprint: relationship_graph_fingerprint(graph),

@@ -1,7 +1,12 @@
 mod dot;
 mod xml;
 
+use crate::graph::EdgeDirection;
 use serde_json::{Map, Value};
+
+pub(super) fn set_edge_direction(edge: &mut Value, direction: EdgeDirection) {
+    edge["direction"] = Value::String(direction.as_str().to_string());
+}
 
 use super::format::DataFormat;
 

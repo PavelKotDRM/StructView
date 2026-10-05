@@ -188,6 +188,8 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphExportDark => "Dark theme / opaque background",
         TextKey::GraphDirectedLink => "Directed link",
         TextKey::GraphUndirectedLink => "Undirected link",
+        TextKey::GraphBidirectionalLink => "Bidirectional link",
+        TextKey::GraphReverseLink => "Reverse link (target to source)",
         TextKey::GraphLinkSource => "Endpoint A / source",
         TextKey::GraphLinkTarget => "Endpoint B / target",
         TextKey::GraphNoRelationships => {

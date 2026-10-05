@@ -91,8 +91,9 @@ content with an `.xml` extension is detected by its root element. Select
 Imported DOT, GraphML, and GEXF files are read-only. The importer converts them
 to a normalized `graph`/`nodes`/`edges` document while retaining graph
 direction, node IDs and labels, parallel edges, weights, and supported
-attributes. Imported graphs use `directed_multigraph` or
-`undirected_multigraph` so duplicate edges are not lost, except for strict DOT
+attributes. Imported graphs use `directed_multigraph`,
+`undirected_multigraph`, `bidirectional_multigraph`, or `mixed_multigraph`
+so duplicate edges are not lost, except for strict DOT
 graphs, which use `directed` or `undirected`. GraphML key
 definitions and GEXF attribute definitions are kept in the `graph` metadata;
 other XML extension elements are kept under `xml_extensions`.
@@ -106,13 +107,146 @@ quotes; Graphviz label escapes such as `\n` remain intact. In strict graphs,
 repeated edges update the existing edge's explicitly supplied attributes
 instead of creating parallel edges or reapplying changed defaults.
 
-GraphML and GEXF inputs must contain one graph with a uniform edge direction.
-Mixed directed and undirected edges are rejected. Nested GraphML graphs and
+GraphML and GEXF inputs must contain one graph. Mixed edge directions are
+preserved per edge. Nested GraphML graphs and
 hyperedges are not supported. External XML `DOCTYPE` declarations are ignored
 without loading a DTD; internal DTD entities are not supported. GEXF `mutual`
-edges are converted to undirected edges; dynamic timing and visualization
+edges retain arrowheads at both ends; dynamic timing and visualization
 extensions are retained as metadata, but the graph view displays a static
 topology.
+
+#### Per-edge direction and self-loops
+
+Edge-list graphs support `direction: "directed"`, `"undirected"`,
+`"bidirectional"`, and `"reverse"`. The stored source and target remain
+unchanged for reverse edges: their arrow points from target to source.
+`forward`, `none`, `both`/`mutual`, and `back` are accepted aliases.
+An edge's `directed: true|false` is an alternative for directed/undirected.
+Both `{"graph": {...}, "nodes": [...], "edges": [...]}` and
+`{"graph": {"type": "...", "nodes": [...], "edges": [...]}}` are supported;
+node paths retain their original document location. Supplying nodes/edges
+in both locations is rejected as ambiguous.
+`bidirectional: true` on an edge explicitly selects two arrowheads, even when
+`graph.type` is `undirected`. `false` leaves the default or `directed` override
+unchanged. The field must be a boolean; a conflicting explicit `direction`
+and `bidirectional: true` is an error.
+Direction defaults to `graph.type`; `graph.direction` overrides that default.
+Types include `bidirectional`, `bidirectional_multigraph`, `mixed`, and
+`mixed_multigraph` as well as the existing types. `mixed` defaults unspecified
+edges to directed. Unknown directions produce an error rather than a forward
+arrow.
+
+```json
+{
+  "graph": {"type": "mixed_multigraph"},
+  "nodes": [{"id": "a"}, {"id": "b"}],
+  "edges": [
+    {"source": "a", "target": "b", "direction": "bidirectional"},
+    {"source": "a", "target": "b", "direction": "reverse"},
+    {"source": "a", "target": "b", "direction": "undirected"},
+    {"source": "a", "target": "a", "direction": "directed"}
+  ]
+}
+```
+
+The same fields work in JSON5, YAML, and TOML, including TOML's keyed
+`[nodes]` edge-list shape. Entity-relation tuples may supply direction as the
+fifth item after source, target, label, and cardinality. Partition pairs may
+supply it as the fourth item after source, target, and label.
+
+DOT imports honor `dir=forward|back|both|none`, including edge defaults and
+strict-edge attribute updates. GraphML honors each edge's `directed` override;
+standard GraphML has no mutual edge type, so use two directed edges for a
+portable reciprocal connection. StructView also supports a string edge
+`<data>` key named `direction` as an extension for all four directions.
+GEXF honors each edge's `type`, including native `mutual`; StructView additionally
+accepts `bidirectional` and `reverse` aliases/extensions.
+
+Self-loops are retained and routed outside their node, with separate ports and
+tracks for parallel loops. Adjacency lists can include the node itself;
+nonzero diagonal matrix weights create loops (zero diagonal entries do not).
+Inferred self-references also appear as loops. All directions and loops work
+in the GUI, tooltips, and SVG/PNG exports. Reverse edges affect layout in their
+actual direction; mutual edges form a two-way connection. Label placement
+reserves arrowheads at both ends.
+Adjacency lists and scalar weighted matrices also accept directed or
+bidirectional graph types and `graph.direction` (including reverse).
+Directed/reverse matrices read the entire matrix; undirected/bidirectional
+matrices use the upper triangle plus the diagonal.
+
+### Supported graph structures
+
+The GUI and CLI use the same structural adapters in JSON, JSON5, YAML, and
+TOML. They recognize these forms, not every possible graph serialization:
+
+- `nodes` with either `edges` or `links`, at the root or inside `graph`.
+  Nodes can be ID records, string/integer IDs, or a keyed dictionary of labels
+  or attribute records. A dictionary key is the node ID; a declared `id` must
+  agree with it. Endpoints are IDs or objects containing an ID, not node indexes.
+- NetworkX node-link (`directed`, `multigraph`, `nodes`, `links` or `edges`) and
+  adjacency (`nodes` plus an array of neighbor arrays aligned with node order).
+  Neighbor records use `id` for their target and may carry weights and edge
+  `key`s. With NetworkX's root flags, `graph` is opaque graph attributes, not a
+  nested graph/configuration object. Undirected adjacency mirrors are collapsed;
+  multigraph mirrors require matching edge keys and weights.
+- Cytoscape `elements: {nodes: [{data: {...}}], edges: [{data: {...}}]}` or a
+  mixed `elements: [{data: {...}}, ...]` array. Edges may precede nodes. Node
+  `data` needs `id`; edge `data` needs `source` and `target`.
+- Edge dictionaries keyed by edge ID and tuples `[source, target]`,
+  `[source, target, label_or_weight]`, or
+  `[source, target, label_or_weight, direction]`. The third tuple item can
+  alternatively be an attribute object with `weight`, `label`, and `direction`.
+  Edge IDs, dictionary keys, and NetworkX edge keys are retained in labels.
+- Marked keyed adjacency: `{"graph":{"type":"directed"},
+  "adjacency":{"a":["b"],"isolated":[]}}`. Neighbors can be IDs or records
+  with `target`/`to`/`id`; weighted maps such as `"a":{"b":2}` also work.
+  Without `nodes`, IDs are collected from both sources and targets; with an
+  explicit node collection, every endpoint must exist there.
+
+For example, the following node-link document is valid without `graph.type`:
+
+```json
+{
+  "directed": true,
+  "multigraph": true,
+  "nodes": ["a", "b"],
+  "links": [
+    ["a", "b", 2, "bidirectional"],
+    ["b", "b", {"label": "loop", "direction": "reverse"}]
+  ]
+}
+```
+
+Unspecified directions default to directed; `graph.type` or a boolean
+`directed` sets the default, and individual edges can override it. Set
+`multigraph: true` or a multigraph type to retain identical parallel edges.
+Isolated nodes, loops, weights, labels, and original node/search paths are
+preserved. Hover a node to inspect all fields of its source record, including
+custom attributes such as `role`, nested objects/array items, booleans, and
+empty values. Long lists scroll inside the tooltip; field text can be selected
+and copied. Cytoscape tooltips also include element fields outside `data`.
+Hover an edge line or its label to inspect its source record too: custom
+fields, nested parameters, and empty values appear below direction and
+endpoint information. Parallel edges retain their own attributes; records
+merged by simple-graph/undirected-mirror deduplication retain values from
+both records in the tooltip.
+The same information is retained in SVG node and edge titles; PNG has no hover support.
+Node card sizes and graph layout remain unchanged.
+Ordinary fields named `elements`, `nodes`, or `links` alone do not
+activate a new adapter. Use explicit graph flags/type for empty or ambiguous
+shapes. Duplicate node IDs, unknown endpoints, conflicting endpoint aliases,
+incomplete records, malformed flags/directions, and competing containers
+produce errors rather than silently dropping links. Existing partition,
+entity-relation, and matrix shapes remain supported.
+
+Hyperedges, visual clusters/nested subgraphs, and dynamic GEXF are not
+implemented. Unrecognized ordinary documents retain relationship inference;
+do not treat this as a guarantee of universal graph-format support.
+
+CLI `graph` JSON includes each edge's `direction` and a graph-level `direction`
+summary (`mixed` when directions differ). The compatibility `directed` boolean
+means that at least one edge has an arrow; it is not an individual edge's type.
+Conversion to JSON, YAML, TOML, or JSON5 retains normalized per-edge direction.
 XML attributes whose distinct keys map to the same output name are rejected
 instead of silently overwriting data. An explicit value can override the
 default for its own key. GEXF native `label` or `weight` values must not

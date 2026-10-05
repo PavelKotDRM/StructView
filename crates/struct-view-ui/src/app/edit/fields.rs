@@ -153,6 +153,20 @@ pub(in crate::app) fn edit_child_at_path(
     let parent = find_parent(root, path);
     let is_index = parent.is_some_and(|parent| parent.value_type == JsonValueType::Array);
 
+    let new_key = validated_new_key(root, path, new_key)?;
+    if replace_node_at_path(root, path, &replacement, new_key.as_deref(), "", is_index) {
+        Ok(())
+    } else {
+        Err("Не удалось найти поле для редактирования".to_string())
+    }
+}
+
+fn validated_new_key(
+    root: &JsonNode,
+    path: &str,
+    new_key: Option<&str>,
+) -> Result<Option<String>, String> {
+    let parent = find_parent(root, path);
     let current = find_node(root, path)
         .ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?;
     let new_key = new_key.filter(|key| Some(*key) != current.key.as_deref());
@@ -175,11 +189,30 @@ pub(in crate::app) fn edit_child_at_path(
         }
     }
 
-    if replace_node_at_path(root, path, &replacement, new_key, "", is_index) {
-        Ok(())
-    } else {
-        Err("Не удалось найти поле для редактирования".to_string())
+    Ok(new_key.map(str::to_string))
+}
+
+pub(in crate::app) fn rename_at_path(
+    root: &mut JsonNode,
+    path: &str,
+    new_key: &str,
+) -> Result<(), String> {
+    if !is_object_child(root, path) {
+        return Err("Имя можно изменить только у поля объекта".to_string());
     }
+    let Some(key) = validated_new_key(root, path, Some(new_key))? else {
+        return Ok(());
+    };
+    let parent_path = find_parent(root, path)
+        .ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?
+        .path
+        .clone();
+    let node = find_node_mut(root, path)
+        .ok_or_else(|| "Не удалось найти поле для редактирования".to_string())?;
+    node.key = Some(key);
+    node.yaml_key = None;
+    update_paths(node, &parent_path, false);
+    Ok(())
 }
 
 /// Проверить, является ли узел полем объекта и поэтому допускает переименование.

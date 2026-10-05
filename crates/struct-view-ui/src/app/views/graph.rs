@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use struct_view_core::graph::EdgeDirection;
 use struct_view_core::parser::JsonNode;
 
 mod canvas;
@@ -16,6 +17,7 @@ mod routing;
 pub(in crate::app) use canvas::show_graph;
 #[cfg(test)]
 use canvas::{GraphInteractionState, graph_edges_at_pointer};
+pub(in crate::app) use export::render_graph_image;
 pub(in crate::app) use export::{GraphExportFormat, GraphExportStyle, export_graph_image};
 #[cfg(test)]
 use labels::aligned_label_rect;
@@ -38,18 +40,45 @@ pub(super) use routing::{
 };
 pub(super) use routing::{GraphRoutingGrid, graph_edge_color, graph_edge_ports};
 use routing::{
-    closest_point_on_segment, draw_arrow_head, graph_routing_worker_count,
-    point_to_segment_distance, relationship_graph_fingerprint, route_graph_edges_with_progress,
-    segment_intersects_rect, segments_intersect,
+    arrow_head_wings, closest_point_on_segment, draw_arrow_head, edge_arrowheads,
+    graph_routing_worker_count, point_to_segment_distance, relationship_graph_fingerprint,
+    route_graph_edges_with_progress, segment_intersects_rect, segments_intersect,
 };
 
 pub(super) const GRAPH_DIM_FACTOR: f32 = 0.18;
+
+pub(in crate::app) fn headless_graph_image(
+    root: &JsonNode,
+    png: bool,
+    dark: bool,
+) -> Result<Vec<u8>, String> {
+    let graph = try_build_relationship_graph(root)?;
+    if graph.nodes.is_empty() {
+        return Err("No graph entities found".to_string());
+    }
+    let routing = build_graph_routing_layout_with_progress(&graph, None);
+    render_graph_image(
+        &graph,
+        &routing,
+        if png {
+            GraphExportFormat::Png
+        } else {
+            GraphExportFormat::Svg
+        },
+        if dark {
+            GraphExportStyle::DarkOpaque
+        } else {
+            GraphExportStyle::LightTransparent
+        },
+    )
+    .map_err(|error| format!("Graph export error: {error}"))
+}
 const GRAPH_EDGE_LABEL_CHAR_WIDTH: f32 = 8.0;
 const GRAPH_EDGE_LABEL_HEIGHT: f32 = 16.0;
 
 #[derive(Default)]
 pub(in crate::app) struct GraphCalculationState {
-    receiver: Option<Receiver<GraphCalculationResult>>,
+    receiver: Option<Receiver<Result<GraphCalculationResult, String>>>,
     result: Option<GraphCalculationResult>,
     error: Option<String>,
     progress: Arc<Mutex<GraphProgress>>,
@@ -181,9 +210,14 @@ impl GraphCalculationState {
             return;
         };
         match receiver.try_recv() {
-            Ok(result) => {
+            Ok(Ok(result)) => {
                 self.receiver = None;
                 self.result = Some(result);
+                ctx.request_repaint();
+            }
+            Ok(Err(error)) => {
+                self.receiver = None;
+                self.error = Some(error);
                 ctx.request_repaint();
             }
             Err(TryRecvError::Empty) => {
@@ -295,13 +329,22 @@ pub(in crate::app) struct GraphRoutingLayout {
 fn build_graph_calculation(
     root: JsonNode,
     progress: &GraphProgressTracker,
-) -> GraphCalculationResult {
+) -> Result<GraphCalculationResult, String> {
     begin_graph_stage(Some(progress), GraphStage::Entities, 0, 1);
-    let graph = build_relationship_graph(&root);
+    let graph = match try_build_relationship_graph(&root) {
+        Ok(graph) => graph,
+        Err(error) => {
+            progress
+                .lock()
+                .expect("graph progress lock poisoned")
+                .finish();
+            return Err(error);
+        }
+    };
     let routing = build_graph_routing_layout_with_progress(&graph, Some(progress));
     progress
         .lock()
         .expect("graph progress lock poisoned")
         .finish();
-    GraphCalculationResult { graph, routing }
+    Ok(GraphCalculationResult { graph, routing })
 }

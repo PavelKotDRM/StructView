@@ -73,7 +73,8 @@ pub(super) fn parse_gexf(input: &str) -> Result<Value, String> {
             ));
         }
         let edge_type = element.attribute("type").unwrap_or(default_edge_type);
-        directions.insert(gexf_direction(edge_type)?);
+        let direction = gexf_direction(edge_type)?;
+        directions.insert(direction);
 
         let mut attributes = gexf_data(element, "edge", &definitions, &definitions_by_key)?;
         if let Some(label) = element.attribute("label") {
@@ -88,14 +89,16 @@ pub(super) fn parse_gexf(input: &str) -> Result<Value, String> {
             &["id", "source", "target", "label", "weight"],
         )?;
         add_xml_extensions(&mut attributes, element, &["attvalues"])?;
-        edges.push(edge_record(
+        let mut edge = edge_record(
             source,
             target,
             element.attribute("id").map(str::to_string),
             attributes,
-        ));
+        );
+        set_edge_direction(&mut edge, direction);
+        edges.push(edge);
     }
-    let directed = uniform_direction(directions, default_directed, "GEXF")?;
+    let graph_type = direction_graph_type(directions, default_directed);
 
     let mut graph_attributes = gexf_data(*graph, "graph", &definitions, &definitions_by_key)?;
     add_xml_attributes(&mut graph_attributes, *graph, &["defaultedgetype"])?;
@@ -121,7 +124,7 @@ pub(super) fn parse_gexf(input: &str) -> Result<Value, String> {
         .filter(|title| !title.is_empty());
     Ok(graph_document(
         name,
-        graph_type(directed),
+        graph_type,
         "gexf",
         graph_attributes,
         metadata,

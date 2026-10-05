@@ -8,9 +8,11 @@ use struct_view_core::search::SearchState;
 use super::i18n::{Locale, TextKey};
 use super::state::ComparisonState;
 use super::theme::SyntaxColors;
+#[cfg(test)]
+use super::visualization::build_relationship_graph;
 use super::visualization::{
-    RelationshipGraph, SchemaDiagram, SchemaSource, TableData, build_relationship_graph,
-    schema_visible_indices, table_to_csv, table_visible_indices,
+    RelationshipGraph, SchemaDiagram, SchemaSource, TableData, schema_visible_indices,
+    table_to_csv, table_visible_indices, try_build_relationship_graph,
 };
 use super::widgets::{Column, column_label, show_virtualized_columns, single_line_text};
 
@@ -30,6 +32,7 @@ use diff::{PairChange, document_label_for_path, pair_change};
 pub(super) use diff::{
     comparison_column_width, comparison_value_color, show_diff, show_difference_legend,
 };
+pub(super) use graph::headless_graph_image as graph_image_for_headless;
 pub(super) use graph::{GraphCalculationState, export_graph_image, show_graph};
 pub(super) use schema::show_schema;
 pub(super) use table::{export_table_csv, show_table};

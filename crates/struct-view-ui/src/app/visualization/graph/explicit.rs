@@ -1,52 +1,202 @@
 use super::*;
 
-pub(super) fn build_supported_graph(root: &JsonNode) -> Option<RelationshipGraph> {
-    if let Some(graph) = build_partitioned_graph(root) {
-        return Some(graph);
+pub(super) fn build_supported_graph(root: &JsonNode) -> Result<Option<RelationshipGraph>, String> {
+    if let Some(metadata) = object_child(root, "graph")
+        && (object_child(metadata, "nodes").is_some() || object_child(metadata, "edges").is_some())
+    {
+        if object_child(root, "nodes").is_some() || object_child(root, "edges").is_some() {
+            return Err(
+                "Ambiguous graph: nodes/edges exist both inside graph and at the document root"
+                    .to_string(),
+            );
+        }
+        let nodes = object_child(metadata, "nodes")
+            .ok_or("graph.nodes is required for a nested edge-list graph")?;
+        let edges = object_child(metadata, "edges")
+            .ok_or("graph.edges is required for a nested edge-list graph")?;
+        let kind = object_scalar(metadata, &["type"])
+            .ok_or("graph.type is required for an edge-list graph")?;
+        let (default_direction, multigraph) = graph_format(&kind.to_ascii_lowercase())
+            .ok_or_else(|| format!("Unsupported graph type: {kind}"))?;
+        let default_direction = record_direction(metadata, default_direction)?;
+        let format = EdgeListGraphFormat {
+            directed: default_direction != EdgeDirection::Undirected,
+            default_direction,
+            multigraph,
+            weight_unit: object_scalar(metadata, &["weight_unit"]).unwrap_or_default(),
+        };
+        if edges.value_type != JsonValueType::Array {
+            return Err("graph.edges must be an array".to_string());
+        }
+        return match nodes.value_type {
+            JsonValueType::Array => build_explicit_json_graph(nodes, edges, format).map(Some),
+            JsonValueType::Object => build_explicit_multigraph(nodes, edges, format).map(Some),
+            _ => Err("graph.nodes must be an array or a keyed object".to_string()),
+        };
     }
-    if let Some((nodes, edges, directed)) = explicit_toml_multigraph_parts(root) {
-        return Some(build_explicit_multigraph(nodes, edges, directed));
+    if let Some(graph) = build_partitioned_graph(root)? {
+        return Ok(Some(graph));
+    }
+    if let Some((nodes, edges, mut format)) = explicit_toml_multigraph_parts(root) {
+        apply_default_direction(root, &mut format)?;
+        return build_explicit_multigraph(nodes, edges, format).map(Some);
     }
     if let Some((entities, edge_records, directed)) = explicit_graph_parts(root) {
-        return Some(build_explicit_graph(entities, edge_records, directed));
+        let direction = object_child(root, "graph")
+            .map(|metadata| record_direction(metadata, EdgeDirection::from_directed(directed)))
+            .transpose()?
+            .unwrap_or(EdgeDirection::from_directed(directed));
+        return build_explicit_graph(entities, edge_records, direction).map(Some);
     }
-    if let Some((nodes, edge_records, format)) = explicit_json_graph_parts(root) {
-        return Some(build_explicit_json_graph(nodes, edge_records, format));
+    if let Some((nodes, edge_records, mut format)) = explicit_json_graph_parts(root) {
+        apply_default_direction(root, &mut format)?;
+        return build_explicit_json_graph(nodes, edge_records, format).map(Some);
     }
-    if let Some((node_order, matrix, weight_unit)) = explicit_weighted_matrix_parts(root) {
-        return Some(build_weighted_matrix_graph(
+    if let Some((node_order, matrix, weight_unit, direction)) = explicit_weighted_matrix_parts(root)
+    {
+        let direction = record_direction(
+            object_child(root, "graph").ok_or("Missing graph metadata")?,
+            direction,
+        )?;
+        return Ok(Some(build_weighted_matrix_graph(
             node_order,
             matrix,
             &weight_unit,
-        ));
+            direction,
+        )));
     }
-    explicit_undirected_adjacency(root).map(build_undirected_adjacency_graph)
+    if let Some((adjacency, direction)) = explicit_adjacency_parts(root) {
+        let direction = record_direction(
+            object_child(root, "graph").ok_or("Missing graph metadata")?,
+            direction,
+        )?;
+        return Ok(Some(build_adjacency_graph(adjacency, direction)));
+    }
+    Ok(None)
 }
 
-fn build_partitioned_graph(root: &JsonNode) -> Option<RelationshipGraph> {
+fn apply_default_direction(
+    root: &JsonNode,
+    format: &mut EdgeListGraphFormat,
+) -> Result<(), String> {
+    if let Some(metadata) = object_child(root, "graph") {
+        format.default_direction = record_direction(metadata, format.default_direction)?;
+        format.directed = format.default_direction != EdgeDirection::Undirected;
+    }
+    Ok(())
+}
+
+pub(super) fn graph_format(kind: &str) -> Option<(EdgeDirection, bool)> {
+    match kind {
+        "directed" | "weighted_directed" | "mixed" => Some((EdgeDirection::Directed, false)),
+        "undirected" | "weighted_undirected" => Some((EdgeDirection::Undirected, false)),
+        "bidirectional" | "weighted_bidirectional" => Some((EdgeDirection::Bidirectional, false)),
+        "directed_multigraph" | "mixed_multigraph" => Some((EdgeDirection::Directed, true)),
+        "undirected_multigraph" => Some((EdgeDirection::Undirected, true)),
+        "bidirectional_multigraph" => Some((EdgeDirection::Bidirectional, true)),
+        _ => None,
+    }
+}
+
+fn direction_value(node: &JsonNode) -> Result<EdgeDirection, String> {
+    let value = scalar_value(node)
+        .ok_or_else(|| format!("Edge direction must be a string in {}", node.path))?;
+    EdgeDirection::parse(&value).map_err(|error| format!("{error} in {}", node.path))
+}
+
+pub(super) fn record_direction(
+    record: &JsonNode,
+    default: EdgeDirection,
+) -> Result<EdgeDirection, String> {
+    let bidirectional = object_child(record, "bidirectional")
+        .map(|node| {
+            if node.value_type != JsonValueType::Bool {
+                return Err(format!("bidirectional must be a boolean in {}", node.path));
+            }
+            match node.display_value.as_str() {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                _ => Err(format!("Invalid bidirectional boolean in {}", node.path)),
+            }
+        })
+        .transpose()?;
+    if let Some(node) = object_child(record, "direction") {
+        let direction = direction_value(node)?;
+        if bidirectional == Some(true) && direction != EdgeDirection::Bidirectional {
+            return Err(format!(
+                "Conflicting direction and bidirectional in {}",
+                record.path
+            ));
+        }
+        return Ok(direction);
+    }
+    if bidirectional == Some(true) {
+        return Ok(EdgeDirection::Bidirectional);
+    }
+    if let Some(node) = object_child(record, "directed") {
+        return match scalar_value(node).as_deref() {
+            Some("true") => Ok(EdgeDirection::Directed),
+            Some("false") => Ok(EdgeDirection::Undirected),
+            _ => Err(format!("directed must be true or false in {}", node.path)),
+        };
+    }
+    // Also recognize legacy converted DOT documents that only retain the raw attribute.
+    if let Some(node) =
+        object_child(record, "attributes").and_then(|attributes| object_child(attributes, "dir"))
+    {
+        return direction_value(node);
+    }
+    Ok(default)
+}
+
+fn tuple_direction(
+    record: &JsonNode,
+    index: usize,
+    default: EdgeDirection,
+) -> Result<EdgeDirection, String> {
+    record
+        .children
+        .get(index)
+        .map(direction_value)
+        .transpose()
+        .map(|direction| direction.unwrap_or(default))
+}
+
+fn build_partitioned_graph(root: &JsonNode) -> Result<Option<RelationshipGraph>, String> {
     if root.value_type != JsonValueType::Object {
-        return None;
+        return Ok(None);
     }
-    let metadata = object_child(root, "graph")?;
+    let Some(metadata) = object_child(root, "graph") else {
+        return Ok(None);
+    };
     if metadata.value_type != JsonValueType::Object {
-        return None;
+        return Ok(None);
     }
-    let graph_type = object_scalar(metadata, &["type"])?.to_ascii_lowercase();
+    let Some(graph_type) = object_scalar(metadata, &["type"]) else {
+        return Ok(None);
+    };
+    let graph_type = graph_type.to_ascii_lowercase();
     let is_bipartite = graph_type == "bipartite";
     if !is_bipartite && graph_type != "multipartite" {
-        return None;
+        return Ok(None);
     }
 
-    let partitions = object_child(root, "partitions")?;
-    let relations = object_child(root, "relations")?;
-    let pairs = object_child(relations, "pairs")?;
+    let (Some(partitions), Some(relations)) = (
+        object_child(root, "partitions"),
+        object_child(root, "relations"),
+    ) else {
+        return Ok(None);
+    };
+    let Some(pairs) = object_child(relations, "pairs") else {
+        return Ok(None);
+    };
     let labels =
         object_child(root, "labels").filter(|node| node.value_type == JsonValueType::Object);
     if partitions.value_type != JsonValueType::Object
         || relations.value_type != JsonValueType::Object
         || pairs.value_type != JsonValueType::Array
     {
-        return None;
+        return Ok(None);
     }
 
     let partition_entries = partitions
@@ -60,15 +210,17 @@ fn build_partitioned_graph(root: &JsonNode) -> Option<RelationshipGraph> {
             .iter()
             .any(|partition| partition.value_type != JsonValueType::Array)
     {
-        return None;
+        return Ok(None);
     }
     let partition_names = partition_entries
         .iter()
         .map(|partition| partition.key.as_deref().map(str::to_string))
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Option<Vec<_>>>()
+        .ok_or("Graph partitions must have names")?;
     let directed = object_child(metadata, "directed")
         .and_then(scalar_value)
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    let default_direction = record_direction(metadata, EdgeDirection::from_directed(directed))?;
 
     let mut graph = RelationshipGraph {
         directed,
@@ -96,6 +248,7 @@ fn build_partitioned_graph(root: &JsonNode) -> Option<RelationshipGraph> {
                 path: member.path.clone(),
                 search_paths,
                 partition: Some(partition_index),
+                attributes: record_attributes(member),
             });
             add_graph_alias(&mut aliases, id, index);
         }
@@ -124,7 +277,7 @@ fn build_partitioned_graph(root: &JsonNode) -> Option<RelationshipGraph> {
         let [target] = targets.as_slice() else {
             continue;
         };
-        if graph.nodes[*source].partition == graph.nodes[*target].partition {
+        if source != target && graph.nodes[*source].partition == graph.nodes[*target].partition {
             continue;
         }
 
@@ -133,46 +286,52 @@ fn build_partitioned_graph(root: &JsonNode) -> Option<RelationshipGraph> {
             .get(2)
             .and_then(scalar_value)
             .unwrap_or_default();
-        let (source, target) = normalize_edge_endpoints(*source, *target, directed);
-        edges.insert((source, target, label));
+        let direction = tuple_direction(pair, 3, default_direction)?;
+        let (source, target) =
+            normalize_edge_endpoints(*source, *target, direction != EdgeDirection::Undirected);
+        edges.insert((source, target, label, direction));
     }
     graph.edges = edges
         .into_iter()
-        .map(|(source, target, label)| GraphEdge {
+        .map(|(source, target, label, direction)| GraphEdge {
             source,
             target,
             label,
+            direction,
+            attributes: Vec::new(),
         })
         .collect();
-    Some(graph)
+    Ok(Some(graph))
 }
 
-fn explicit_weighted_matrix_parts(root: &JsonNode) -> Option<(&JsonNode, &JsonNode, String)> {
+fn explicit_weighted_matrix_parts(
+    root: &JsonNode,
+) -> Option<(&JsonNode, &JsonNode, String, EdgeDirection)> {
     if root.value_type != JsonValueType::Object {
         return None;
     }
     let metadata = object_child(root, "graph")?;
-    if metadata.value_type != JsonValueType::Object
-        || !object_scalar(metadata, &["type"])?.eq_ignore_ascii_case("weighted_undirected")
-    {
+    if metadata.value_type != JsonValueType::Object {
         return None;
     }
+    let (direction, _) = graph_format(&object_scalar(metadata, &["type"])?.to_ascii_lowercase())?;
     let node_order = object_child(metadata, "node_order")?;
     let matrix = object_child(metadata, "adjacency_matrix")?;
     if node_order.value_type != JsonValueType::Array || matrix.value_type != JsonValueType::Array {
         return None;
     }
     let weight_unit = object_scalar(metadata, &["weight_unit"]).unwrap_or_default();
-    Some((node_order, matrix, weight_unit))
+    Some((node_order, matrix, weight_unit, direction))
 }
 
 fn build_weighted_matrix_graph(
     node_order: &JsonNode,
     matrix: &JsonNode,
     weight_unit: &str,
+    direction: EdgeDirection,
 ) -> RelationshipGraph {
     let mut graph = RelationshipGraph {
-        directed: false,
+        directed: direction != EdgeDirection::Undirected,
         ..Default::default()
     };
     for (index, node) in node_order.children.iter().enumerate() {
@@ -183,6 +342,7 @@ fn build_weighted_matrix_graph(
             path: node.path.clone(),
             search_paths: vec![node.path.clone()],
             partition: None,
+            attributes: record_attributes(node),
         });
     }
 
@@ -191,12 +351,32 @@ fn build_weighted_matrix_graph(
         if row.value_type != JsonValueType::Array {
             continue;
         }
-        for target in source + 1..graph.nodes.len() {
+        let first_target = if matches!(
+            direction,
+            EdgeDirection::Undirected | EdgeDirection::Bidirectional
+        ) {
+            source
+        } else {
+            0
+        };
+        for target in first_target..graph.nodes.len() {
             let Some(weight) = row.children.get(target) else {
                 continue;
             };
             if weight.value_type != JsonValueType::Number
                 && weight.value_type != JsonValueType::Float
+            {
+                continue;
+            }
+            let mantissa = weight
+                .display_value
+                .trim_start_matches(['+', '-'])
+                .split(['e', 'E'])
+                .next()
+                .unwrap_or("");
+            if source == target
+                && mantissa.contains('0')
+                && mantissa.chars().all(|ch| matches!(ch, '0' | '.'))
             {
                 continue;
             }
@@ -215,6 +395,8 @@ fn build_weighted_matrix_graph(
             source,
             target,
             label,
+            direction,
+            attributes: Vec::new(),
         })
         .collect();
     graph
@@ -223,6 +405,7 @@ fn build_weighted_matrix_graph(
 #[derive(Clone)]
 struct EdgeListGraphFormat {
     directed: bool,
+    default_direction: EdgeDirection,
     multigraph: bool,
     weight_unit: String,
 }
@@ -238,11 +421,8 @@ fn explicit_toml_multigraph_parts(
         return None;
     }
     let graph_type = object_scalar(metadata, &["type"])?.to_ascii_lowercase();
-    let directed = match graph_type.as_str() {
-        "directed_multigraph" => true,
-        "undirected_multigraph" => false,
-        _ => return None,
-    };
+    let (default_direction, multigraph) = graph_format(&graph_type)?;
+    let directed = default_direction != EdgeDirection::Undirected;
     let nodes = object_child(root, "nodes")?;
     let edges = object_child(root, "edges")?;
     if nodes.value_type != JsonValueType::Object || edges.value_type != JsonValueType::Array {
@@ -253,7 +433,8 @@ fn explicit_toml_multigraph_parts(
         edges,
         EdgeListGraphFormat {
             directed,
-            multigraph: true,
+            default_direction,
+            multigraph,
             weight_unit: object_scalar(metadata, &["weight_unit"]).unwrap_or_default(),
         },
     ))
@@ -263,7 +444,7 @@ fn build_explicit_multigraph(
     node_records: &JsonNode,
     edge_records: &JsonNode,
     format: EdgeListGraphFormat,
-) -> RelationshipGraph {
+) -> Result<RelationshipGraph, String> {
     let mut graph = RelationshipGraph {
         directed: format.directed,
         ..Default::default()
@@ -284,10 +465,12 @@ fn build_explicit_multigraph(
             path: node.path.clone(),
             search_paths: vec![node.path.clone()],
             partition: None,
+            attributes: record_attributes(node),
         });
         add_graph_alias(&mut aliases, id.to_string(), index);
     }
 
+    let mut unique_edges = BTreeSet::new();
     for edge in &edge_records.children {
         if edge.value_type != JsonValueType::Object {
             continue;
@@ -310,17 +493,21 @@ fn build_explicit_multigraph(
         let [target] = targets.as_slice() else {
             continue;
         };
-        if source == target {
-            continue;
+        let direction = record_direction(edge, format.default_direction)?;
+        let (source, target) =
+            normalize_edge_endpoints(*source, *target, direction != EdgeDirection::Undirected);
+        let label = explicit_edge_label(edge, &format.weight_unit);
+        if format.multigraph || unique_edges.insert((source, target, label.clone(), direction)) {
+            graph.edges.push(GraphEdge {
+                source,
+                target,
+                label,
+                direction,
+                attributes: record_attributes(edge),
+            });
         }
-        let (source, target) = normalize_edge_endpoints(*source, *target, format.directed);
-        graph.edges.push(GraphEdge {
-            source,
-            target,
-            label: explicit_edge_label(edge, &format.weight_unit),
-        });
     }
-    graph
+    Ok(graph)
 }
 
 fn explicit_json_graph_parts(
@@ -336,13 +523,8 @@ fn explicit_json_graph_parts(
         return None;
     }
     let graph_type = object_scalar(metadata, &["type"])?.to_ascii_lowercase();
-    let (directed, multigraph) = match graph_type.as_str() {
-        "directed" | "weighted_directed" => (true, false),
-        "undirected" | "weighted_undirected" => (false, false),
-        "directed_multigraph" => (true, true),
-        "undirected_multigraph" => (false, true),
-        _ => return None,
-    };
+    let (default_direction, multigraph) = graph_format(&graph_type)?;
+    let directed = default_direction != EdgeDirection::Undirected;
 
     (nodes.value_type == JsonValueType::Array && edge_records.value_type == JsonValueType::Array)
         .then_some((
@@ -350,6 +532,7 @@ fn explicit_json_graph_parts(
             edge_records,
             EdgeListGraphFormat {
                 directed,
+                default_direction,
                 multigraph,
                 weight_unit: object_scalar(metadata, &["weight_unit"]).unwrap_or_default(),
             },
@@ -360,7 +543,7 @@ fn build_explicit_json_graph(
     nodes: &JsonNode,
     edge_records: &JsonNode,
     format: EdgeListGraphFormat,
-) -> RelationshipGraph {
+) -> Result<RelationshipGraph, String> {
     let mut graph = RelationshipGraph {
         directed: format.directed,
         ..Default::default()
@@ -383,6 +566,7 @@ fn build_explicit_json_graph(
                 .chain(node.children.iter().map(|child| child.path.clone()))
                 .collect(),
             partition: None,
+            attributes: record_attributes(node),
         });
         add_graph_alias(&mut aliases, id, index);
     }
@@ -410,36 +594,42 @@ fn build_explicit_json_graph(
         let [target] = targets.as_slice() else {
             continue;
         };
-        if source == target {
-            continue;
-        }
-
-        let (source, target) = normalize_edge_endpoints(*source, *target, format.directed);
+        let direction = record_direction(edge, format.default_direction)?;
+        let (source, target) =
+            normalize_edge_endpoints(*source, *target, direction != EdgeDirection::Undirected);
         let label = explicit_edge_label(edge, &format.weight_unit);
         if format.multigraph {
             graph.edges.push(GraphEdge {
                 source,
                 target,
                 label,
+                direction,
+                attributes: record_attributes(edge),
             });
         } else {
-            unique_edges.insert((source, target, label));
+            unique_edges.insert((source, target, label, direction));
         }
     }
 
     graph.edges.extend(
         unique_edges
             .into_iter()
-            .map(|(source, target, label)| GraphEdge {
+            .map(|(source, target, label, direction)| GraphEdge {
                 source,
                 target,
                 label,
+                direction,
+                attributes: Vec::new(),
             }),
     );
-    graph
+    Ok(graph)
 }
 
-fn explicit_edge_label(edge: &JsonNode, weight_unit: &str) -> String {
+pub(super) fn explicit_edge_label(edge: &JsonNode, weight_unit: &str) -> String {
+    edge_label_with_id(edge, weight_unit, true)
+}
+
+pub(super) fn edge_label_with_id(edge: &JsonNode, weight_unit: &str, include_id: bool) -> String {
     let mut parts = Vec::new();
     if let Some(relation) =
         object_scalar(edge, &["label", "name", "relation"]).filter(|relation| !relation.is_empty())
@@ -459,28 +649,31 @@ fn explicit_edge_label(edge: &JsonNode, weight_unit: &str) -> String {
     if let Some(contract) = object_scalar(edge, &["contract"]) {
         parts.push(contract);
     }
-    if let Some(id) = object_scalar(edge, &["edge_id", "id"]) {
+    let identity_fields: &[&str] = if include_id {
+        &["edge_id", "id"]
+    } else {
+        &["edge_id"]
+    };
+    if let Some(id) = object_scalar(edge, identity_fields) {
         parts.push(id);
     }
     parts.join(" · ")
 }
 
-fn explicit_undirected_adjacency(root: &JsonNode) -> Option<&JsonNode> {
+fn explicit_adjacency_parts(root: &JsonNode) -> Option<(&JsonNode, EdgeDirection)> {
     if root.value_type != JsonValueType::Object {
         return None;
     }
     let metadata = object_child(root, "graph")?;
     let adjacency = object_child(root, "adjacency")?;
-    let graph_type = object_scalar(metadata, &["type"])?;
-    (metadata.value_type == JsonValueType::Object
-        && graph_type.eq_ignore_ascii_case("undirected")
-        && adjacency.value_type == JsonValueType::Object)
-        .then_some(adjacency)
+    let (direction, _) = graph_format(&object_scalar(metadata, &["type"])?.to_ascii_lowercase())?;
+    (metadata.value_type == JsonValueType::Object && adjacency.value_type == JsonValueType::Object)
+        .then_some((adjacency, direction))
 }
 
-fn build_undirected_adjacency_graph(adjacency: &JsonNode) -> RelationshipGraph {
+fn build_adjacency_graph(adjacency: &JsonNode, direction: EdgeDirection) -> RelationshipGraph {
     let mut graph = RelationshipGraph {
-        directed: false,
+        directed: direction != EdgeDirection::Undirected,
         ..Default::default()
     };
     let mut nodes_by_id = HashMap::with_capacity(adjacency.children.len());
@@ -521,10 +714,9 @@ fn build_undirected_adjacency_graph(adjacency: &JsonNode) -> RelationshipGraph {
             let Some(&target) = nodes_by_id.get(&target_id) else {
                 continue;
             };
-            if source != target {
-                let (source, target) = normalize_edge_endpoints(source, target, false);
-                edges.insert((source, target, String::new()));
-            }
+            let (source, target) =
+                normalize_edge_endpoints(source, target, direction != EdgeDirection::Undirected);
+            edges.insert((source, target, String::new()));
         }
     }
 
@@ -534,6 +726,8 @@ fn build_undirected_adjacency_graph(adjacency: &JsonNode) -> RelationshipGraph {
             source,
             target,
             label,
+            direction,
+            attributes: Vec::new(),
         })
         .collect();
     graph
@@ -563,6 +757,7 @@ fn ensure_adjacency_node(
         path: path.to_string(),
         search_paths: vec![path.to_string()],
         partition: None,
+        attributes: Vec::new(),
     });
     nodes_by_id.insert(id.to_string(), index);
     index
@@ -607,8 +802,9 @@ fn explicit_graph_parts(root: &JsonNode) -> Option<(&JsonNode, &JsonNode, bool)>
 fn build_explicit_graph(
     entities: &JsonNode,
     edge_records: &JsonNode,
-    directed: bool,
-) -> RelationshipGraph {
+    default_direction: EdgeDirection,
+) -> Result<RelationshipGraph, String> {
+    let directed = default_direction != EdgeDirection::Undirected;
     let mut graph = RelationshipGraph {
         directed,
         ..Default::default()
@@ -629,6 +825,7 @@ fn build_explicit_graph(
             path: entity.path.clone(),
             search_paths: vec![entity.path.clone()],
             partition: None,
+            attributes: record_attributes(entity),
         });
         entities_by_id.insert(id.to_string(), index);
     }
@@ -654,10 +851,6 @@ fn build_explicit_graph(
         let Some(&target) = entities_by_id.get(&target_id) else {
             continue;
         };
-        if source == target {
-            continue;
-        }
-
         let label = record
             .children
             .get(3)
@@ -666,17 +859,21 @@ fn build_explicit_graph(
             .map_or(label.clone(), |cardinality| {
                 format!("{label} ({cardinality})")
             });
-        let (source, target) = normalize_edge_endpoints(source, target, directed);
-        edges.insert((source, target, label));
+        let direction = tuple_direction(record, 4, default_direction)?;
+        let (source, target) =
+            normalize_edge_endpoints(source, target, direction != EdgeDirection::Undirected);
+        edges.insert((source, target, label, direction));
     }
 
     graph.edges = edges
         .into_iter()
-        .map(|(source, target, label)| GraphEdge {
+        .map(|(source, target, label, direction)| GraphEdge {
             source,
             target,
             label,
+            direction,
+            attributes: Vec::new(),
         })
         .collect();
-    graph
+    Ok(graph)
 }

@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 use roxmltree::{Document, Node};
 use serde_json::{Map, Number, Value};
 
-use super::{JsonObject, edge_record, graph_document, node_record, value_as_string};
+use super::{
+    EdgeDirection, JsonObject, edge_record, graph_document, node_record, set_edge_direction,
+    value_as_string,
+};
 
 mod gexf;
 mod graphml;
@@ -105,35 +108,23 @@ fn parse_xml_bool(value: &str, context: &str) -> Result<bool, String> {
     }
 }
 
-fn uniform_direction(
-    directions: HashSet<bool>,
-    fallback: bool,
-    format: &str,
-) -> Result<bool, String> {
-    let mut directions = directions.into_iter();
-    match (directions.next(), directions.next()) {
-        (None, None) => Ok(fallback),
-        (Some(direction), None) => Ok(direction),
-        _ => Err(format!(
-            "{format} содержит одновременно ориентированные и неориентированные ребра"
-        )),
-    }
-}
-
-fn gexf_direction(edge_type: &str) -> Result<bool, String> {
-    match edge_type.to_ascii_lowercase().as_str() {
-        "directed" => Ok(true),
-        "undirected" | "mutual" => Ok(false),
-        _ => Err(format!("Неподдерживаемый тип ребра GEXF: {edge_type}")),
-    }
-}
-
-fn graph_type(directed: bool) -> &'static str {
-    if directed {
-        "directed_multigraph"
+fn direction_graph_type(
+    directions: HashSet<EdgeDirection>,
+    fallback: EdgeDirection,
+) -> &'static str {
+    if directions.len() > 1 {
+        "mixed_multigraph"
     } else {
-        "undirected_multigraph"
+        match directions.into_iter().next().unwrap_or(fallback) {
+            EdgeDirection::Undirected => "undirected_multigraph",
+            EdgeDirection::Bidirectional => "bidirectional_multigraph",
+            EdgeDirection::Directed | EdgeDirection::Reverse => "directed_multigraph",
+        }
     }
+}
+
+fn gexf_direction(edge_type: &str) -> Result<EdgeDirection, String> {
+    EdgeDirection::parse(edge_type).map_err(|error| format!("GEXF: {error}"))
 }
 
 fn attribute_key(domain: &str, id: &str) -> String {

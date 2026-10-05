@@ -213,6 +213,18 @@ pub(super) fn resolve_graph_label_leaders(
     node_rects: &[egui::Rect],
     routes: &[Vec<Pos2>],
 ) {
+    // Reserve both ends so source arrowheads in reverse/mutual edges stay unobstructed.
+    let arrowheads = routes
+        .iter()
+        .flat_map(|route| {
+            edge_arrowheads(route, EdgeDirection::Bidirectional)
+                .into_iter()
+                .map(|(tip, direction)| {
+                    let wings = arrow_head_wings(tip, direction, 1.0);
+                    egui::Rect::from_points(&[tip, wings[0], wings[1]]).expand(2.0)
+                })
+        })
+        .collect::<Vec<_>>();
     let backgrounds = labels
         .iter()
         .flatten()
@@ -253,18 +265,27 @@ pub(super) fn resolve_graph_label_leaders(
         if blocked {
             reference += 1;
             label.leader = None;
-            let anchor = routes[index]
+            let candidates = routes[index]
                 .windows(2)
                 .flat_map(|segment| {
                     (1..16)
                         .map(|step| segment[0] + (segment[1] - segment[0]) * (step as f32 / 16.0))
                 })
+                .collect::<Vec<_>>();
+            let clears_arrowheads = |point: Pos2| {
+                let marker = egui::Rect::from_center_size(point, Vec2::splat(18.0));
+                !arrowheads.iter().any(|rect| marker.intersects(*rect))
+            };
+            let anchor = candidates
+                .iter()
+                .copied()
                 .filter(|point| {
-                    let marker = egui::Rect::from_center_size(*point, Vec2::splat(16.0));
-                    !node_rects
-                        .iter()
-                        .chain(&backgrounds)
-                        .any(|rect| marker.intersects(*rect))
+                    let marker = egui::Rect::from_center_size(*point, Vec2::splat(18.0));
+                    clears_arrowheads(*point)
+                        && !node_rects
+                            .iter()
+                            .chain(&backgrounds)
+                            .any(|rect| marker.intersects(*rect))
                         && !markers.iter().any(|rect| marker.intersects(*rect))
                         && !routes.iter().enumerate().any(|(route_index, route)| {
                             route_index != index
@@ -274,7 +295,25 @@ pub(super) fn resolve_graph_label_leaders(
                         })
                 })
                 .min_by(|left, right| left.distance_sq(start).total_cmp(&right.distance_sq(start)))
-                .unwrap_or(start);
+                .or_else(|| {
+                    // Dense routes can lack a fully clear position. Never relax arrow clearance.
+                    candidates
+                        .iter()
+                        .copied()
+                        .chain(std::iter::once(start))
+                        .filter(|point| clears_arrowheads(*point))
+                        .min_by(|left, right| {
+                            left.distance_sq(start).total_cmp(&right.distance_sq(start))
+                        })
+                })
+                .unwrap_or_else(|| {
+                    // A very short route may be entirely covered by an arrowhead.
+                    let mut point = start;
+                    while !clears_arrowheads(point) {
+                        point.x += 18.0;
+                    }
+                    point
+                });
             label.reference = Some((reference, anchor));
             markers.push(egui::Rect::from_center_size(anchor, Vec2::splat(18.0)));
         } else {
@@ -368,7 +407,7 @@ pub(super) fn place_edge_label(
         || routed_edges.iter().any(|route| {
             route.windows(2).any(|segment| {
                 segment_intersects_rect(segment[0], segment[1], label_rect.expand(2.0))
-            }) || route.last().is_some_and(|tip| {
+            }) || route.first().into_iter().chain(route.last()).any(|tip| {
                 label_rect.intersects(egui::Rect::from_center_size(*tip, Vec2::splat(20.0)))
             })
         })

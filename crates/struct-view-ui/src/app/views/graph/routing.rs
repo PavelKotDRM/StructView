@@ -163,6 +163,7 @@ pub(super) fn relationship_graph_fingerprint(graph: &RelationshipGraph) -> u64 {
         edge.source.hash(&mut hasher);
         edge.target.hash(&mut hasher);
         edge.label.hash(&mut hasher);
+        edge.direction.hash(&mut hasher);
     }
     graph.directed.hash(&mut hasher);
     graph.partition_names.hash(&mut hasher);
@@ -250,9 +251,15 @@ pub(in crate::app::views) fn graph_edge_ports(
     let mut ports = Vec::with_capacity(edge_endpoints.len());
 
     for (edge_index, &(source, target)) in edge_endpoints.iter().enumerate() {
-        let direction = (node_positions[target] - node_positions[source]).normalized();
-        let source_side = GraphNodeSide::for_direction(direction);
-        let target_side = GraphNodeSide::for_direction(-direction);
+        let (source_side, target_side) = if source == target {
+            (GraphNodeSide::Right, GraphNodeSide::Bottom)
+        } else {
+            let direction = (node_positions[target] - node_positions[source]).normalized();
+            (
+                GraphNodeSide::for_direction(direction),
+                GraphNodeSide::for_direction(-direction),
+            )
+        };
         ports.push(GraphEdgePorts {
             source_side,
             target_side,
@@ -391,16 +398,10 @@ impl GraphRoutingGrid {
 
     #[cfg(test)]
     pub(in crate::app::views) fn route_edge(&self, source: usize, target: usize) -> Vec<Pos2> {
-        let direction = (self.node_positions[target] - self.node_positions[source]).normalized();
         self.route_edge_with_ports(
             source,
             target,
-            GraphEdgePorts {
-                source_side: GraphNodeSide::for_direction(direction),
-                target_side: GraphNodeSide::for_direction(-direction),
-                source_offset: 0.0,
-                target_offset: 0.0,
-            },
+            graph_edge_ports(&self.node_positions, &[(source, target)])[0],
             &[],
         )
     }
@@ -434,7 +435,7 @@ impl GraphRoutingGrid {
                         GRAPH_EDGE_CLEARANCE,
                     )
                 });
-        if !crosses_another_node && !overlaps_another_edge {
+        if source != target && !crosses_another_node && !overlaps_another_edge {
             return vec![line_start, line_end];
         }
 
@@ -840,11 +841,28 @@ pub(super) fn draw_arrow_head(
     stroke: Stroke,
     zoom: f32,
 ) {
-    let arrow_length = 9.0 * zoom;
-    for angle_offset in [2.55, -2.55] {
-        let wing = tip + Vec2::angled(direction.angle() + angle_offset) * arrow_length;
+    for wing in arrow_head_wings(tip, direction, zoom) {
         painter.line_segment([tip, wing], stroke);
     }
+}
+
+pub(super) fn arrow_head_wings(tip: Pos2, direction: Vec2, zoom: f32) -> [Pos2; 2] {
+    [2.55, -2.55].map(|angle| tip + Vec2::angled(direction.angle() + angle) * (9.0 * zoom))
+}
+
+pub(super) fn edge_arrowheads(route: &[Pos2], direction: EdgeDirection) -> Vec<(Pos2, Vec2)> {
+    let mut arrows = Vec::with_capacity(2);
+    if direction.arrow_at_source()
+        && let Some(segment) = route.windows(2).next()
+    {
+        arrows.push((segment[0], (segment[0] - segment[1]).normalized()));
+    }
+    if direction.arrow_at_target()
+        && let Some(segment) = route.windows(2).last()
+    {
+        arrows.push((segment[1], (segment[1] - segment[0]).normalized()));
+    }
+    arrows
 }
 
 #[cfg(test)]
