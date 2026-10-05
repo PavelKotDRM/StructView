@@ -1,34 +1,57 @@
-//! # Модуль поиска по JSON-дереву
+//! # Structured-data tree search
 //!
-//! Реализует полнотекстовый поиск по ключам, значениям и путям узлов дерева [`JsonNode`].
-//! Найденные совпадения сохраняются как список путей, по которым можно
-//! навигировать (Next / Previous).
+//! Searches [`JsonNode`] keys, displayed values, and paths, then stores matching
+//! node paths for navigation. Queries can use literal matching, regular
+//! expressions, or a `key: value` pair.
 
 use crate::parser::JsonNode;
 use regex::{Regex, RegexBuilder};
 use std::borrow::Cow;
 
 /// Escape a string so it is interpreted literally in a regular expression.
+///
+/// This is useful when constructing a regular expression that contains
+/// user-provided literal text.
+///
+/// # Examples
+///
+/// ```
+/// use struct_view_core::search::escape_regex_literal;
+///
+/// let literal = escape_regex_literal("a.b");
+/// assert_eq!(literal, r"a\.b");
+/// ```
 pub fn escape_regex_literal(text: &str) -> String {
     regex::escape(text)
 }
 
-/// Параметры поиска по дереву данных.
+/// Controls which node fields are searched and how a query is matched.
+///
+/// By default, keys, displayed values, and paths are searched using
+/// case-insensitive substring matching. Regular expressions use the syntax
+/// supported by the [`regex`] crate. For regular-expression searches,
+/// [`Self::exact_match`] and [`Self::whole_word`] do not apply; use regular
+/// expression anchors or boundaries instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchOptions {
-    /// Искать в именах полей.
+    /// Search object keys. Array elements have no key.
     pub search_keys: bool,
-    /// Искать в отображаемых значениях.
+    /// Search each node's displayed value.
     pub search_values: bool,
-    /// Искать в JSON-путях узлов.
+    /// Search each node's path.
     pub search_paths: bool,
-    /// Учитывать регистр символов.
+    /// Distinguish uppercase and lowercase characters in literal and regex searches.
     pub case_sensitive: bool,
-    /// Требовать полного совпадения вместо поиска по подстроке.
+    /// Require the entire field to equal a literal query instead of matching a substring.
+    ///
+    /// This option is ignored when [`Self::use_regex`] is enabled.
     pub exact_match: bool,
-    /// Требовать совпадения отдельного слова.
+    /// Require a literal query to be bounded by non-word characters or field boundaries.
+    ///
+    /// Word characters are Unicode alphanumeric characters and underscores.
+    /// This option is ignored when [`Self::use_regex`] is enabled.
     pub whole_word: bool,
-    /// Интерпретировать запрос как регулярное выражение.
+    /// Interpret the query as a regular expression.
     pub use_regex: bool,
 }
 
@@ -46,20 +69,24 @@ impl Default for SearchOptions {
     }
 }
 
-/// Состояние поискового запроса.
+/// The current query, its matching node paths, and navigation state.
 ///
-/// Хранит текущий запрос, список путей совпадений и индекс активного совпадения.
+/// Call [`Self::search`] or [`Self::search_with_options`] to update this state.
+/// Matches are stored in tree traversal order, and navigation wraps around at
+/// either end of the list.
 #[derive(Debug, Default, Clone)]
 pub struct SearchState {
-    /// Текущая поисковая строка.
+    /// The most recently submitted query.
     pub query: String,
-    /// Пути узлов, соответствующих запросу.
+    /// Paths of nodes matching the most recent valid query.
     pub matches: Vec<String>,
-    /// Индекс текущего активного совпадения.
+    /// Index of the active path in [`Self::matches`], or `0` when there are no matches.
     pub current_index: usize,
-    /// Активные параметры поиска.
+    /// Options used for the most recent search.
     pub options: SearchOptions,
-    /// Ошибка поискового запроса, например некорректное регулярное выражение.
+    /// Error from compiling the most recent query, if any.
+    ///
+    /// For example, this is set when a regular-expression query is invalid.
     pub error: Option<String>,
     pattern: Option<SearchPattern>,
 }
@@ -219,22 +246,75 @@ fn contains_whole_word(text: &str, query: &str) -> bool {
 }
 
 impl SearchState {
-    /// Выполнить поиск по дереву.
+    /// Search the tree using the current [`Self::options`].
     ///
-    /// Обновляет список [`Self::matches`] и сбрасывает [`Self::current_index`] в `0`.
-    /// По умолчанию поиск регистронезависимый и проверяет ключи, отображаемые
-    /// значения и пути каждого узла. Текущие параметры берутся из [`Self::options`].
-    /// Ошибка некорректного регулярного выражения сохраняется в [`Self::error`].
+    /// Replaces [`Self::matches`], resets [`Self::current_index`] to `0`, and
+    /// clears any previous [`Self::error`]. An empty query or disabled search
+    /// scopes produce no matches. If a regular-expression query cannot be
+    /// compiled, matches remain empty and the error is stored in [`Self::error`].
     ///
     /// # Arguments
     ///
-    /// * `root` — корневой узел JSON-дерева.
-    /// * `query` — строка поиска.
+    /// * `root` - Root of the tree to search.
+    /// * `query` - Query string. A `key: value` query requires whitespace
+    ///   immediately before or after the colon; both parts must match the same
+    ///   node's key and displayed value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use struct_view_core::parser::parse_json;
+    /// use struct_view_core::search::SearchState;
+    ///
+    /// let root = parse_json(r#"{"user":{"name":"Ada"}}"#).unwrap();
+    /// let mut search = SearchState::default();
+    /// search.search(&root, "name: Ada");
+    ///
+    /// assert_eq!(search.matches, ["user.name"]);
+    /// ```
     pub fn search(&mut self, root: &JsonNode, query: &str) {
         self.search_with_options(root, query, self.options);
     }
 
-    /// Выполнить поиск с указанными параметрами.
+    /// Search the tree using the supplied options.
+    ///
+    /// Replaces the query, options, and matches, resets the active index to
+    /// `0`, and clears any previous error. When `use_regex` is enabled, an
+    /// invalid expression leaves the match list empty and its compilation
+    /// error available in [`Self::error`]. If all searchable scopes are
+    /// disabled or the query is empty, no matching is performed.
+    ///
+    /// A query of the form `key: value` (with whitespace on at least one side
+    /// of the colon) requires both parts to match the same node. This form
+    /// requires both key and value search scopes to be enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - Root of the tree to search.
+    /// * `query` - Literal query, regular expression, or key-value query.
+    /// * `options` - Scopes and matching behavior for this search.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use struct_view_core::parser::parse_json;
+    /// use struct_view_core::search::{SearchOptions, SearchState};
+    ///
+    /// let root = parse_json(r#"{"user_name":"Ada"}"#).unwrap();
+    /// let mut search = SearchState::default();
+    /// search.search_with_options(
+    ///     &root,
+    ///     r"^user_[a-z]+$",
+    ///     SearchOptions {
+    ///         search_values: false,
+    ///         search_paths: false,
+    ///         use_regex: true,
+    ///         ..Default::default()
+    ///     },
+    /// );
+    ///
+    /// assert_eq!(search.matches, ["user_name"]);
+    /// ```
     pub fn search_with_options(&mut self, root: &JsonNode, query: &str, options: SearchOptions) {
         self.query = query.to_string();
         self.options = options;
@@ -259,18 +339,20 @@ impl SearchState {
         self.pattern = Some(pattern);
     }
 
-    /// Перейти к следующему совпадению.
+    /// Advance the active index to the next match.
     ///
-    /// Если совпадений нет, ничего не делает. Навигация цикличная.
+    /// Navigation wraps from the last match to the first. Does nothing when
+    /// [`Self::matches`] is empty.
     pub fn next(&mut self) {
         if !self.matches.is_empty() {
             self.current_index = (self.current_index + 1) % self.matches.len();
         }
     }
 
-    /// Перейти к предыдущему совпадению.
+    /// Move the active index to the previous match.
     ///
-    /// Если совпадений нет, ничего не делает. Навигация цикличная.
+    /// Navigation wraps from the first match to the last. Does nothing when
+    /// [`Self::matches`] is empty.
     pub fn prev(&mut self) {
         if !self.matches.is_empty() {
             self.current_index =
@@ -278,32 +360,42 @@ impl SearchState {
         }
     }
 
-    /// Вернуть путь текущего активного совпадения.
+    /// Return the path at the active index, if a match exists.
+    ///
+    /// Returns `None` when [`Self::matches`] is empty or the index is out of range.
     pub fn current_match_path(&self) -> Option<&str> {
         self.matches.get(self.current_index).map(|s| s.as_str())
     }
 
-    /// Проверить, является ли путь активным совпадением.
+    /// Check whether `path` is the active match.
     pub fn is_active(&self, path: &str) -> bool {
         self.matches
             .get(self.current_index)
             .is_some_and(|p| p == path)
     }
 
-    /// Проверить, является ли путь любым (не обязательно активным) совпадением.
+    /// Check whether `path` appears anywhere in the match list.
     pub fn is_match(&self, path: &str) -> bool {
         self.matches.iter().any(|p| p == path)
     }
 
-    /// Проверить текст тем же поисковым запросом и параметрами.
-    /// Для запроса `ключ: значение` отдельный текст не может дать совпадение.
+    /// Test `text` against the most recently compiled query.
+    ///
+    /// Returns `false` if no valid query has been compiled. A key-value query
+    /// cannot match a standalone text value; use [`Self::matches_fields`]
+    /// instead.
     pub fn matches_text(&self, text: &str) -> bool {
         self.pattern
             .as_ref()
             .is_some_and(|pattern| pattern.matches_text(text))
     }
 
-    /// Проверить ключ, значение и путь записи текущим поисковым запросом.
+    /// Test a node's key, displayed value, and path against the current query.
+    ///
+    /// Only fields enabled by the most recently used [`SearchOptions`] are
+    /// considered. For a key-value query, both the key and displayed value
+    /// must match on this same node. Returns `false` if no valid query has
+    /// been compiled.
     pub fn matches_fields(&self, key: Option<&str>, value: &str, path: &str) -> bool {
         self.pattern
             .as_ref()
@@ -311,7 +403,7 @@ impl SearchState {
     }
 }
 
-/// Рекурсивно собрать пути всех узлов, соответствующих запросу и параметрам.
+/// Collect the paths of all nodes matching the pattern and enabled scopes.
 fn collect_matches(
     node: &JsonNode,
     pattern: &SearchPattern,

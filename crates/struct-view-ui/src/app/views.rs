@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use egui::{Align2, Color32, FontId, Pos2, RichText, Sense, Stroke, Vec2};
 use serde_json::Value;
 
