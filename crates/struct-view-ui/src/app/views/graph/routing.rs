@@ -1,4 +1,28 @@
+use super::calculation::{
+    GraphProgressTracker, GraphStage, advance_graph_progress, begin_graph_stage,
+};
 use super::*;
+
+mod geometry;
+
+#[cfg(test)]
+use super::calculation::{GraphProgress, build_graph_calculation};
+pub(in crate::app::views) use geometry::GraphRouteSegmentIndex;
+#[cfg(test)]
+pub(in crate::app::views) use geometry::box_border_offset;
+#[cfg(test)]
+pub(super) use geometry::segment_pair_penalty;
+pub(super) use geometry::{
+    arrow_head_wings, closest_point_on_segment, cross_product, draw_arrow_head, edge_arrowheads,
+    point_to_segment_distance, segment_intersects_rect, segments_intersect,
+};
+pub(in crate::app::views) use geometry::{
+    segment_crosses_rect_interior, segments_within_clearance,
+};
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::time::Duration;
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -682,229 +706,6 @@ fn route_heuristic(point: Pos2, goals: &[Pos2]) -> f32 {
         .iter()
         .map(|goal| (point.x - goal.x).abs() + (point.y - goal.y).abs())
         .fold(f32::INFINITY, f32::min)
-}
-
-pub(super) fn segment_intersects_rect(start: Pos2, end: Pos2, rect: egui::Rect) -> bool {
-    let direction = end - start;
-    let mut first_intersection: f32 = 0.0;
-    let mut last_intersection: f32 = 1.0;
-    for (origin, delta, minimum, maximum) in [
-        (start.x, direction.x, rect.left(), rect.right()),
-        (start.y, direction.y, rect.top(), rect.bottom()),
-    ] {
-        if delta == 0.0 {
-            if origin <= minimum || origin >= maximum {
-                return false;
-            }
-            continue;
-        }
-
-        let first = (minimum - origin) / delta;
-        let last = (maximum - origin) / delta;
-        first_intersection = first_intersection.max(first.min(last));
-        last_intersection = last_intersection.min(first.max(last));
-        if first_intersection >= last_intersection {
-            return false;
-        }
-    }
-    first_intersection < last_intersection
-}
-
-pub(in crate::app::views) struct GraphRouteSegmentIndex {
-    segments: Vec<[Pos2; 2]>,
-    buckets: HashMap<(i32, i32), Vec<usize>>,
-}
-
-impl GraphRouteSegmentIndex {
-    fn cells(start: Pos2, end: Pos2) -> impl Iterator<Item = (i32, i32)> {
-        let bounds = egui::Rect::from_two_pos(start, end).expand(GRAPH_EDGE_CLEARANCE);
-        let cell_size = 128.0;
-        let left = (bounds.left() / cell_size).floor() as i32;
-        let right = (bounds.right() / cell_size).floor() as i32;
-        let top = (bounds.top() / cell_size).floor() as i32;
-        let bottom = (bounds.bottom() / cell_size).floor() as i32;
-        (top..=bottom).flat_map(move |row| (left..=right).map(move |column| (column, row)))
-    }
-
-    pub(in crate::app::views) fn new(routes: &[Vec<Pos2>]) -> Self {
-        let mut index = Self {
-            segments: Vec::new(),
-            buckets: HashMap::new(),
-        };
-        for route in routes {
-            index.insert_route(route);
-        }
-        index
-    }
-
-    fn insert_route(&mut self, route: &[Pos2]) {
-        for segment in route.windows(2) {
-            let index = self.segments.len();
-            let segment = [segment[0], segment[1]];
-            for cell in Self::cells(segment[0], segment[1]) {
-                self.buckets.entry(cell).or_default().push(index);
-            }
-            self.segments.push(segment);
-        }
-    }
-
-    fn conflicts_route(&self, route: &[Pos2]) -> bool {
-        route.windows(2).any(|segment| {
-            let mut indices = Self::cells(segment[0], segment[1])
-                .filter_map(|cell| self.buckets.get(&cell))
-                .flatten()
-                .copied()
-                .collect::<Vec<_>>();
-            indices.sort_unstable();
-            indices.dedup();
-            indices.into_iter().any(|index| {
-                segments_within_clearance(
-                    segment[0],
-                    segment[1],
-                    self.segments[index][0],
-                    self.segments[index][1],
-                    GRAPH_EDGE_CLEARANCE,
-                )
-            })
-        })
-    }
-
-    fn penalty(&self, start: Pos2, end: Pos2) -> f32 {
-        let mut indices = Self::cells(start, end)
-            .filter_map(|cell| self.buckets.get(&cell))
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        indices.sort_unstable();
-        indices.dedup();
-        indices
-            .into_iter()
-            .map(|index| segment_pair_penalty(start, end, self.segments[index]))
-            .sum()
-    }
-}
-
-fn segment_pair_penalty(start: Pos2, end: Pos2, segment: [Pos2; 2]) -> f32 {
-    if segments_intersect(start, end, segment[0], segment[1])
-        || segments_within_clearance(start, end, segment[0], segment[1], 1.0)
-    {
-        GRAPH_EDGE_CROSSING_PENALTY
-    } else if segments_within_clearance(start, end, segment[0], segment[1], GRAPH_EDGE_CLEARANCE) {
-        GRAPH_EDGE_ROUTE_PENALTY
-    } else {
-        0.0
-    }
-}
-
-pub(in crate::app::views) fn segments_within_clearance(
-    first_start: Pos2,
-    first_end: Pos2,
-    second_start: Pos2,
-    second_end: Pos2,
-    clearance: f32,
-) -> bool {
-    if segments_intersect(first_start, first_end, second_start, second_end) {
-        return true;
-    }
-    [
-        point_to_segment_distance(first_start, second_start, second_end),
-        point_to_segment_distance(first_end, second_start, second_end),
-        point_to_segment_distance(second_start, first_start, first_end),
-        point_to_segment_distance(second_end, first_start, first_end),
-    ]
-    .into_iter()
-    .any(|distance| distance <= clearance)
-}
-
-pub(super) fn segments_intersect(
-    first_start: Pos2,
-    first_end: Pos2,
-    second_start: Pos2,
-    second_end: Pos2,
-) -> bool {
-    let first_direction = first_end - first_start;
-    let second_direction = second_end - second_start;
-    let denominator = cross_product(first_direction, second_direction);
-    if denominator == 0.0 {
-        return false;
-    }
-
-    let between_starts = second_start - first_start;
-    let first_position = cross_product(between_starts, second_direction) / denominator;
-    let second_position = cross_product(between_starts, first_direction) / denominator;
-    (0.0..=1.0).contains(&first_position) && (0.0..=1.0).contains(&second_position)
-}
-
-fn cross_product(first: Vec2, second: Vec2) -> f32 {
-    first.x * second.y - first.y * second.x
-}
-
-pub(super) fn point_to_segment_distance(point: Pos2, start: Pos2, end: Pos2) -> f32 {
-    point.distance(closest_point_on_segment(point, start, end))
-}
-
-pub(super) fn closest_point_on_segment(point: Pos2, start: Pos2, end: Pos2) -> Pos2 {
-    let segment = end - start;
-    let length_squared = segment.length_sq();
-    if length_squared == 0.0 {
-        return start;
-    }
-    let projection = ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0);
-    start + segment * projection
-}
-
-pub(in crate::app::views) fn segment_crosses_rect_interior(
-    start: Pos2,
-    end: Pos2,
-    rect: egui::Rect,
-) -> bool {
-    if start.y == end.y {
-        start.y > rect.top()
-            && start.y < rect.bottom()
-            && start.x.min(end.x) < rect.right()
-            && start.x.max(end.x) > rect.left()
-    } else {
-        start.x > rect.left()
-            && start.x < rect.right()
-            && start.y.min(end.y) < rect.bottom()
-            && start.y.max(end.y) > rect.top()
-    }
-}
-
-#[cfg(test)]
-pub(in crate::app::views) fn box_border_offset(direction: Vec2) -> f32 {
-    (GRAPH_NODE_SIZE.x / 2.0 / direction.x.abs()).min(GRAPH_NODE_SIZE.y / 2.0 / direction.y.abs())
-}
-
-pub(super) fn draw_arrow_head(
-    painter: &egui::Painter,
-    tip: Pos2,
-    direction: Vec2,
-    stroke: Stroke,
-    zoom: f32,
-) {
-    for wing in arrow_head_wings(tip, direction, zoom) {
-        painter.line_segment([tip, wing], stroke);
-    }
-}
-
-pub(super) fn arrow_head_wings(tip: Pos2, direction: Vec2, zoom: f32) -> [Pos2; 2] {
-    [2.55, -2.55].map(|angle| tip + Vec2::angled(direction.angle() + angle) * (9.0 * zoom))
-}
-
-pub(super) fn edge_arrowheads(route: &[Pos2], direction: EdgeDirection) -> Vec<(Pos2, Vec2)> {
-    let mut arrows = Vec::with_capacity(2);
-    if direction.arrow_at_source()
-        && let Some(segment) = route.windows(2).next()
-    {
-        arrows.push((segment[0], (segment[0] - segment[1]).normalized()));
-    }
-    if direction.arrow_at_target()
-        && let Some(segment) = route.windows(2).last()
-    {
-        arrows.push((segment[1], (segment[1] - segment[0]).normalized()));
-    }
-    arrows
 }
 
 #[cfg(test)]

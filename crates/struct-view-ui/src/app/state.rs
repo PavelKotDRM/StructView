@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::clipboard::{
     ClipboardEntry, copy_to_clipboard, decode_structures, encode_structures, read_from_clipboard,
 };
-use struct_view_core::diff::{Difference, compare_values};
+use struct_view_core::diff::compare_values;
 use struct_view_core::files::write_text_atomic;
 use struct_view_core::parser::{
     DataFormat, JsonNode, JsonValueType, ParseError, comment_input, node_to_value, parse_data,
@@ -33,26 +33,24 @@ use super::tree::{
 use super::views::{GraphCalculationState, GraphRoutingWorkerSetting};
 use super::visualization::{VisualizationCache, VisualizationMode};
 
+mod dialog;
+mod dialog_helpers;
 mod editing;
 mod files;
 mod history;
+mod models;
 mod save;
+
+#[cfg(test)]
+pub(super) use dialog_helpers::field_value_types;
+pub(super) use models::{
+    AppMode, ComparisonDocument, ComparisonState, FieldDialog, FieldDialogTarget, FileState,
+    LoadedDocument, PairDifferenceCache, PendingInlineEdit, PreviousDocumentState, Toast,
+    ToastKind,
+};
 
 const HISTORY_LIMIT: usize = 100;
 const TOAST_LIFETIME: Duration = Duration::from_secs(3);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ToastKind {
-    Success,
-    Error,
-}
-
-#[derive(Debug)]
-pub(super) struct Toast {
-    pub(super) message: String,
-    pub(super) shown_at: Instant,
-    pub(super) kind: ToastKind,
-}
 
 impl Toast {
     pub(super) fn remaining(&self) -> Duration {
@@ -60,140 +58,11 @@ impl Toast {
     }
 }
 
-/// Метаданные загруженного файла, отображаемые в статус-баре.
-#[derive(Debug, Default)]
-pub(super) struct FileState {
-    /// Путь к файлу на диске.
-    pub(super) path: Option<PathBuf>,
-    /// Размер файла в байтах.
-    pub(super) size_bytes: u64,
-    /// Время загрузки и разбора файла в миллисекундах.
-    pub(super) load_time_ms: u128,
-    /// Формат открытого файла.
-    pub(super) format: Option<DataFormat>,
-}
-
-pub(super) struct LoadedDocument {
-    pub(super) path: PathBuf,
-    pub(super) root: JsonNode,
-    pub(super) size_bytes: u64,
-    pub(super) load_time_ms: u128,
-    pub(super) format: DataFormat,
-    pub(super) visible_rows: VisibleRows,
-}
-
-/// Документ, загруженный в режим сравнения.
-#[derive(Debug)]
-pub(super) struct ComparisonDocument {
-    /// Путь к файлу.
-    pub(super) path: PathBuf,
-    /// Размер файла в байтах.
-    pub(super) size_bytes: u64,
-    /// Время загрузки и разбора файла в миллисекундах.
-    pub(super) load_time_ms: u128,
-    /// Формат файла.
-    pub(super) format: DataFormat,
-}
-
-/// Состояние открытого документа, временно скрытого режимом сравнения.
-#[derive(Debug)]
-pub(super) struct PreviousDocumentState {
-    pub(super) root: JsonNode,
-    pub(super) file_state: FileState,
-    pub(super) search: SearchState,
-    pub(super) search_query_buf: String,
-    pub(super) regex_builder_literal: String,
-    pub(super) search_window_open: bool,
-    pub(super) search_scroll_target: Option<String>,
-    pub(super) mode: AppMode,
-    pub(super) visualization: VisualizationMode,
-    pub(super) selected_paths: BTreeSet<String>,
-    pub(super) undo_history: Vec<JsonNode>,
-    pub(super) redo_history: Vec<JsonNode>,
-}
-
-/// Состояние отображения отличий нескольких документов.
-#[derive(Debug)]
-pub(super) struct ComparisonState {
-    /// Загруженные документы в порядке колонок таблицы.
-    pub(super) documents: Vec<ComparisonDocument>,
-    /// Отличия между значениями документов.
-    pub(super) differences: Vec<Difference>,
-    /// Индекс выбранной первой версии в парном diff.
-    pub(super) left_index: usize,
-    /// Индекс выбранной второй версии в парном diff.
-    pub(super) right_index: usize,
-    pub(super) pair_cache: Option<PairDifferenceCache>,
-    /// Документ, который нужно восстановить после закрытия сравнения.
-    pub(super) previous_document: Option<PreviousDocumentState>,
-}
-
-#[derive(Debug)]
-pub(super) struct PairDifferenceCache {
-    pub(super) left_index: usize,
-    pub(super) right_index: usize,
-    pub(super) differences: Vec<Difference>,
-}
-
-/// Режим работы приложения.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum AppMode {
-    /// Только просмотр данных без изменения значений.
-    #[default]
-    View,
-    /// Разрешено редактирование значений JSON.
-    Edit,
-}
-
-/// Цель конструктора поля.
-#[derive(Debug, Clone)]
-pub(super) enum FieldDialogTarget {
-    /// Добавление поля или элемента в контейнер.
-    Add {
-        parent_path: String,
-        is_object: bool,
-    },
-    /// Редактирование существующего узла.
-    Edit { path: String, key_editable: bool },
-}
-
-/// Состояние конструктора поля объекта или элемента массива.
-#[derive(Debug)]
-pub(super) struct FieldDialog {
-    target: FieldDialogTarget,
-    key: String,
-    value_type: JsonValueType,
-    value: String,
-    error: Option<String>,
-}
-
-/// Полный снимок документа до незавершённого inline-редактирования.
-#[derive(Debug)]
-pub(super) struct PendingInlineEdit {
-    path: String,
-    root_before: JsonNode,
-}
-
 fn push_limited_snapshot(history: &mut Vec<JsonNode>, snapshot: JsonNode) {
     if history.len() >= HISTORY_LIMIT {
         history.remove(0);
     }
     history.push(snapshot);
-}
-
-impl From<AddChildRequest> for FieldDialog {
-    fn from(request: AddChildRequest) -> Self {
-        Self {
-            target: FieldDialogTarget::Add {
-                parent_path: request.parent_path,
-                is_object: request.is_object,
-            },
-            key: String::new(),
-            value_type: JsonValueType::String,
-            value: String::new(),
-            error: None,
-        }
-    }
 }
 
 /// Основное состояние приложения StructView.
@@ -366,55 +235,6 @@ impl StructViewApp {
         } else {
             ctx.set_visuals(egui::Visuals::light());
         }
-    }
-}
-
-fn field_value_types(
-    format: DataFormat,
-    is_toml_root: bool,
-    is_comment_edit: bool,
-) -> Vec<JsonValueType> {
-    if is_comment_edit {
-        return vec![JsonValueType::Comment];
-    }
-    if is_toml_root {
-        return vec![JsonValueType::Object];
-    }
-
-    let mut types = vec![
-        JsonValueType::String,
-        JsonValueType::Number,
-        JsonValueType::Bool,
-        JsonValueType::Object,
-        JsonValueType::Array,
-    ];
-    if format == DataFormat::Toml {
-        types.insert(1, JsonValueType::DateTime);
-        types.insert(3, JsonValueType::Float);
-    } else {
-        types.insert(3, JsonValueType::Null);
-    }
-    if format != DataFormat::Json {
-        types.push(JsonValueType::Comment);
-    }
-    if format == DataFormat::Yaml {
-        types.push(JsonValueType::Metadata);
-    }
-    types
-}
-
-fn default_field_value(value_type: &JsonValueType) -> String {
-    match value_type {
-        JsonValueType::Bool => "true".to_string(),
-        JsonValueType::String
-        | JsonValueType::DateTime
-        | JsonValueType::Number
-        | JsonValueType::Float
-        | JsonValueType::Null
-        | JsonValueType::Object
-        | JsonValueType::Array
-        | JsonValueType::Comment
-        | JsonValueType::Metadata => String::new(),
     }
 }
 

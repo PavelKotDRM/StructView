@@ -25,6 +25,11 @@ pub fn parse_data(
         return Ok((root, format));
     }
 
+    if looks_like_dot(input) {
+        let root = build_document(input, DataFormat::Dot)?;
+        return Ok((root, DataFormat::Dot));
+    }
+
     let mut errors = Vec::new();
     for candidate in [
         DataFormat::Json,
@@ -48,6 +53,24 @@ pub fn parse_data(
         ),
         line: None,
         column: None,
+    })
+}
+
+fn looks_like_dot(input: &str) -> bool {
+    let input = input.trim_start();
+    let input = input
+        .strip_prefix("strict")
+        .filter(|rest| rest.chars().next().is_some_and(char::is_whitespace))
+        .map(str::trim_start)
+        .unwrap_or(input);
+
+    ["digraph", "graph"].iter().any(|keyword| {
+        input.strip_prefix(keyword).is_some_and(|rest| {
+            rest.chars()
+                .next()
+                .is_some_and(|character| character.is_whitespace() || character == '{')
+                && rest.contains('{')
+        })
     })
 }
 

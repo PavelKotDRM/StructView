@@ -1,3 +1,6 @@
+use super::calculation::{
+    GraphProgressTracker, GraphStage, advance_graph_progress, begin_graph_stage,
+};
 use super::*;
 
 use std::collections::HashMap;

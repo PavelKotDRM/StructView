@@ -2,6 +2,14 @@ use super::*;
 use serde_json::Value;
 
 #[test]
+fn malformed_dot_is_not_reinterpreted_as_yaml() {
+    let (_, format) = parse_data("digraph { a -> b; }", None).unwrap();
+    assert_eq!(format, DataFormat::Dot);
+
+    assert!(parse_data("digraph { a -> b [dir=invalid] }", None).is_err());
+}
+
+#[test]
 fn parses_yaml_array() {
     let (root, format) = parse_data("- one\n- two\n", Some(DataFormat::Yaml)).unwrap();
     assert_eq!(format, DataFormat::Yaml);
