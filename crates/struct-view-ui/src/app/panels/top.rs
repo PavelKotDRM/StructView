@@ -77,7 +77,17 @@ impl StructViewApp {
             }
             if ui.button(locale.text(TextKey::Open)).clicked() {
                 ui.close();
-                self.open_file_dialog();
+                if self.visualization == VisualizationMode::Structure {
+                    self.structure_view.open_file_dialog();
+                } else {
+                    self.open_file_dialog();
+                }
+            }
+            if self.visualization == VisualizationMode::Structure {
+                self.structure_view.file_menu(ui, locale);
+                self.structure_view.export_menu(ui, locale);
+            } else if self.visualization == VisualizationMode::Graph {
+                self.show_graph_export_menu(ui);
             }
             if ui.button(locale.text(TextKey::CompareFiles)).clicked() {
                 ui.close();
@@ -86,6 +96,7 @@ impl StructViewApp {
             if ui
                 .add_enabled(
                     self.root.is_some()
+                        && self.visualization != VisualizationMode::Structure
                         && self
                             .file_state
                             .format
@@ -99,7 +110,7 @@ impl StructViewApp {
             }
             if ui
                 .add_enabled(
-                    self.root.is_some(),
+                    self.root.is_some() && self.visualization != VisualizationMode::Structure,
                     egui::Button::new(locale.text(TextKey::SaveAs)),
                 )
                 .clicked()
@@ -115,7 +126,11 @@ impl StructViewApp {
                     }
 
                     if ui
-                        .add_enabled(self.root.is_some(), egui::Button::new(format.to_string()))
+                        .add_enabled(
+                            self.root.is_some()
+                                && self.visualization != VisualizationMode::Structure,
+                            egui::Button::new(format.to_string()),
+                        )
                         .clicked()
                     {
                         ui.close();
@@ -125,6 +140,9 @@ impl StructViewApp {
             });
             if ui.button(locale.text(TextKey::CloseFile)).clicked() {
                 ui.close();
+                if self.visualization == VisualizationMode::Structure {
+                    self.structure_view = super::super::views::structure::StructureView::default();
+                }
                 self.close_file();
             }
             ui.separator();
@@ -137,6 +155,13 @@ impl StructViewApp {
     fn show_edit_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::EditMenu), |ui| {
+            if ui.button(locale.text(TextKey::SearchWindow)).clicked() {
+                self.search_window_open = true;
+                ui.close();
+            }
+            if self.visualization == VisualizationMode::Structure {
+                return;
+            }
             if self.root.is_some() {
                 ui.menu_button(locale.text(TextKey::Mode), |ui| {
                     let can_edit = self
@@ -231,52 +256,46 @@ impl StructViewApp {
         let locale = self.locale;
         let comparing = self.is_comparing();
         ui.menu_button(locale.text(TextKey::ViewMenu), |ui| {
-            if self.root.is_some() || self.comparison.is_some() {
-                ui.menu_button(locale.text(TextKey::Visualization), |ui| {
-                    if comparing {
-                        for (mode, text_key) in [
-                            (VisualizationMode::Comparison, TextKey::ComparisonView),
-                            (VisualizationMode::Diff, TextKey::DiffView),
-                        ] {
-                            if ui
-                                .selectable_value(
-                                    &mut self.visualization,
-                                    mode,
-                                    locale.text(text_key),
-                                )
-                                .changed()
-                            {
-                                ui.close();
-                            }
-                        }
-                    } else {
-                        for (mode, text_key) in [
-                            (VisualizationMode::Tree, TextKey::TreeView),
-                            (VisualizationMode::Graph, TextKey::GraphView),
-                            (VisualizationMode::Table, TextKey::TableView),
-                            (VisualizationMode::Schema, TextKey::SchemaView),
-                        ] {
-                            if ui
-                                .selectable_value(
-                                    &mut self.visualization,
-                                    mode,
-                                    locale.text(text_key),
-                                )
-                                .changed()
-                            {
-                                ui.close();
-                            }
+            ui.menu_button(locale.text(TextKey::Visualization), |ui| {
+                if comparing {
+                    for (mode, text_key) in [
+                        (VisualizationMode::Comparison, TextKey::ComparisonView),
+                        (VisualizationMode::Diff, TextKey::DiffView),
+                    ] {
+                        if ui
+                            .selectable_value(&mut self.visualization, mode, locale.text(text_key))
+                            .changed()
+                        {
+                            ui.close();
                         }
                     }
-                });
-            }
+                } else {
+                    for (mode, text_key) in [
+                        (VisualizationMode::Tree, TextKey::TreeView),
+                        (VisualizationMode::Graph, TextKey::GraphView),
+                        (VisualizationMode::Structure, TextKey::StructureView),
+                        (VisualizationMode::Table, TextKey::TableView),
+                        (VisualizationMode::Schema, TextKey::SchemaView),
+                    ] {
+                        if ui
+                            .selectable_value(&mut self.visualization, mode, locale.text(text_key))
+                            .changed()
+                        {
+                            self.refresh_search();
+                            ui.close();
+                        }
+                    }
+                }
+            });
 
-            if self.root.is_some() {
+            if self.root.is_some() && self.visualization != VisualizationMode::Structure {
                 ui.add_enabled_ui(self.graph_calculation.has_started(), |ui| {
                     ui.menu_button(locale.text(TextKey::GraphTimings), |ui| {
                         self.graph_calculation.show_progress(ui, locale);
                     });
                 });
+            }
+            if self.root.is_some() || self.visualization == VisualizationMode::Structure {
                 ui.menu_button(locale.text(TextKey::TreeActions), |ui| {
                     if ui.button(locale.text(TextKey::ExpandAll)).clicked() {
                         ui.close();
@@ -289,6 +308,17 @@ impl StructViewApp {
                 });
             }
 
+            if self.visualization == VisualizationMode::Structure {
+                ui.separator();
+                self.structure_view.view_menu(ui, locale);
+            } else if self.visualization == VisualizationMode::Graph {
+                ui.separator();
+                ui.add_enabled_ui(self.graph_calculation.result().is_some(), |ui| {
+                    if let Some(calculation) = self.graph_calculation.result() {
+                        super::super::views::graph_view_menu(ui, &calculation.routing, locale);
+                    }
+                });
+            }
             ui.separator();
             let theme_label = if self.dark_mode {
                 locale.text(TextKey::LightTheme)
@@ -307,6 +337,10 @@ impl StructViewApp {
     fn show_settings_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::SettingsMenu), |ui| {
+            if self.visualization == VisualizationMode::Structure {
+                self.structure_view.settings_menu(ui, locale);
+                ui.separator();
+            }
             ui.label(locale.text(TextKey::Language));
             for available_locale in Locale::ALL {
                 if ui
@@ -323,43 +357,65 @@ impl StructViewApp {
     fn show_help_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::HelpMenu), |ui| {
-            ui.label(format!("StructView {}", build_info::VERSION));
-            ui.separator();
-            egui::Grid::new("about_build_info")
-                .num_columns(2)
-                .spacing([12.0, 2.0])
-                .show(ui, |ui| {
-                    for (name, value) in [
-                        (locale.text(TextKey::BuildTime), build_info::BUILD_TIMESTAMP),
-                        (
-                            locale.text(TextKey::TargetPlatform),
-                            build_info::TARGET_TRIPLE,
-                        ),
-                        (locale.text(TextKey::HostPlatform), build_info::HOST_TRIPLE),
-                        (
-                            locale.text(TextKey::OptimizationLevel),
-                            build_info::OPT_LEVEL,
-                        ),
-                        (locale.text(TextKey::DebugBuild), build_info::DEBUG),
-                        (
-                            locale.text(TextKey::RustcCompiler),
-                            build_info::RUSTC_SEMVER,
-                        ),
-                        (
-                            locale.text(TextKey::RustcChannel),
-                            build_info::RUSTC_CHANNEL,
-                        ),
-                    ] {
-                        ui.label(name);
-                        ui.label(RichText::new(value).monospace());
-                        ui.end_row();
-                    }
-                });
+            ui.menu_button(locale.text(TextKey::DiagramLegend), |ui| {
+                ui.set_max_width(480.0);
+                egui::ScrollArea::vertical()
+                    .max_height(ui.ctx().content_rect().height() * 0.75)
+                    .show(ui, |ui| {
+                        crate::app::views::structure::show_legend(ui, locale);
+                        ui.separator();
+                        crate::app::views::diagram::show_controls_help(ui, locale);
+                        ui.separator();
+                        ui.label(locale.text(TextKey::StructureDisk));
+                    });
+            });
+            ui.menu_button(locale.text(TextKey::BuildInformation), |ui| {
+                ui.label(format!("StructView {}", build_info::VERSION));
+                ui.separator();
+                egui::Grid::new("about_build_info")
+                    .num_columns(2)
+                    .spacing([12.0, 2.0])
+                    .show(ui, |ui| {
+                        for (name, value) in [
+                            (locale.text(TextKey::BuildTime), build_info::BUILD_TIMESTAMP),
+                            (
+                                locale.text(TextKey::TargetPlatform),
+                                build_info::TARGET_TRIPLE,
+                            ),
+                            (locale.text(TextKey::HostPlatform), build_info::HOST_TRIPLE),
+                            (
+                                locale.text(TextKey::OptimizationLevel),
+                                build_info::OPT_LEVEL,
+                            ),
+                            (locale.text(TextKey::DebugBuild), build_info::DEBUG),
+                            (
+                                locale.text(TextKey::RustcCompiler),
+                                build_info::RUSTC_SEMVER,
+                            ),
+                            (
+                                locale.text(TextKey::RustcChannel),
+                                build_info::RUSTC_CHANNEL,
+                            ),
+                        ] {
+                            ui.label(name);
+                            ui.label(RichText::new(value).monospace());
+                            ui.end_row();
+                        }
+                    });
+            });
         });
     }
 
     /// Обработать горячие клавиши команд редактирования и работы со структурами.
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.visualization == VisualizationMode::Structure {
+            if !ctx.egui_wants_keyboard_input()
+                && ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F))
+            {
+                self.search_window_open = true;
+            }
+            return;
+        }
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -395,7 +451,11 @@ impl StructViewApp {
         let mut docking = std::mem::take(&mut self.search_window_docking);
         docking.begin();
         let mut show_content = |ui: &mut egui::Ui| {
-            if self.root.is_none() {
+            if if self.visualization == VisualizationMode::Structure {
+                !self.structure_view.has_document()
+            } else {
+                self.root.is_none()
+            } {
                 ui.label(locale.text(TextKey::NoDocument));
                 return;
             }
@@ -648,9 +708,43 @@ impl StructViewApp {
 
     /// Развернуть или свернуть все узлы дерева.
     fn set_all_expanded(&mut self, expanded: bool) {
+        if self.visualization == VisualizationMode::Structure {
+            self.structure_view.set_all_expanded(expanded);
+            return;
+        }
         if let Some(root) = &mut self.root {
             set_expanded_all(root, expanded);
             self.visible_rows_dirty = true;
+        }
+    }
+
+    fn show_graph_export_menu(&mut self, ui: &mut Ui) {
+        let mut requested = None;
+        ui.add_enabled_ui(self.graph_calculation.result().is_some(), |ui| {
+            requested = super::super::views::diagram::export_controls(ui, self.locale);
+        });
+        if let Some((png, dark)) = requested
+            && let Some(calculation) = self.graph_calculation.result()
+        {
+            let result = export_graph_image(
+                &calculation.graph,
+                &calculation.routing,
+                if png {
+                    super::super::views::GraphExportFormat::Png
+                } else {
+                    super::super::views::GraphExportFormat::Svg
+                },
+                if dark {
+                    super::super::views::GraphExportStyle::DarkOpaque
+                } else {
+                    super::super::views::GraphExportStyle::LightTransparent
+                },
+            );
+            match result {
+                Ok(true) => self.show_toast(self.locale.text(TextKey::GraphExported)),
+                Ok(false) => {}
+                Err(error) => self.show_error(&self.locale.save_error(&error.to_string())),
+            }
         }
     }
 }

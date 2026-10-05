@@ -224,6 +224,11 @@ impl StructViewApp {
     /// Вызывается после правки дерева, чтобы подсветка оставалась актуальной.
     pub(in crate::app) fn refresh_search(&mut self) {
         self.search_scroll_target = None;
+        if self.visualization == VisualizationMode::Structure {
+            self.structure_view
+                .sync_search(&mut self.search, &self.search_query_buf);
+            return;
+        }
         let Some(root) = &self.root else {
             return;
         };
@@ -240,6 +245,10 @@ impl StructViewApp {
 
     /// Запланировать прокрутку к текущему совпадению, если оно существует.
     pub(in crate::app) fn request_search_scroll(&mut self) {
+        if self.visualization == VisualizationMode::Structure {
+            self.structure_view.reveal_search_match(&self.search);
+            return;
+        }
         self.search_scroll_target = self.search.current_match_path().map(str::to_owned);
     }
 

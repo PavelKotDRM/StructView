@@ -598,7 +598,7 @@ fn blocked_and_short_routes_keep_legible_callouts_but_empty_edges_stay_unlabelle
 }
 
 #[test]
-fn graph_toolbar_zoom_multi_selection_and_marquee_work_together() {
+fn graph_menu_zoom_multi_selection_and_marquee_work_together() {
     let graph =
         layout_graph(r#"[{"id":"a","name":"Source","depends_on":"b"},{"id":"b","name":"Target"}]"#);
     let routing = build_graph_routing_layout(&graph);
@@ -616,7 +616,12 @@ fn graph_toolbar_zoom_multi_selection_and_marquee_work_together() {
                 ..Default::default()
             },
             |ui| {
-                let id = ui.make_persistent_id(("graph-interaction", routing.graph_fingerprint));
+                let id = egui::Id::new(("graph-interaction", routing.graph_fingerprint));
+                egui::Panel::top("test-graph-menu").show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        crate::app::views::graph::graph_view_menu(ui, &routing, Locale::English)
+                    });
+                });
                 show_graph(
                     ui,
                     &graph,
@@ -656,7 +661,7 @@ fn graph_toolbar_zoom_multi_selection_and_marquee_work_together() {
     };
     let none = egui::Modifiers::NONE;
     let (output, _) = render(Vec::new(), none);
-    let plus = position(&output, "+");
+    let plus = position(&output, Locale::English.text(TextKey::GraphZoomIn));
     output.drop_without_applying_deltas();
     let (output, state) = render(click(plus, none), none);
     assert!((state.zoom - 1.2).abs() < 0.001);
@@ -707,18 +712,25 @@ fn graph_toolbar_zoom_multi_selection_and_marquee_work_together() {
     output.drop_without_applying_deltas();
     let start = source - Vec2::new(120.0, 40.0);
     let end = target + Vec2::new(120.0, 65.0);
+    let shift = egui::Modifiers {
+        shift: true,
+        ..none
+    };
     let (output, _) = render(
-        vec![egui::Event::PointerMoved(start), pointer(start, true, none)],
-        none,
+        vec![
+            egui::Event::PointerMoved(start),
+            pointer(start, true, shift),
+        ],
+        shift,
     );
     output.drop_without_applying_deltas();
-    let (output, state) = render(vec![egui::Event::PointerMoved(end)], none);
+    let (output, state) = render(vec![egui::Event::PointerMoved(end)], shift);
     assert_eq!(state.selected.len(), 2, "Marquee must select both nodes");
     output.drop_without_applying_deltas();
-    let (output, _) = render(vec![pointer(end, false, none)], none);
+    let (output, _) = render(vec![pointer(end, false, shift)], shift);
     output.drop_without_applying_deltas();
     let (output, _) = render(Vec::new(), none);
-    let fit = position(&output, "Fit graph");
+    let fit = position(&output, Locale::English.text(TextKey::GraphFit));
     output.drop_without_applying_deltas();
     let (output, state) = render(click(fit, none), none);
     assert!(routing.content_size.x * state.zoom <= 1000.0);

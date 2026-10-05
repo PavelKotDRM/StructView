@@ -316,6 +316,16 @@ impl SearchState {
     /// assert_eq!(search.matches, ["user_name"]);
     /// ```
     pub fn search_with_options(&mut self, root: &JsonNode, query: &str, options: SearchOptions) {
+        self.search_fields(query, options, tree_fields(root));
+    }
+
+    /// Search arbitrary source-ordered fields with the same options as the tree search.
+    pub fn search_fields<'a>(
+        &mut self,
+        query: &str,
+        options: SearchOptions,
+        fields: impl IntoIterator<Item = (Option<&'a str>, &'a str, &'a str)>,
+    ) {
         self.query = query.to_string();
         self.options = options;
         self.matches.clear();
@@ -335,7 +345,11 @@ impl SearchState {
                 return;
             }
         };
-        collect_matches(root, &pattern, options, &mut self.matches);
+        for (key, value, path) in fields {
+            if pattern.matches_fields(key, value, path, options) {
+                self.matches.push(path.to_string());
+            }
+        }
         self.pattern = Some(pattern);
     }
 
@@ -404,24 +418,17 @@ impl SearchState {
 }
 
 /// Collect the paths of all nodes matching the pattern and enabled scopes.
-fn collect_matches(
-    node: &JsonNode,
-    pattern: &SearchPattern,
-    options: SearchOptions,
-    result: &mut Vec<String>,
-) {
-    if pattern.matches_fields(
-        node.key.as_deref(),
-        &node.display_value,
-        &node.path,
-        options,
-    ) {
-        result.push(node.path.clone());
-    }
-
-    for child in &node.children {
-        collect_matches(child, pattern, options, result);
-    }
+fn tree_fields(root: &JsonNode) -> impl Iterator<Item = (Option<&str>, &str, &str)> {
+    let mut stack = vec![root];
+    std::iter::from_fn(move || {
+        let node = stack.pop()?;
+        stack.extend(node.children.iter().rev());
+        Some((
+            node.key.as_deref(),
+            node.display_value.as_str(),
+            node.path.as_str(),
+        ))
+    })
 }
 
 #[cfg(test)]

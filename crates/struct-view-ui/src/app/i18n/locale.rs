@@ -23,19 +23,21 @@ impl Locale {
         }
     }
 
-    /// Сформировать строку статуса режима сравнения.
+    /// Сформировать поля статуса сравнения.
     pub(in crate::app) fn comparison_status(
         self,
         file_count: usize,
         difference_count: usize,
-    ) -> String {
+    ) -> Vec<String> {
         match self {
-            Self::Russian => {
-                format!("Сравнение файлов: {file_count}  |  отличий: {difference_count}")
-            }
-            Self::English => {
-                format!("File comparison: {file_count}  |  differences: {difference_count}")
-            }
+            Self::Russian => vec![
+                format!("Файлов: {file_count}"),
+                format!("Отличий: {difference_count}"),
+            ],
+            Self::English => vec![
+                format!("Files: {file_count}"),
+                format!("Differences: {difference_count}"),
+            ],
         }
     }
 
@@ -75,21 +77,27 @@ impl Locale {
         }
     }
 
-    /// Сформировать строку статуса загруженного файла.
+    /// Сформировать поля статуса загруженного файла.
     pub(in crate::app) fn loaded_file_status(
         self,
         name: &str,
         format: &str,
         size_kb: f64,
         load_time_ms: u128,
-    ) -> String {
+    ) -> Vec<String> {
         match self {
-            Self::Russian => format!(
-                "📄 {name}  |  {format}  |  {size_kb:.1} КБ  |  загружено за {load_time_ms} мс"
-            ),
-            Self::English => format!(
-                "📄 {name}  |  {format}  |  {size_kb:.1} KB  |  loaded in {load_time_ms} ms"
-            ),
+            Self::Russian => vec![
+                format!("📄 {name}"),
+                format.to_string(),
+                format!("{size_kb:.1} КБ"),
+                format!("загружено за {load_time_ms} мс"),
+            ],
+            Self::English => vec![
+                format!("📄 {name}"),
+                format.to_string(),
+                format!("{size_kb:.1} KB"),
+                format!("loaded in {load_time_ms} ms"),
+            ],
         }
     }
 

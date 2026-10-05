@@ -22,6 +22,8 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
   whole-word matching, and regular expressions;
 - a regex builder for escaped literal text and common pattern fragments;
 - switchable tree, relationship graph, flattened table, and schema views;
+- a separate JSON/YAML/TOML data-structure diagram with source-ordered nodes,
+  collapse/expand, three layouts, search, zoom/pan, and SVG/PNG export;
 - graph links inferred from common entity identifiers and reference fields;
 - per-edge directed, undirected, bidirectional, and reverse links, mixed graphs,
   and self-loops in the GUI and graph exports;
@@ -133,6 +135,59 @@ The interface provides:
   saving to a new file, and closing a document;
 - a view selector for the interactive tree, relationship graph, flattened
   table, and schema diagram;
+- `View -> Visualization -> Data structure diagram`, also available without an open document.
+  This independent mode draws the file hierarchy as boxes and parent-child
+  edges; it never infers relationships or uses the relationship graph model.
+  The current file is read as a separate disk snapshot on first entry. Use
+  **File -> Open**, drop one data file onto its canvas, or open
+  **View -> Source text** and paste JSON/YAML/TOML into the source window.
+  Choose **Settings -> Data format -> Auto / JSON / YAML / TOML** and
+  **File -> Build diagram**. Unsaved edits in other views are not imported.
+  Parsing happens in the background; errors show their line and leave the
+  last valid diagram intact, with an explicit stale-source notice.
+  Choose top-to-bottom, left-to-right, or compact layout under
+  **View -> Structure layout**. Zoom, 100%, fit, select-all, clear-selection, selected-node toggle,
+  and **Show next 100 children** also live in **View**. Click a container
+  to toggle it; large containers and deeper branches start collapsed.
+  Expanded containers initially show at most 100 children; select the parent
+  and use **Show next 100 children** to reveal more. The total node count
+  includes hidden nodes. YAML anchors are labeled and aliases are terminal
+  reference nodes, including recursive aliases; they do not add cross-edges.
+  Keys retain source order within their parent; TOML dotted tables are grouped
+  by their hierarchy. YAML streams have a synthetic array root.
+  Both diagram modes share the same main-menu zoom/selection controls and
+  **View -> Tree actions -> Expand all / Collapse all**. In structure mode,
+  expand-all retains paging for large containers.
+  Use the common advanced search window via the magnifying-glass button,
+  **Edit -> Advanced search**, or Ctrl/Cmd+F. The same key/value/path scopes,
+  case sensitivity, exact/whole-word matching, regex builder, and result list
+  are available in both modes. Navigating to a match
+  expands the necessary ancestors, reveals paged children, and centers the
+  result. Selection highlights its path back to the root. Hover a node for
+  its full key, value, and JSON Pointer path.
+  Drag the canvas to pan and use the wheel or +/- to zoom. With the canvas or
+  a node focused, use Up/Down to select, Left to collapse/go to the parent,
+  Right to expand/go to a child, Enter/Space to toggle, and Home to fit.
+  The canvas shows only the diagram; selected path/value, file name, format,
+  node counts and zoom are shown in the status bar. Hover the selected path/value
+  to see its full text. The color legend and navigation
+  instructions live in **Help -> Diagram legend and controls**.
+  Legend entries show a color swatch and type with the color name in parentheses,
+  without a duplicate text legend. Controls are shown as keycaps/gesture badges
+  next to actions, with shared controls and mode-specific navigation grouped separately.
+  Collapsing/expanding a branch centers its node without changing zoom.
+  All views use separate status fields with GUI dividers, not `|` characters,
+  and do not repeat the view name in the status bar.
+  Version and build metadata live in **Help -> Build information**.
+  There is no separate diagram toolbar. Native AccessKit widget labels expose
+  full node text; only on-screen nodes are painted. Input nesting is limited
+  to 128 levels to report excessive depth rather than overflow the stack.
+  **File -> Export diagram -> SVG / PNG** exports the entire currently
+  expanded/paged layout, not just the viewport, without search/selection
+  highlights. SVG includes full values in titles; PNG is proportionally
+  scaled down if necessary to stay within 16 million pixels. Export runs in
+  the background. Both diagrams offer the same light/transparent and
+  dark/opaque export styles, independently of the application theme.
 - a relationship graph inferred from IDs and references, plus explicit
   directed, undirected, weighted, and multi-edge graph schemas; undirected
   adjacency lists and weighted matrices; TOML entity-relation, bipartite, and
@@ -156,14 +211,19 @@ The interface provides:
   `View -> Calculation stage timings` contains elapsed time, worker count,
   per-stage timings, and the slowest completed stage, including after completion.
   Per-stage durations are listed in its `Stage details` submenu.
-  The graph toolbar provides zoom out/in, 100%, fit-to-view, select-all, and
-  clear-selection controls. Ctrl-click (Cmd-click on macOS) toggles individual
-  nodes; drag on empty canvas to select nodes with a rectangle, holding
-  Ctrl/Cmd to add to the selection. Selected nodes highlight their connections.
+  The shared **View** menu provides zoom out/in, 100%, fit-to-view, select-all,
+  and clear-selection controls for both diagram modes. Ctrl-click (Cmd-click on macOS) toggles individual
+  nodes; Shift-drag on empty canvas selects nodes with a rectangle, holding
+  Ctrl/Cmd to add to the selection. Both diagrams use ordinary dragging to pan,
+  wheel/pinch to zoom about the pointer, +/- to zoom, and Home to fit.
+  With the canvas or a node focused, Up/Down select the previous/next node.
+  In the relationship graph, Left/Right visit incoming/outgoing neighbors
+  (or another connected neighbor when none exists in that direction);
+  Enter/Space select the current node. Selected nodes highlight their connections.
   Hover a connection line or its label to see its full label, direction, and
   endpoint names, identifiers, and document paths. At a crossing, equally
   close connections are listed together.
-  `Export graph -> SVG / PNG` saves the entire graph at its original scale,
+  `File -> Export diagram -> SVG / PNG` saves the entire graph at its original scale,
   without temporary selection or search highlights. Choose light styling
   with a transparent canvas or dark styling with an opaque dark canvas,
   independently of the application theme. Relationship labels are exported

@@ -14,6 +14,7 @@ mod labels;
 mod layout;
 mod routing;
 
+pub(in crate::app) use canvas::graph_view_menu;
 pub(in crate::app) use canvas::show_graph;
 #[cfg(test)]
 use canvas::{GraphInteractionState, graph_edges_at_pointer};

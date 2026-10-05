@@ -1,11 +1,17 @@
 use super::*;
 
+use crate::app::views::diagram::{DiagramAction, view_controls};
 use std::collections::HashSet;
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone)]
 pub(super) struct GraphInteractionState {
     pub(super) zoom: f32,
     pub(super) selected: HashSet<usize>,
+    pub(super) pan: Vec2,
+    cursor: usize,
+    active_search: Option<String>,
     marquee_start: Option<Pos2>,
     marquee_base: HashSet<usize>,
     edge_hover: Option<(Pos2, Vec<usize>)>,
@@ -16,6 +22,9 @@ impl Default for GraphInteractionState {
         Self {
             zoom: 1.0,
             selected: HashSet::new(),
+            pan: Vec2::ZERO,
+            cursor: 0,
+            active_search: None,
             marquee_start: None,
             marquee_base: HashSet::new(),
             edge_hover: None,
@@ -25,6 +34,7 @@ impl Default for GraphInteractionState {
 
 impl GraphInteractionState {
     fn select_node(&mut self, index: usize, additive: bool) {
+        self.cursor = index;
         if additive {
             if !self.selected.insert(index) {
                 self.selected.remove(&index);
@@ -38,6 +48,94 @@ impl GraphInteractionState {
     }
 }
 
+pub(in crate::app) fn graph_view_menu(
+    ui: &mut egui::Ui,
+    routing: &GraphRoutingLayout,
+    locale: Locale,
+) {
+    let id = egui::Id::new(("graph-interaction", routing.graph_fingerprint));
+    let interaction = ui
+        .ctx()
+        .data(|data| data.get_temp::<GraphInteractionState>(id))
+        .unwrap_or_default();
+    let actions = view_controls(ui, locale, interaction.zoom);
+    ui.label(format!(
+        "{}: {}",
+        locale.text(TextKey::GraphSelected),
+        interaction.selected.len()
+    ));
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new(("graph-menu-actions", routing.graph_fingerprint)),
+            actions,
+        )
+    });
+}
+
+fn graph_keyboard(
+    ui: &egui::Ui,
+    graph: &RelationshipGraph,
+    routing: &GraphRoutingLayout,
+    viewport: Vec2,
+    interaction: &mut GraphInteractionState,
+) {
+    let pressed = |key| ui.input(|i| i.key_pressed(key));
+    let mut next = interaction.cursor.min(graph.nodes.len().saturating_sub(1));
+    let mut moved = false;
+    if pressed(egui::Key::ArrowDown) {
+        next = (next + 1).min(graph.nodes.len().saturating_sub(1));
+        moved = true;
+    }
+    if pressed(egui::Key::ArrowUp) {
+        next = next.saturating_sub(1);
+        moved = true;
+    }
+    if pressed(egui::Key::ArrowLeft) || pressed(egui::Key::ArrowRight) {
+        let left = pressed(egui::Key::ArrowLeft);
+        let neighbor = graph
+            .edges
+            .iter()
+            .filter_map(|edge| {
+                if left && edge.target == next && edge.source != next {
+                    Some(edge.source)
+                } else if !left && edge.source == next && edge.target != next {
+                    Some(edge.target)
+                } else {
+                    None
+                }
+            })
+            .min()
+            .or_else(|| {
+                graph
+                    .edges
+                    .iter()
+                    .filter_map(|edge| {
+                        if edge.source == next && edge.target != next {
+                            Some(edge.target)
+                        } else if edge.target == next && edge.source != next {
+                            Some(edge.source)
+                        } else {
+                            None
+                        }
+                    })
+                    .min()
+            });
+        if let Some(neighbor) = neighbor {
+            next = neighbor;
+            moved = true;
+        }
+    }
+    if moved {
+        interaction.cursor = next;
+        interaction.selected = HashSet::from([next]);
+        interaction.pan =
+            viewport * 0.5 - routing.node_positions[next].to_vec2() * interaction.zoom;
+    }
+    if crate::app::views::diagram::keyboard_activate(ui) {
+        interaction.select_node(next, ui.input(|i| i.modifiers.command || i.modifiers.ctrl));
+    }
+}
+
 /// Отрисовать граф идентификаторов и зависимостей.
 pub(in crate::app) fn show_graph(
     ui: &mut egui::Ui,
@@ -45,10 +143,9 @@ pub(in crate::app) fn show_graph(
     routing: &GraphRoutingLayout,
     search: &SearchState,
     locale: Locale,
-) -> Option<(GraphExportFormat, GraphExportStyle)> {
+) {
     let colors = SyntaxColors::new(ui.visuals());
-    let mut export_requested = None;
-    let interaction_id = ui.make_persistent_id(("graph-interaction", routing.graph_fingerprint));
+    let interaction_id = egui::Id::new(("graph-interaction", routing.graph_fingerprint));
     let mut interaction = ui
         .ctx()
         .data(|data| data.get_temp::<GraphInteractionState>(interaction_id))
@@ -71,70 +168,113 @@ pub(in crate::app) fn show_graph(
         ui.centered_and_justified(|ui| {
             ui.label(locale.text(TextKey::GraphNoEntities));
         });
-        return None;
+        return;
     }
     if graph.edges.is_empty() {
         ui.label(RichText::new(locale.text(TextKey::GraphNoRelationships)).weak());
     }
-    let mut fit_requested = false;
-    ui.horizontal_wrapped(|ui| {
-        ui.menu_button(locale.text(TextKey::GraphExport), |ui| {
-            for format in [GraphExportFormat::Svg, GraphExportFormat::Png] {
-                ui.menu_button(format.label(), |ui| {
-                    for style in [
-                        GraphExportStyle::LightTransparent,
-                        GraphExportStyle::DarkOpaque,
-                    ] {
-                        if ui.button(locale.text(style.text_key())).clicked() {
-                            export_requested = Some((format, style));
-                            ui.close();
-                        }
-                    }
-                });
-            }
-        });
-        if ui
-            .button("-")
-            .on_hover_text(locale.text(TextKey::GraphZoomOut))
-            .clicked()
-        {
-            interaction.zoom = (interaction.zoom / 1.2).clamp(0.1, 3.0);
-        }
-        ui.label(format!("{:.0}%", interaction.zoom * 100.0));
-        if ui
-            .button("+")
-            .on_hover_text(locale.text(TextKey::GraphZoomIn))
-            .clicked()
-        {
-            interaction.zoom = (interaction.zoom * 1.2).clamp(0.1, 3.0);
-        }
-        if ui.button("100%").clicked() {
-            interaction.zoom = 1.0;
-        }
-        if ui.button(locale.text(TextKey::GraphFit)).clicked() {
-            fit_requested = true;
-        }
-        ui.separator();
-        if ui.button(locale.text(TextKey::GraphSelectAll)).clicked() {
-            interaction.selected = (0..graph.nodes.len()).collect();
-        }
-        if ui
-            .button(locale.text(TextKey::GraphClearSelection))
-            .clicked()
-        {
-            interaction.selected.clear();
-        }
-        ui.label(format!(
-            "{}: {}",
-            locale.text(TextKey::GraphSelected),
-            interaction.selected.len()
-        ));
+    let (_, viewport) = ui.allocate_space(ui.available_size().max(Vec2::splat(1.0)));
+    let canvas_response = ui.interact(
+        viewport,
+        ui.id().with("graph-canvas"),
+        Sense::click_and_drag(),
+    );
+    canvas_response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            locale.text(TextKey::GraphView),
+        )
     });
+    if canvas_response.clicked() || canvas_response.drag_started() {
+        canvas_response.request_focus();
+    }
+    let mut fit_requested = false;
+    let actions = ui
+        .ctx()
+        .data_mut(|data| {
+            data.remove_temp::<Vec<DiagramAction>>(egui::Id::new((
+                "graph-menu-actions",
+                routing.graph_fingerprint,
+            )))
+        })
+        .unwrap_or_default();
+    for action in actions {
+        match action {
+            DiagramAction::ZoomOut => crate::app::views::diagram::zoom_at(
+                &mut interaction.zoom,
+                &mut interaction.pan,
+                1.0 / crate::app::views::diagram::ZOOM_STEP,
+                (viewport.size() * 0.5).to_pos2(),
+            ),
+            DiagramAction::ZoomIn => crate::app::views::diagram::zoom_at(
+                &mut interaction.zoom,
+                &mut interaction.pan,
+                crate::app::views::diagram::ZOOM_STEP,
+                (viewport.size() * 0.5).to_pos2(),
+            ),
+            DiagramAction::ActualSize => {
+                let factor = 1.0 / interaction.zoom;
+                crate::app::views::diagram::zoom_at(
+                    &mut interaction.zoom,
+                    &mut interaction.pan,
+                    factor,
+                    (viewport.size() * 0.5).to_pos2(),
+                );
+            }
+            DiagramAction::Fit => fit_requested = true,
+            DiagramAction::SelectAll => interaction.selected = (0..graph.nodes.len()).collect(),
+            DiagramAction::ClearSelection => interaction.selected.clear(),
+        }
+    }
+    if canvas_response.contains_pointer()
+        && let Some(pointer) = ui.input(|i| i.pointer.hover_pos())
+    {
+        crate::app::views::diagram::zoom_at(
+            &mut interaction.zoom,
+            &mut interaction.pan,
+            crate::app::views::diagram::wheel_zoom(ui),
+            pointer - viewport.min.to_vec2(),
+        );
+    }
+    if canvas_response.has_focus() {
+        let factor = crate::app::views::diagram::keyboard_zoom(ui);
+        crate::app::views::diagram::zoom_at(
+            &mut interaction.zoom,
+            &mut interaction.pan,
+            factor,
+            (viewport.size() * 0.5).to_pos2(),
+        );
+        fit_requested |= ui.input(|i| i.key_pressed(egui::Key::Home));
+        graph_keyboard(ui, graph, routing, viewport.size(), &mut interaction);
+    }
+    if canvas_response.dragged()
+        && interaction.marquee_start.is_none()
+        && !ui.input(|i| i.modifiers.shift)
+    {
+        interaction.pan += ui.input(|i| i.pointer.delta());
+    }
     if fit_requested {
-        let viewport = ui.available_size();
-        interaction.zoom = ((viewport.x - 16.0).max(1.0) / routing.content_size.x)
-            .min((viewport.y - 16.0).max(1.0) / routing.content_size.y)
-            .min(3.0);
+        crate::app::views::diagram::fit_to(
+            &mut interaction.zoom,
+            &mut interaction.pan,
+            viewport.size(),
+            routing.content_size,
+        );
+    }
+    let active_search = search.current_match_path();
+    if interaction.active_search.as_deref() != active_search {
+        interaction.active_search = active_search.map(str::to_string);
+        if let Some(path) = active_search
+            && let Some(index) = graph
+                .nodes
+                .iter()
+                .position(|node| node.search_paths.iter().any(|candidate| candidate == path))
+        {
+            interaction.cursor = index;
+            interaction.pan =
+                viewport.size() * 0.5 - routing.node_positions[index].to_vec2() * interaction.zoom;
+        }
     }
     let zoom = interaction.zoom;
     let matching_paths = search
@@ -144,22 +284,12 @@ pub(in crate::app) fn show_graph(
         .collect::<HashSet<_>>();
     let active_path = search.current_match_path();
 
-    let mut scroll_area = egui::ScrollArea::both().scroll_source(egui::scroll_area::ScrollSource {
-        drag: egui::scroll_area::DragScroll::Never,
-        ..Default::default()
-    });
-    if fit_requested {
-        scroll_area = scroll_area.scroll_offset(Vec2::ZERO);
-    }
-    scroll_area.auto_shrink([false; 2]).show(ui, |ui| {
-        let viewport = ui.available_size_before_wrap();
-        let canvas_size = Vec2::new(
-            viewport.x.max(routing.content_size.x * zoom),
-            viewport.y.max(routing.content_size.y * zoom),
-        );
-        let (response, painter) = ui.allocate_painter(canvas_size, Sense::click_and_drag());
-        let canvas = response.rect;
-        let canvas_offset = canvas.min.to_vec2();
+    ui.scope_builder(egui::UiBuilder::new().max_rect(viewport), |ui| {
+        ui.set_clip_rect(viewport.intersect(ui.clip_rect()));
+        let response = &canvas_response;
+        let painter = ui.painter_at(viewport);
+        let canvas = viewport;
+        let canvas_offset = canvas.min.to_vec2() + interaction.pan;
         let transform = |point: Pos2| Pos2::ZERO + point.to_vec2() * zoom + canvas_offset;
         let positions = routing
             .node_positions
@@ -169,10 +299,12 @@ pub(in crate::app) fn show_graph(
         if let Some(partition_labels) = &routing.partition_labels {
             let header_font = FontId::proportional(13.0 * zoom);
             for (partition, label) in partition_labels.iter().enumerate() {
-                let center_x = canvas.left()
-                    + (24.0 + partition as f32 * GRAPH_STEP.x + GRAPH_NODE_SIZE.x / 2.0) * zoom;
+                let position = transform(Pos2::new(
+                    24.0 + partition as f32 * GRAPH_STEP.x + GRAPH_NODE_SIZE.x / 2.0,
+                    10.0,
+                ));
                 painter.text(
-                    Pos2::new(center_x, canvas.top() + 10.0 * zoom),
+                    position,
                     Align2::CENTER_CENTER,
                     label,
                     header_font.clone(),
@@ -183,11 +315,63 @@ pub(in crate::app) fn show_graph(
         let mut hovered_node = None;
         for (index, node) in graph.nodes.iter().enumerate() {
             let rect = egui::Rect::from_center_size(positions[index], GRAPH_NODE_SIZE * zoom);
+            if !rect.intersects(viewport) {
+                continue;
+            }
             let response = ui.interact(
-                rect,
+                rect.intersect(viewport),
                 ui.make_persistent_id(("graph-node", &node.path)),
                 Sense::click(),
             );
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Button,
+                    true,
+                    interaction.selected.contains(&index),
+                    format!("{}: {} ({})", node.label, node.id, node.path),
+                )
+            });
+            if response.has_focus() {
+                if ui.input(|i| {
+                    i.events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+                }) {
+                    ui.ctx().request_repaint();
+                }
+                interaction.cursor = index;
+                graph_keyboard(ui, graph, routing, viewport.size(), &mut interaction);
+                let factor = crate::app::views::diagram::keyboard_zoom(ui);
+                crate::app::views::diagram::zoom_at(
+                    &mut interaction.zoom,
+                    &mut interaction.pan,
+                    factor,
+                    (viewport.size() * 0.5).to_pos2(),
+                );
+                if ui.input(|i| {
+                    [
+                        egui::Key::Home,
+                        egui::Key::ArrowUp,
+                        egui::Key::ArrowDown,
+                        egui::Key::ArrowLeft,
+                        egui::Key::ArrowRight,
+                        egui::Key::Enter,
+                        egui::Key::Space,
+                    ]
+                    .iter()
+                    .any(|&key| i.key_pressed(key))
+                }) {
+                    canvas_response.request_focus();
+                    if ui.input(|i| i.key_pressed(egui::Key::Home)) {
+                        crate::app::views::diagram::fit_to(
+                            &mut interaction.zoom,
+                            &mut interaction.pan,
+                            viewport.size(),
+                            routing.content_size,
+                        );
+                    }
+                }
+            }
             show_graph_tooltip(&response, |ui| {
                 ui.set_max_width(480.0);
                 ui.strong(&node.label);
@@ -198,21 +382,23 @@ pub(in crate::app) fn show_graph(
             if response.hovered() {
                 hovered_node = Some(index);
             }
-            if response.clicked() {
+            if response.clicked() && !crate::app::views::diagram::keyboard_activate(ui) {
+                canvas_response.request_focus();
                 interaction.select_node(
                     index,
                     ui.input(|input| input.modifiers.command || input.modifiers.ctrl),
                 );
             }
         }
-        if response.drag_started() {
+        if response.drag_started() && ui.input(|i| i.modifiers.shift) {
             let start = ui.input(|input| input.pointer.press_origin());
             if let Some(start) = start
                 && !positions.iter().any(|center| {
                     egui::Rect::from_center_size(*center, GRAPH_NODE_SIZE * zoom).contains(start)
                 })
             {
-                interaction.marquee_start = Some(Pos2::ZERO + (start - canvas.min) / zoom);
+                interaction.marquee_start =
+                    Some(Pos2::ZERO + (start - canvas.min - interaction.pan) / zoom);
                 interaction.marquee_base =
                     if ui.input(|input| input.modifiers.command || input.modifiers.ctrl) {
                         interaction.selected.clone()
@@ -224,7 +410,7 @@ pub(in crate::app) fn show_graph(
         if let Some(start) = interaction.marquee_start
             && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
         {
-            let end = Pos2::ZERO + (pointer - canvas.min) / zoom;
+            let end = Pos2::ZERO + (pointer - canvas.min - interaction.pan) / zoom;
             let selection_rect = egui::Rect::from_two_pos(start, end);
             interaction.selected = interaction.marquee_base.clone();
             for (index, position) in routing.node_positions.iter().enumerate() {
@@ -246,7 +432,7 @@ pub(in crate::app) fn show_graph(
         if response.drag_stopped() {
             interaction.marquee_start = None;
         }
-        if response.clicked() {
+        if response.clicked() && !crate::app::views::diagram::keyboard_activate(ui) {
             interaction.selected.clear();
         }
         let focused = |index: usize| {
@@ -501,7 +687,7 @@ pub(in crate::app) fn show_graph(
                 .contains(pointer)
             })
         {
-            let local_pointer = Pos2::ZERO + (pointer - canvas.min) / zoom;
+            let local_pointer = Pos2::ZERO + (pointer - canvas.min - interaction.pan) / zoom;
             let edges = graph_edges_at_pointer(&routing.edge_paths, local_pointer, 6.0 / zoom);
             if !edges.is_empty() {
                 edge_hit = true;
@@ -530,7 +716,6 @@ pub(in crate::app) fn show_graph(
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(interaction_id, interaction));
-    export_requested
 }
 
 pub(super) fn graph_edges_at_pointer(

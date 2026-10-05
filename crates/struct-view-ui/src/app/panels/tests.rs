@@ -6,6 +6,99 @@ use super::VisualizationMode;
 use super::{AppMode, StructViewApp};
 use struct_view_core::parser::parse_json;
 
+#[test]
+fn status_bar_uses_separate_fields_and_gui_dividers_in_all_document_modes() {
+    use super::super::i18n::Locale;
+    use struct_view_core::parser::DataFormat;
+    for locale in Locale::ALL {
+        for mode in [
+            VisualizationMode::Tree,
+            VisualizationMode::Graph,
+            VisualizationMode::Table,
+            VisualizationMode::Schema,
+            VisualizationMode::Comparison,
+            VisualizationMode::Diff,
+        ] {
+            let mut app = StructViewApp::default();
+            app.locale = locale;
+            app.visualization = mode;
+            app.file_state.path = Some("sample.json".into());
+            app.file_state.format = Some(DataFormat::Json);
+            app.file_state.size_bytes = 2048;
+            app.file_state.load_time_ms = 12;
+            let comparison = matches!(
+                mode,
+                VisualizationMode::Comparison | VisualizationMode::Diff
+            );
+            if comparison {
+                app.comparison = Some(ComparisonState {
+                    documents: ["first.json", "second.json"]
+                        .into_iter()
+                        .map(|path| ComparisonDocument {
+                            path: path.into(),
+                            size_bytes: 0,
+                            load_time_ms: 0,
+                            format: DataFormat::Json,
+                        })
+                        .collect(),
+                    differences: Vec::new(),
+                    left_index: 0,
+                    right_index: 1,
+                    pair_cache: None,
+                    previous_document: None,
+                });
+            }
+            let context = egui::Context::default();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| app.show_bottom_panel(ui),
+            );
+            output.textures_delta.clear();
+            let labels = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let expected = if comparison {
+                locale.comparison_status(2, 0)
+            } else {
+                locale.loaded_file_status("sample.json", "JSON", 2.0, 12)
+            };
+            for field in expected {
+                assert!(
+                    labels.contains(&field.as_str()),
+                    "Missing field {field} in {mode:?}"
+                );
+            }
+            assert!(labels.iter().all(|text| !text.contains('|')));
+            let dividers = output
+                .shapes
+                .iter()
+                .filter(|shape| {
+                    matches!(
+                        &shape.shape, egui::epaint::Shape::LineSegment { points, .. }
+                            if (points[0].x - points[1].x).abs() < 0.01
+                    )
+                })
+                .count();
+            assert!(
+                dividers >= if comparison { 1 } else { 3 },
+                "Missing GUI dividers in {mode:?}"
+            );
+            output.drop_without_applying_deltas();
+        }
+    }
+}
+
 fn shape_contains_text(shape: &egui::epaint::Shape, expected: &str) -> bool {
     match shape {
         egui::epaint::Shape::Text(text) => text.galley.job.text == expected,

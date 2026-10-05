@@ -24,7 +24,7 @@ regex = "1"
 roxmltree = "0.21"
 rfd = "0.17"
 serde = "1"
-serde_json = { version = "1", features = ["arbitrary_precision"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 serde_yaml_ng = "0.10"
 tempfile = "3"
 toml = "1"

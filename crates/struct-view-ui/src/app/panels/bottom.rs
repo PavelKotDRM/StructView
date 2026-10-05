@@ -13,10 +13,26 @@ impl StructViewApp {
                             .color(colors.error),
                     );
                 } else if let Some(comparison) = &self.comparison {
-                    ui.label(locale.comparison_status(
-                        comparison.documents.len(),
-                        comparison.differences.len(),
-                    ));
+                    status_fields(
+                        ui,
+                        locale.comparison_status(
+                            comparison.documents.len(),
+                            comparison.differences.len(),
+                        ),
+                    );
+                } else if self.visualization == VisualizationMode::Structure
+                    && let Some(summary) = self.structure_view.status_summary(locale)
+                {
+                    status_fields(ui, summary);
+                    if let Some((path, selection, full_text)) =
+                        self.structure_view.status_selection()
+                    {
+                        ui.separator();
+                        ui.label(path).on_hover_text(&full_text);
+                        ui.separator();
+                        ui.add(egui::Label::new(selection).truncate())
+                            .on_hover_text(full_text);
+                    }
                 } else if let Some(path) = &self.file_state.path {
                     let name = path
                         .file_name()
@@ -28,12 +44,15 @@ impl StructViewApp {
                         .format
                         .map(|format| format.to_string())
                         .unwrap_or_else(|| locale.text(TextKey::UnknownFormat).to_string());
-                    ui.label(locale.loaded_file_status(
-                        name,
-                        &format,
-                        size_kb,
-                        self.file_state.load_time_ms,
-                    ));
+                    status_fields(
+                        ui,
+                        locale.loaded_file_status(
+                            name,
+                            &format,
+                            size_kb,
+                            self.file_state.load_time_ms,
+                        ),
+                    );
                 } else {
                     ui.label(RichText::new(locale.text(TextKey::Placeholder)).color(Color32::GRAY));
                 }
@@ -70,5 +89,14 @@ impl StructViewApp {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(text);
         });
+    }
+}
+
+fn status_fields(ui: &mut Ui, fields: Vec<String>) {
+    for (index, field) in fields.into_iter().enumerate() {
+        if index != 0 {
+            ui.separator();
+        }
+        ui.label(field);
     }
 }

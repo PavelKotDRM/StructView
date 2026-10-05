@@ -8,3 +8,4 @@ pub mod graph;
 mod numbers;
 pub mod parser;
 pub mod search;
+pub mod structure;

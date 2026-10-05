@@ -24,6 +24,7 @@ pub(super) enum VisualizationMode {
     #[default]
     Tree,
     Graph,
+    Structure,
     Table,
     Schema,
     Comparison,

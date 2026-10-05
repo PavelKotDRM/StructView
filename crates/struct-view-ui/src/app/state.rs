@@ -239,6 +239,7 @@ pub struct StructViewApp {
     pub(super) visualization_cache: VisualizationCache,
     /// Асинхронное построение модели и маршрутов графа связей.
     pub(super) graph_calculation: GraphCalculationState,
+    pub(super) structure_view: super::views::structure::StructureView,
     /// Открытый конструктор добавления или редактирования поля.
     pub(super) field_dialog: Option<FieldDialog>,
     /// Размещение конструктора внутри или вне главного окна.
@@ -293,6 +294,7 @@ impl Default for StructViewApp {
             visualization: VisualizationMode::default(),
             visualization_cache: VisualizationCache::default(),
             graph_calculation: GraphCalculationState::default(),
+            structure_view: super::views::structure::StructureView::default(),
             field_dialog: None,
             field_dialog_docking: DockingState::default(),
             selected_paths: BTreeSet::new(),

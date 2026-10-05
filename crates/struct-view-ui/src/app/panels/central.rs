@@ -6,6 +6,14 @@ impl StructViewApp {
     pub(in crate::app) fn show_central_panel(&mut self, ui: &mut Ui) {
         egui::CentralPanel::default().show(ui, |ui| {
             let colors = SyntaxColors::new(ui.visuals());
+            if self.visualization == VisualizationMode::Structure {
+                self.finalize_pending_inline_edit();
+                self.structure_view
+                    .show(ui, self.locale, self.file_state.path.as_deref());
+                self.structure_view
+                    .sync_search(&mut self.search, &self.search_query_buf);
+                return;
+            }
             self.handle_dropped_files(ui);
             let save_requested = std::mem::take(&mut self.save_requested);
             let copy_structures_requested = std::mem::take(&mut self.copy_structures_requested);
@@ -44,6 +52,9 @@ impl StructViewApp {
 
             let outcome = match self.visualization {
                 VisualizationMode::Tree => self.show_tree(ui),
+                VisualizationMode::Structure => {
+                    unreachable!("Structure mode has its own input and canvas")
+                }
                 VisualizationMode::Graph => {
                     if let Some(root) = &self.root {
                         self.graph_calculation.ensure_started(root, ui.ctx());
@@ -57,28 +68,13 @@ impl StructViewApp {
                             ),
                         );
                     } else if let Some(calculation) = self.graph_calculation.result() {
-                        if let Some((format, style)) = show_graph(
+                        show_graph(
                             ui,
                             &calculation.graph,
                             &calculation.routing,
                             &self.search,
                             self.locale,
-                        ) {
-                            match export_graph_image(
-                                &calculation.graph,
-                                &calculation.routing,
-                                format,
-                                style,
-                            ) {
-                                Ok(true) => {
-                                    self.show_toast(self.locale.text(TextKey::GraphExported))
-                                }
-                                Ok(false) => {}
-                                Err(error) => {
-                                    self.show_error(&self.locale.save_error(&error.to_string()))
-                                }
-                            }
-                        }
+                        );
                     } else {
                         ui.centered_and_justified(|ui| {
                             ui.vertical_centered(|ui| {

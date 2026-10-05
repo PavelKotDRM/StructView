@@ -402,9 +402,6 @@ mod tests {
 
     #[test]
     fn graph_export_menu_requests_the_selected_image_format() {
-        let root = struct_view_core::parser::parse_json(r#"[{"id":"a"}]"#).unwrap();
-        let graph = build_relationship_graph(&root);
-        let routing = build_graph_routing_layout(&graph);
         for (format, style) in [
             (GraphExportFormat::Svg, GraphExportStyle::LightTransparent),
             (GraphExportFormat::Svg, GraphExportStyle::DarkOpaque),
@@ -424,13 +421,22 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        requested = show_graph(
-                            ui,
-                            &graph,
-                            &routing,
-                            &SearchState::default(),
-                            Locale::English,
-                        );
+                        if let Some((png, dark)) =
+                            crate::app::views::diagram::export_controls(ui, Locale::English)
+                        {
+                            requested = Some((
+                                if png {
+                                    GraphExportFormat::Png
+                                } else {
+                                    GraphExportFormat::Svg
+                                },
+                                if dark {
+                                    GraphExportStyle::DarkOpaque
+                                } else {
+                                    GraphExportStyle::LightTransparent
+                                },
+                            ));
+                        }
                     },
                 );
                 (output, requested)
@@ -465,7 +471,7 @@ mod tests {
                 ]
             };
             let (output, _) = render(Vec::new());
-            let button = position(&output, "Export graph");
+            let button = position(&output, Locale::English.text(TextKey::DiagramExport));
             output.drop_without_applying_deltas();
             let (output, _) = render(click(button));
             output.drop_without_applying_deltas();

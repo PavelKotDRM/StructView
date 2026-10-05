@@ -20,9 +20,11 @@ const MIN_TABLE_WIDTH: f32 = 760.0;
 const GRAPH_NODE_SIZE: Vec2 = Vec2::new(208.0, 70.0);
 const GRAPH_STEP: Vec2 = Vec2::new(340.0, 150.0);
 
+pub(super) mod diagram;
 mod diff;
 mod graph;
 mod schema;
+pub(super) mod structure;
 mod table;
 #[cfg(test)]
 mod tests;
@@ -34,5 +36,6 @@ pub(super) use diff::{
 };
 pub(super) use graph::headless_graph_image as graph_image_for_headless;
 pub(super) use graph::{GraphCalculationState, export_graph_image, show_graph};
+pub(super) use graph::{GraphExportFormat, GraphExportStyle, graph_view_menu};
 pub(super) use schema::show_schema;
 pub(super) use table::{export_table_csv, show_table};
