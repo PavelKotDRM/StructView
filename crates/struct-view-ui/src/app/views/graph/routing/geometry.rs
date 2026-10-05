@@ -38,11 +38,10 @@ pub(in crate::app::views) struct GraphRouteSegmentIndex {
 impl GraphRouteSegmentIndex {
     fn cells(start: Pos2, end: Pos2) -> impl Iterator<Item = (i32, i32)> {
         let bounds = egui::Rect::from_two_pos(start, end).expand(GRAPH_EDGE_CLEARANCE);
-        let cell_size = 128.0;
-        let left = (bounds.left() / cell_size).floor() as i32;
-        let right = (bounds.right() / cell_size).floor() as i32;
-        let top = (bounds.top() / cell_size).floor() as i32;
-        let bottom = (bounds.bottom() / cell_size).floor() as i32;
+        let left = (bounds.left() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
+        let right = (bounds.right() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
+        let top = (bounds.top() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
+        let bottom = (bounds.bottom() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
         (top..=bottom).flat_map(move |row| (left..=right).map(move |column| (column, row)))
     }
 
@@ -101,6 +100,26 @@ impl GraphRouteSegmentIndex {
             .into_iter()
             .map(|index| segment_pair_penalty(start, end, self.segments[index]))
             .sum()
+    }
+
+    pub(super) fn segments_near(&self, bounds: egui::Rect) -> Vec<[Pos2; 2]> {
+        let bounds = bounds.expand(GRAPH_EDGE_CLEARANCE);
+        let left = (bounds.left() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
+        let right = (bounds.right() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
+        let top = (bounds.top() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
+        let bottom = (bounds.bottom() / GRAPH_ROUTE_INDEX_CELL_SIZE).floor() as i32;
+        let mut indices = (top..=bottom)
+            .flat_map(|row| (left..=right).map(move |column| (column, row)))
+            .filter_map(|cell| self.buckets.get(&cell))
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices.dedup();
+        indices
+            .into_iter()
+            .map(|index| self.segments[index])
+            .collect()
     }
 }
 
@@ -185,6 +204,7 @@ pub(in crate::app::views::graph) fn closest_point_on_segment(
     start + segment * projection
 }
 
+#[cfg(test)]
 pub(in crate::app::views) fn segment_crosses_rect_interior(
     start: Pos2,
     end: Pos2,

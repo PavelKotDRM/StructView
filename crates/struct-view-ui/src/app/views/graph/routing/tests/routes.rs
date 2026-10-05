@@ -328,6 +328,74 @@ fn graph_routing_parallel_timing() {
 }
 
 #[test]
+#[ignore = "Manual large-fixture routing benchmark; run with --release --ignored --nocapture"]
+fn graph_routing_large_fixture_timing() {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/large-routing-graph.json"
+    ))
+    .unwrap();
+    let graph: serde_json::Value = serde_json::from_str(&fixture).unwrap();
+    let entities = graph["entities"].as_object().unwrap();
+    let ids = entities.keys().collect::<Vec<_>>();
+    let node_indices = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| ((*id).clone(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    let positions = (0..ids.len())
+        .map(|index| {
+            Pos2::new(
+                128.0 + (index / 20) as f32 * GRAPH_STEP.x,
+                59.0 + (index % 20) as f32 * GRAPH_STEP.y,
+            )
+        })
+        .collect::<Vec<_>>();
+    let edges = graph["relations"]["edges"].as_array().unwrap();
+    let endpoints = edges
+        .iter()
+        .map(|edge| {
+            (
+                node_indices[edge[0].as_str().unwrap()],
+                node_indices[edge[1].as_str().unwrap()],
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(positions.len(), 240);
+    assert_eq!(endpoints.len(), 1320);
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let grid = GraphRoutingGrid::new(&positions);
+    let workers = 4;
+    let started = std::time::Instant::now();
+    let routes = route_graph_edges(&grid, &endpoints, &ports, workers);
+    println!(
+        "Large fixture routing: {workers} workers, {:?}, {} nodes, {} edges",
+        started.elapsed(),
+        positions.len(),
+        routes.len()
+    );
+    assert_eq!(routes.len(), endpoints.len());
+    for (index, route) in routes.iter().enumerate() {
+        assert!(
+            route
+                .iter()
+                .all(|point| point.x.is_finite() && point.y.is_finite())
+        );
+        assert!(route.windows(2).all(|segment| segment[0] != segment[1]));
+        for (obstacle, rect) in grid.obstacles.iter().enumerate() {
+            if obstacle != endpoints[index].0 && obstacle != endpoints[index].1 {
+                assert!(
+                    route
+                        .windows(2)
+                        .all(|segment| { !segment_intersects_rect(segment[0], segment[1], *rect) }),
+                    "Route {index} crosses obstacle {obstacle}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn graph_labels_remain_visible_without_covering_routes_or_arrowheads() {
     for input in [
         r#"[{"id":"source","depends_on":"target","parent_id":"target","ref":"target"},{"id":"target"}]"#,

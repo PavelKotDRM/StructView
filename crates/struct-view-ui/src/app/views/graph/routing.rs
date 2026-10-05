@@ -11,13 +11,13 @@ pub(in crate::app::views) use geometry::GraphRouteSegmentIndex;
 #[cfg(test)]
 pub(in crate::app::views) use geometry::box_border_offset;
 #[cfg(test)]
+pub(in crate::app::views) use geometry::segment_crosses_rect_interior;
+#[cfg(test)]
 pub(super) use geometry::segment_pair_penalty;
+pub(in crate::app::views) use geometry::segments_within_clearance;
 pub(super) use geometry::{
     arrow_head_wings, closest_point_on_segment, cross_product, draw_arrow_head, edge_arrowheads,
     point_to_segment_distance, segment_intersects_rect, segments_intersect,
-};
-pub(in crate::app::views) use geometry::{
-    segment_crosses_rect_interior, segments_within_clearance,
 };
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -28,6 +28,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::thread;
+
+const GRAPH_ROUTE_INDEX_CELL_SIZE: f32 = 128.0;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::app) enum GraphRoutingWorkerSetting {
@@ -85,8 +87,11 @@ pub(super) fn route_graph_edges_with_progress(
     if workers == 1 {
         begin_graph_stage(progress, GraphStage::Sequential, endpoints.len(), 1);
         let mut routes = Vec::with_capacity(endpoints.len());
+        let mut route_index = GraphRouteSegmentIndex::new(&[]);
         for (&(source, target), &ports) in endpoints.iter().zip(ports) {
-            routes.push(grid.route_edge_with_ports(source, target, ports, &routes));
+            let route = grid.route_edge_with_index(source, target, ports, &route_index);
+            route_index.insert_route(&route);
+            routes.push(route);
             advance_graph_progress(progress);
         }
         return routes;
@@ -109,7 +114,7 @@ pub(super) fn route_graph_edges_with_progress(
         }
     });
 
-    resolve_graph_route_conflicts(grid, endpoints, ports, candidates, workers, progress)
+    resolve_graph_route_conflicts(grid, endpoints, ports, candidates, progress)
 }
 
 fn resolve_graph_route_conflicts(
@@ -117,61 +122,26 @@ fn resolve_graph_route_conflicts(
     endpoints: &[(usize, usize)],
     ports: &[GraphEdgePorts],
     candidates: Vec<Vec<Pos2>>,
-    workers: usize,
     progress: Option<&GraphProgressTracker>,
 ) -> Vec<Vec<Pos2>> {
     let mut routes = Vec::with_capacity(endpoints.len());
     let mut route_index = GraphRouteSegmentIndex::new(&[]);
-    begin_graph_stage(progress, GraphStage::Conflicts, endpoints.len(), workers);
-    while routes.len() < endpoints.len() {
-        let start = routes.len();
-        let batch_end = (start + workers).min(endpoints.len());
-        let mut proposals = vec![Vec::new(); batch_end - start];
-        let chunk_size = proposals.len().div_ceil(workers);
-        let prepare = |offset: usize, chunk: &mut [Vec<Pos2>]| {
-            for (local_index, proposal) in chunk.iter_mut().enumerate() {
-                let index = start + offset + local_index;
-                let earlier_candidates = &candidates[start..index];
-                *proposal = if route_index.conflicts_route(&candidates[index])
-                    || graph_route_conflicts(&candidates[index], earlier_candidates)
-                {
-                    let (source, target) = endpoints[index];
-                    let mut blockers = routes.clone();
-                    blockers.extend_from_slice(earlier_candidates);
-                    grid.route_edge_with_ports(source, target, ports[index], &blockers)
-                } else {
-                    candidates[index].clone()
-                };
-            }
-        };
-        if proposals.len() == 1 {
-            prepare(0, &mut proposals);
+    begin_graph_stage(progress, GraphStage::Conflicts, endpoints.len(), 1);
+    for (index, candidate) in candidates.iter().enumerate() {
+        let route = if route_index.conflicts_route(candidate) {
+            let (source, target) = endpoints[index];
+            grid.route_edge_with_index(source, target, ports[index], &route_index)
         } else {
-            thread::scope(|scope| {
-                for (chunk_index, chunk) in proposals.chunks_mut(chunk_size).enumerate() {
-                    let prepare = &prepare;
-                    scope.spawn(move || prepare(chunk_index * chunk_size, chunk));
-                }
-            });
-        }
-        // Proposals share a snapshot; reroute stale ones as they reach the deterministic commit order.
-        for (offset, proposal) in proposals.into_iter().enumerate() {
-            if route_index.conflicts_route(&proposal) {
-                let index = start + offset;
-                let (source, target) = endpoints[index];
-                let rerouted = grid.route_edge_with_ports(source, target, ports[index], &routes);
-                route_index.insert_route(&rerouted);
-                routes.push(rerouted);
-            } else {
-                route_index.insert_route(&proposal);
-                routes.push(proposal);
-            }
-            advance_graph_progress(progress);
-        }
+            candidate.clone()
+        };
+        route_index.insert_route(&route);
+        routes.push(route);
+        advance_graph_progress(progress);
     }
     routes
 }
 
+#[cfg(test)]
 fn graph_route_conflicts(candidate: &[Pos2], routes: &[Vec<Pos2>]) -> bool {
     candidate.windows(2).any(|segment| {
         routes
@@ -350,6 +320,8 @@ pub(in crate::app::views) fn graph_edge_ports(
 
 pub(in crate::app::views) const GRAPH_ROUTE_CLEARANCE: f32 = 18.0;
 pub(in crate::app::views) const GRAPH_EDGE_CLEARANCE: f32 = 8.0;
+const GRAPH_ROUTING_OBSTACLE_CELL_SIZE: f32 = 256.0;
+const GRAPH_ROUTE_TRACK_LIMIT: usize = 12;
 const GRAPH_ROUTE_TURN_PENALTY: f32 = 48.0;
 const GRAPH_EDGE_ROUTE_PENALTY: f32 = 500.0;
 const GRAPH_EDGE_CROSSING_PENALTY: f32 = 10_000.0;
@@ -401,6 +373,7 @@ pub(in crate::app::views) struct GraphRoutingGrid {
     node_positions: Vec<Pos2>,
     node_rects: Vec<egui::Rect>,
     obstacles: Vec<egui::Rect>,
+    obstacle_buckets: HashMap<(i32, i32), Vec<usize>>,
     x_coordinates: Vec<f32>,
     y_coordinates: Vec<f32>,
 }
@@ -415,6 +388,12 @@ impl GraphRoutingGrid {
             .iter()
             .map(|rect| rect.expand(GRAPH_ROUTE_CLEARANCE))
             .collect::<Vec<_>>();
+        let mut obstacle_buckets = HashMap::<(i32, i32), Vec<usize>>::new();
+        for (index, obstacle) in obstacles.iter().enumerate() {
+            for cell in routing_grid_cells(*obstacle) {
+                obstacle_buckets.entry(cell).or_default().push(index);
+            }
+        }
         let mut x_coordinates = Vec::with_capacity(node_positions.len() * 3);
         let mut y_coordinates = Vec::with_capacity(node_positions.len() * 3);
 
@@ -429,6 +408,7 @@ impl GraphRoutingGrid {
             node_positions: node_positions.to_vec(),
             node_rects,
             obstacles,
+            obstacle_buckets,
             x_coordinates,
             y_coordinates,
         }
@@ -451,28 +431,24 @@ impl GraphRoutingGrid {
         edge_ports: GraphEdgePorts,
         routed_edges: &[Vec<Pos2>],
     ) -> Vec<Pos2> {
+        let routed_edge_index = GraphRouteSegmentIndex::new(routed_edges);
+        self.route_edge_with_index(source, target, edge_ports, &routed_edge_index)
+    }
+
+    fn route_edge_with_index(
+        &self,
+        source: usize,
+        target: usize,
+        edge_ports: GraphEdgePorts,
+        routed_edge_index: &GraphRouteSegmentIndex,
+    ) -> Vec<Pos2> {
         let source_port = self.route_port(source, edge_ports.source_side, edge_ports.source_offset);
         let target_port = self.route_port(target, edge_ports.target_side, edge_ports.target_offset);
         let line_start = source_port.card;
         let line_end = target_port.card;
-        let crosses_another_node = self.obstacles.iter().enumerate().any(|(index, obstacle)| {
-            index != source
-                && index != target
-                && segment_intersects_rect(line_start, line_end, *obstacle)
-        });
-        let overlaps_another_edge =
-            routed_edges
-                .iter()
-                .flat_map(|route| route.windows(2))
-                .any(|segment| {
-                    segments_within_clearance(
-                        line_start,
-                        line_end,
-                        segment[0],
-                        segment[1],
-                        GRAPH_EDGE_CLEARANCE,
-                    )
-                });
+        let crosses_another_node =
+            self.segment_crosses_obstacle(line_start, line_end, Some((source, target)));
+        let overlaps_another_edge = routed_edge_index.conflicts_route(&[line_start, line_end]);
         if source != target && !crosses_another_node && !overlaps_another_edge {
             return vec![line_start, line_end];
         }
@@ -483,10 +459,21 @@ impl GraphRoutingGrid {
         y_coordinates.extend([source_port.route.y, target_port.route.y]);
         // Existing obstacle boundaries alone cannot separate detoured parallel edges.
         let track_spacing = GRAPH_EDGE_CLEARANCE + 2.0;
-        for point in routed_edges.iter().flatten() {
-            x_coordinates.extend([point.x - track_spacing, point.x + track_spacing]);
-            y_coordinates.extend([point.y - track_spacing, point.y + track_spacing]);
+        let track_bounds = egui::Rect::from_two_pos(source_port.route, target_port.route)
+            .expand(GRAPH_ROUTE_CLEARANCE + GRAPH_NODE_SIZE.x / 2.0);
+        let mut track_x = Vec::new();
+        let mut track_y = Vec::new();
+        for segment in routed_edge_index.segments_near(track_bounds) {
+            for point in segment {
+                track_x.extend([point.x - track_spacing, point.x + track_spacing]);
+                track_y.extend([point.y - track_spacing, point.y + track_spacing]);
+            }
         }
+        // Keep the Cartesian search grid bounded while preserving nearby alternatives.
+        retain_nearest_route_tracks(&mut track_x, source_port.route.x, target_port.route.x);
+        retain_nearest_route_tracks(&mut track_y, source_port.route.y, target_port.route.y);
+        x_coordinates.extend(track_x);
+        y_coordinates.extend(track_y);
         x_coordinates.retain(|coordinate| *coordinate >= 0.0);
         y_coordinates.retain(|coordinate| *coordinate >= 0.0);
         sort_unique_coordinates(&mut x_coordinates);
@@ -496,7 +483,7 @@ impl GraphRoutingGrid {
             target_port.route,
             &x_coordinates,
             &y_coordinates,
-            routed_edges,
+            routed_edge_index,
         );
 
         let mut points = Vec::with_capacity(route.len() + 2);
@@ -551,20 +538,36 @@ impl GraphRoutingGrid {
         }
     }
 
+    fn segment_crosses_obstacle(
+        &self,
+        start: Pos2,
+        end: Pos2,
+        excluded_nodes: Option<(usize, usize)>,
+    ) -> bool {
+        routing_grid_cells(egui::Rect::from_two_pos(start, end)).any(|cell| {
+            self.obstacle_buckets.get(&cell).is_some_and(|indices| {
+                indices.iter().any(|&index| {
+                    !excluded_nodes
+                        .is_some_and(|(source, target)| index == source || index == target)
+                        && segment_intersects_rect(start, end, self.obstacles[index])
+                })
+            })
+        })
+    }
+
     fn find_orthogonal_path(
         &self,
         source: Pos2,
         target: Pos2,
         x_coordinates: &[f32],
         y_coordinates: &[f32],
-        routed_edges: &[Vec<Pos2>],
+        segment_index: &GraphRouteSegmentIndex,
     ) -> Vec<Pos2> {
         let width = x_coordinates.len();
         let vertex_count = width * y_coordinates.len();
         let state_count = vertex_count * GRAPH_ROUTE_DIRECTIONS;
         let mut distances = vec![f32::INFINITY; state_count];
         let mut previous_states = vec![usize::MAX; state_count];
-        let segment_index = GraphRouteSegmentIndex::new(routed_edges);
         let mut segment_costs = HashMap::new();
         let goal_vertex = Self::vertex_index(target, x_coordinates, y_coordinates);
         let start_vertex = Self::vertex_index(source, x_coordinates, y_coordinates);
@@ -624,9 +627,7 @@ impl GraphRoutingGrid {
 
             for (next_vertex, direction, segment_length) in neighbors.into_iter().flatten() {
                 let next_point = Self::point_at(next_vertex, x_coordinates, y_coordinates);
-                if self.obstacles.iter().any(|obstacle| {
-                    segment_crosses_rect_interior(current_point, next_point, *obstacle)
-                }) {
+                if self.segment_crosses_obstacle(current_point, next_point, None) {
                     continue;
                 }
                 let edge_key = (
@@ -696,9 +697,30 @@ impl GraphRoutingGrid {
     }
 }
 
+fn routing_grid_cells(rect: egui::Rect) -> impl Iterator<Item = (i32, i32)> {
+    let left = (rect.left() / GRAPH_ROUTING_OBSTACLE_CELL_SIZE).floor() as i32;
+    let right = (rect.right() / GRAPH_ROUTING_OBSTACLE_CELL_SIZE).floor() as i32;
+    let top = (rect.top() / GRAPH_ROUTING_OBSTACLE_CELL_SIZE).floor() as i32;
+    let bottom = (rect.bottom() / GRAPH_ROUTING_OBSTACLE_CELL_SIZE).floor() as i32;
+    (top..=bottom).flat_map(move |row| (left..=right).map(move |column| (column, row)))
+}
+
 fn sort_unique_coordinates(coordinates: &mut Vec<f32>) {
     coordinates.sort_by(f32::total_cmp);
     coordinates.dedup_by(|left, right| *left == *right);
+}
+
+fn retain_nearest_route_tracks(coordinates: &mut Vec<f32>, first: f32, second: f32) {
+    coordinates.retain(|coordinate| *coordinate >= 0.0);
+    sort_unique_coordinates(coordinates);
+    coordinates.sort_by(|left, right| {
+        let left_distance = (left - first).abs().min((left - second).abs());
+        let right_distance = (right - first).abs().min((right - second).abs());
+        left_distance
+            .total_cmp(&right_distance)
+            .then_with(|| left.total_cmp(right))
+    });
+    coordinates.truncate(GRAPH_ROUTE_TRACK_LIMIT);
 }
 
 fn route_heuristic(point: Pos2, goals: &[Pos2]) -> f32 {

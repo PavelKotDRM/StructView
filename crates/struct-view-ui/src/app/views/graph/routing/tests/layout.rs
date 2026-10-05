@@ -156,7 +156,7 @@ fn parallel_graph_progress_counts_completed_edges_and_preserves_routes() {
     assert_eq!(snapshot.stage, Some(GraphStage::Conflicts));
     assert_eq!(snapshot.completed, endpoints.len());
     assert_eq!(snapshot.total, endpoints.len());
-    assert_eq!(snapshot.workers, 4);
+    assert_eq!(snapshot.workers, 1);
     assert_eq!(snapshot.timings[0].0, GraphStage::Preliminary);
     snapshot.finish();
     assert_eq!(snapshot.timings[1].0, GraphStage::Conflicts);
