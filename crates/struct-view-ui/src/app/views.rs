@@ -32,6 +32,6 @@ use diff::{PairChange, document_label_for_path, pair_change};
 pub(super) use diff::{
     comparison_column_width, comparison_value_color, show_diff, show_difference_legend,
 };
-pub(super) use graph::{GraphCalculationState, show_graph};
+pub(super) use graph::{GraphCalculationState, export_graph_image, show_graph};
 pub(super) use schema::show_schema;
 pub(super) use table::{export_table_csv, show_table};

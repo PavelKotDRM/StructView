@@ -136,7 +136,48 @@ The interface provides:
   multipartite graphs; read-only Graphviz DOT, GraphML, and GEXF imports.
   Parallel edges are retained for multigraphs. See the
   [graph input guide](docs/tutorial/en.md) for supported shapes and examples;
-  layout is calculated in the background with a progress indicator;
+  layout is calculated in the background with a progress indicator.
+  Graphs with at least 64 edges calculate preliminary routes in parallel,
+  using up to eight workers and leaving one logical CPU available when
+  possible. Conflict checks and rerouting also run in parallel against a
+  snapshot of accepted routes. Results are accepted in a fixed order; stale
+  conflicting proposals are recalculated before acceptance. Small graphs
+  and single-CPU systems use sequential routing.
+  Routing uses a spatial segment index and caches search-step penalties to
+  avoid repeatedly checking distant links during conflict resolution.
+  Nodes are arranged by relationships rather than document order: directed
+  acyclic connections flow left to right, cycles share a layer, disconnected
+  components have separate row bands, and partitioned graphs retain their
+  partition columns. Neighbor-based ordering reduces crossings within layers.
+  Calculation feedback shows the current stage and completed link count.
+  `View -> Calculation stage timings` contains elapsed time, worker count,
+  per-stage timings, and the slowest completed stage, including after completion.
+  Per-stage durations are listed in its `Stage details` submenu.
+  The graph toolbar provides zoom out/in, 100%, fit-to-view, select-all, and
+  clear-selection controls. Ctrl-click (Cmd-click on macOS) toggles individual
+  nodes; drag on empty canvas to select nodes with a rectangle, holding
+  Ctrl/Cmd to add to the selection. Selected nodes highlight their connections.
+  Hover a connection line or its label to see its full label, direction, and
+  endpoint names, identifiers, and document paths. At a crossing, equally
+  close connections are listed together.
+  `Export graph -> SVG / PNG` saves the entire graph at its original scale,
+  without temporary selection or search highlights. Choose light styling
+  with a transparent canvas or dark styling with an opaque dark canvas,
+  independently of the application theme. Relationship labels are exported
+  in full, with callouts and image bounds adjusted to fit the complete text.
+  SVG preserves vector shapes and text. Large PNG images are automatically
+  downscaled to at most 16 million pixels to bound memory use, preserving
+  the entire graph, aspect ratio, and selected background style. Small images
+  retain their original resolution. For full detail at any scale, use SVG.
+  Incoming and outgoing links share distinct, neighbor-ordered card ports;
+  detours use separate tracks where space permits, and relationship labels
+  avoid cards, connection lines, and arrowheads. Displaced labels have dashed
+  leaders identifying their connection. If a dense graph has no free space
+  near a route, its label is placed in a reserved callout column instead of
+  being hidden; the scrollable canvas and exported image expand to include it;
+  displaced-label leaders are checked against nodes, labels, routes, and other
+  leaders. Where a clear direct leader is impossible, matching numbered
+  markers identify the connection and its label without a long crossing line.
 - a flattened path/value/type table that follows the search filter and can be
   exported as CSV;
 - a schema diagram for JSON Schema and OpenAPI component/inline path schemas;

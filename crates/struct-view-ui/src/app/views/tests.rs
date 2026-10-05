@@ -655,6 +655,84 @@ fn parallel_graph_edges_use_distinct_card_ports() {
 }
 
 #[test]
+fn reciprocal_graph_edges_do_not_share_ports_or_routes() {
+    let positions = [egui::pos2(128.0, 59.0), egui::pos2(468.0, 59.0)];
+    let endpoints = [(0, 1), (1, 0)];
+    let ports = super::graph::graph_edge_ports(&positions, &endpoints);
+    assert_ne!(ports[0].source_offset, ports[1].target_offset);
+    assert_ne!(ports[0].target_offset, ports[1].source_offset);
+
+    let grid = super::graph::GraphRoutingGrid::new(&positions);
+    let first = grid.route_edge_with_ports(0, 1, ports[0], &[]);
+    let second = grid.route_edge_with_ports(1, 0, ports[1], std::slice::from_ref(&first));
+    assert_eq!(first.len(), 2);
+    assert_eq!(second.len(), 2);
+    assert!(!super::graph::segments_within_clearance(
+        first[0],
+        first[1],
+        second[0],
+        second[1],
+        super::graph::GRAPH_EDGE_CLEARANCE,
+    ));
+}
+
+#[test]
+fn graph_ports_follow_neighbor_order_not_edge_order() {
+    let positions = [
+        egui::pos2(128.0, 209.0),
+        egui::pos2(808.0, 59.0),
+        egui::pos2(808.0, 209.0),
+        egui::pos2(808.0, 359.0),
+    ];
+    let ports = super::graph::graph_edge_ports(&positions, &[(0, 3), (0, 1), (2, 0)]);
+    assert!(ports[1].source_offset < ports[2].target_offset);
+    assert!(ports[2].target_offset < ports[0].source_offset);
+}
+
+#[test]
+fn detoured_parallel_graph_edges_have_separate_tracks() {
+    let positions = [
+        egui::pos2(128.0, 59.0),
+        egui::pos2(468.0, 59.0),
+        egui::pos2(808.0, 59.0),
+    ];
+    let ports = super::graph::graph_edge_ports(&positions, &[(0, 2), (0, 2)]);
+    let grid = super::graph::GraphRoutingGrid::new(&positions);
+    let first = grid.route_edge_with_ports(0, 2, ports[0], &[]);
+    let second = grid.route_edge_with_ports(0, 2, ports[1], std::slice::from_ref(&first));
+    for route in [&first, &second] {
+        assert!(route.len() > 2);
+        assert!(route.windows(2).all(|segment| segment[0] != segment[1]));
+        assert!(
+            route
+                .windows(3)
+                .all(|points| { points[0].x != points[2].x && points[0].y != points[2].y }),
+            "Collinear route vertices were not simplified: {route:?}"
+        );
+        for position in positions {
+            let rect = egui::Rect::from_center_size(position, super::GRAPH_NODE_SIZE);
+            assert!(route.windows(2).all(|segment| {
+                !super::graph::segment_crosses_rect_interior(segment[0], segment[1], rect)
+            }));
+        }
+    }
+    assert!(
+        first.windows(2).all(|first_segment| {
+            second.windows(2).all(|second_segment| {
+                !super::graph::segments_within_clearance(
+                    first_segment[0],
+                    first_segment[1],
+                    second_segment[0],
+                    second_segment[1],
+                    super::graph::GRAPH_EDGE_CLEARANCE,
+                )
+            })
+        }),
+        "Detoured routes overlap: {first:?}, {second:?}"
+    );
+}
+
+#[test]
 fn crossing_graph_edges_are_routed_onto_separate_tracks() {
     let positions = [
         egui::pos2(128.0, 59.0),

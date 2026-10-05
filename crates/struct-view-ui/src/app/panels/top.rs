@@ -272,6 +272,11 @@ impl StructViewApp {
             }
 
             if self.root.is_some() {
+                ui.add_enabled_ui(self.graph_calculation.has_started(), |ui| {
+                    ui.menu_button(locale.text(TextKey::GraphTimings), |ui| {
+                        self.graph_calculation.show_progress(ui, locale);
+                    });
+                });
                 ui.menu_button(locale.text(TextKey::TreeActions), |ui| {
                     if ui.button(locale.text(TextKey::ExpandAll)).clicked() {
                         ui.close();

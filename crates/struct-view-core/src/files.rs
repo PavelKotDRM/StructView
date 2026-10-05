@@ -10,6 +10,11 @@ use std::path::Path;
 /// exist, and file permissions are retained.
 /// A failed write leaves the destination unchanged.
 pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
+    write_bytes_atomic(path, content.as_bytes())
+}
+
+/// Replace a file atomically, preserving permissions and following symbolic links.
+pub fn write_bytes_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
     let mut target = path.to_path_buf();
     // Resolve the final path component, including dangling links whose target
     // is to be created. Parent-directory links are followed by the OS.
@@ -63,7 +68,7 @@ pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(content.as_bytes())?;
+    temporary.write_all(content)?;
     if let Some(permissions) = permissions {
         temporary.as_file().set_permissions(permissions)?;
     }
@@ -75,6 +80,17 @@ pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binary_atomic_write_preserves_all_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("image.png");
+        let bytes = [0, 255, 128, b'\n', 0];
+        write_bytes_atomic(&path, &bytes).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        write_bytes_atomic(&path, &[1, 2]).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), [1, 2]);
+    }
 
     #[test]
     fn creates_and_replaces_files_without_leaving_temporary_files() {

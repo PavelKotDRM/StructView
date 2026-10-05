@@ -9,6 +9,7 @@ description = "Native graphical interface for StructView"
 arboard.workspace = true
 egui.workspace = true
 rfd.workspace = true
+resvg = "0.45"
 serde_json.workspace = true
 struct-view-build-info = { path = "../struct-view-build-info" }
 struct-view-core = { path = "../struct-view-core" }

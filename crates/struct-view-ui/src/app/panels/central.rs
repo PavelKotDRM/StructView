@@ -57,18 +57,34 @@ impl StructViewApp {
                             ),
                         );
                     } else if let Some(calculation) = self.graph_calculation.result() {
-                        show_graph(
+                        if let Some((format, style)) = show_graph(
                             ui,
                             &calculation.graph,
                             &calculation.routing,
                             &self.search,
                             self.locale,
-                        );
+                        ) {
+                            match export_graph_image(
+                                &calculation.graph,
+                                &calculation.routing,
+                                format,
+                                style,
+                            ) {
+                                Ok(true) => {
+                                    self.show_toast(self.locale.text(TextKey::GraphExported))
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    self.show_error(&self.locale.save_error(&error.to_string()))
+                                }
+                            }
+                        }
                     } else {
                         ui.centered_and_justified(|ui| {
                             ui.vertical_centered(|ui| {
                                 ui.add(egui::Spinner::new());
                                 ui.label(self.locale.text(TextKey::GraphCalculating));
+                                self.graph_calculation.show_activity(ui, self.locale);
                             });
                         });
                     }
