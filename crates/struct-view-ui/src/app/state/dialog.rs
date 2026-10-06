@@ -72,11 +72,10 @@ impl StructViewApp {
         match action {
             Some(Action::ContinueWithoutSaving) => self.continue_without_saving(ctx),
             Some(Action::Cancel) => self.cancel_close_file_confirmation(),
-            Some(Action::SaveChanges) => {
-                if self.save_changes_and_close_file() && exiting {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
+            Some(Action::SaveChanges) if self.save_changes_and_close_file() && exiting => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            Some(Action::SaveChanges) => {}
             None => {}
         }
     }
