@@ -287,11 +287,7 @@ pub(in crate::app) fn human_diff_path(path: &str, locale: Locale) -> String {
                             closed = true;
                             break;
                         }
-                        if next == '\\' && !escaped {
-                            escaped = true;
-                        } else {
-                            escaped = false;
-                        }
+                        escaped = next == '\\' && !escaped;
                     }
                     if !closed || chars.next().is_none_or(|(_, next)| next != ']') {
                         return path.to_string();

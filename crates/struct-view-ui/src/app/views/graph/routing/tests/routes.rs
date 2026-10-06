@@ -213,6 +213,99 @@ fn parallel_graph_routing_resolves_crossing_parallel_and_reciprocal_edges() {
 }
 
 #[test]
+fn routes_crossing_the_same_node_prefer_the_same_detour_side() {
+    fn assert_top_detour(route: &[Pos2], grid: &GraphRoutingGrid, obstacle_index: usize) {
+        let obstacle = grid.obstacles[obstacle_index];
+        assert!(
+            route.windows(2).any(|segment| {
+                segment[0].y == segment[1].y
+                    && segment[0].y <= obstacle.top()
+                    && segment[0].x.max(segment[1].x) >= obstacle.left()
+                    && segment[0].x.min(segment[1].x) <= obstacle.right()
+            }),
+            "Route should pass over the shared obstacle on its preferred side: {route:?}"
+        );
+        assert!(
+            route.windows(2).all(|segment| {
+                segment[0].y != segment[1].y
+                    || segment[0].y < obstacle.bottom()
+                    || segment[0].x.max(segment[1].x) < obstacle.left()
+                    || segment[0].x.min(segment[1].x) > obstacle.right()
+            }),
+            "Route should not form the opposite side of a square around the obstacle: {route:?}"
+        );
+        assert!(
+            route.windows(2).all(|segment| {
+                !segment_crosses_rect_interior(
+                    segment[0],
+                    segment[1],
+                    grid.node_rects[obstacle_index],
+                )
+            }),
+            "Route must not cross the obstacle node: {route:?}"
+        );
+    }
+
+    fn assert_left_detour(route: &[Pos2], grid: &GraphRoutingGrid, obstacle_index: usize) {
+        let obstacle = grid.obstacles[obstacle_index];
+        assert!(
+            route.windows(2).any(|segment| {
+                segment[0].x == segment[1].x
+                    && segment[0].x <= obstacle.left()
+                    && segment[0].y.max(segment[1].y) >= obstacle.top()
+                    && segment[0].y.min(segment[1].y) <= obstacle.bottom()
+            }),
+            "Vertical routes should use the left side as the shared bypass: {route:?}"
+        );
+        assert!(
+            route.windows(2).all(|segment| {
+                segment[0].x != segment[1].x
+                    || segment[0].x < obstacle.right()
+                    || segment[0].y.max(segment[1].y) < obstacle.top()
+                    || segment[0].y.min(segment[1].y) > obstacle.bottom()
+            }),
+            "Route should not use the opposite side of the obstacle: {route:?}"
+        );
+        assert!(
+            route.windows(2).all(|segment| {
+                !segment_crosses_rect_interior(
+                    segment[0],
+                    segment[1],
+                    grid.node_rects[obstacle_index],
+                )
+            }),
+            "Route must not cross the obstacle node: {route:?}"
+        );
+    }
+
+    let positions = [
+        Pos2::new(100.0, 400.0),
+        Pos2::new(400.0, 400.0),
+        Pos2::new(700.0, 400.0),
+        Pos2::new(200.0, 200.0),
+        Pos2::new(600.0, 600.0),
+    ];
+    let grid = GraphRoutingGrid::new(&positions);
+    let endpoints = [(0, 2), (3, 4)];
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let routes = route_graph_edges(&grid, &endpoints, &ports, 1);
+    for route in routes {
+        assert_top_detour(&route, &grid, 1);
+    }
+
+    let positions = [
+        Pos2::new(400.0, 100.0),
+        Pos2::new(400.0, 400.0),
+        Pos2::new(400.0, 700.0),
+    ];
+    let grid = GraphRoutingGrid::new(&positions);
+    let endpoints = [(0, 2)];
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let route = route_graph_edges(&grid, &endpoints, &ports, 1).remove(0);
+    assert_left_detour(&route, &grid, 1);
+}
+
+#[test]
 fn graph_routing_handles_empty_and_small_graphs_without_parallel_workers() {
     assert_eq!(
         graph_routing_worker_count(0, GraphRoutingWorkerSetting::Automatic),

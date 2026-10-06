@@ -331,27 +331,16 @@ fn constraint_value(key: &str, value: &serde_json::Value, locale: Locale, full: 
                 "options"
             }
         ),
+        Value::Object(object) if full => Value::Object(object.clone()).to_string(),
         Value::Object(object) => format!(
-            "{}",
-            if full {
-                Value::Object(object.clone()).to_string()
+            "{} {}",
+            object.len(),
+            if locale == Locale::Russian {
+                struct_view_core::parser::plural_ru(object.len(), "условие", "условия", "условий")
+            } else if object.len() == 1 {
+                "condition"
             } else {
-                format!(
-                    "{} {}",
-                    object.len(),
-                    if locale == Locale::Russian {
-                        struct_view_core::parser::plural_ru(
-                            object.len(),
-                            "условие",
-                            "условия",
-                            "условий",
-                        )
-                    } else if object.len() == 1 {
-                        "condition"
-                    } else {
-                        "conditions"
-                    }
-                )
+                "conditions"
             }
         ),
         _ => value.to_string(),

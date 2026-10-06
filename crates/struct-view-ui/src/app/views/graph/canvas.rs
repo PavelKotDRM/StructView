@@ -702,12 +702,18 @@ pub(in crate::app) fn show_graph(
             );
             if edge_hit || response.is_tooltip_open() {
                 show_graph_tooltip(&response, |ui| {
-                    for (index, &edge_index) in edges.iter().enumerate() {
-                        if index > 0 {
-                            ui.separator();
-                        }
-                        show_graph_edge_information(ui, graph, edge_index, locale);
-                    }
+                    egui::ScrollArea::vertical()
+                        .id_salt(("graph-overlapping-edges", routing.graph_fingerprint))
+                        .max_height(480.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for (index, &edge_index) in edges.iter().enumerate() {
+                                if index > 0 {
+                                    ui.separator();
+                                }
+                                show_graph_edge_information(ui, graph, edge_index, locale);
+                            }
+                        });
                 });
             } else {
                 interaction.edge_hover = None;
@@ -788,6 +794,7 @@ fn show_graph_attributes(
     egui::ScrollArea::vertical()
         .id_salt(id)
         .max_height(320.0)
+        .auto_shrink([false, true])
         .show(ui, |ui| {
             for (key, value) in attributes {
                 ui.add(

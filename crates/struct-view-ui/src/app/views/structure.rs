@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+
+type StructureSourcePreview = (Vec<usize>, Vec<Result<String, String>>);
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
@@ -96,7 +98,7 @@ pub(in crate::app) struct StructureView {
     editing: bool,
     edit_dialog: Option<StructureEditDialog>,
     source_show_full: bool,
-    source_preview: Option<(Vec<usize>, Vec<Result<String, String>>)>,
+    source_preview: Option<StructureSourcePreview>,
 }
 
 struct StructureEditDialog {

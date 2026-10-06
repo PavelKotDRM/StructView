@@ -140,6 +140,17 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
             layers[index] = node.partition.unwrap_or(0).min(names.len() - 1);
         }
     }
+    let mut isolated = Vec::new();
+    if partitioned.is_none() {
+        groups.retain(|group| {
+            if group.len() == 1 && neighbors[group[0]].is_empty() {
+                isolated.push(group[0]);
+                false
+            } else {
+                true
+            }
+        });
+    }
     let mut positions = vec![Pos2::ZERO; count];
     let mut row_offset = 0;
     let mut row_indices = vec![0; count];
@@ -207,6 +218,28 @@ pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
         }
         row_offset += height + 1;
     }
+    if !isolated.is_empty() {
+        let columns = (isolated.len() as f32).sqrt().ceil() as usize;
+        let connected_right = positions
+            .iter()
+            .enumerate()
+            .filter(|(node, _)| !neighbors[*node].is_empty())
+            .map(|(_, position)| position.x)
+            .fold(24.0, f32::max);
+        let isolated_start_x = if graph.edges.is_empty() {
+            24.0
+        } else {
+            connected_right + GRAPH_STEP.x * 2.0
+        };
+        for (index, node) in isolated.into_iter().enumerate() {
+            let column = index % columns;
+            let row = index / columns;
+            positions[node] = Pos2::new(
+                isolated_start_x + column as f32 * GRAPH_STEP.x + GRAPH_NODE_SIZE.x / 2.0,
+                24.0 + row as f32 * GRAPH_STEP.y + GRAPH_NODE_SIZE.y / 2.0,
+            );
+        }
+    }
     positions
 }
 
@@ -227,7 +260,19 @@ pub(super) fn build_graph_routing_layout_with_progress(
                     .max(point.y + GRAPH_STEP.y - GRAPH_NODE_SIZE.y / 2.0 + 24.0),
             )
         });
-    let routing_grid = GraphRoutingGrid::new(&node_positions);
+    let routed_nodes = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, _node)| {
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.source == index || edge.target == index)
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let routing_grid = GraphRoutingGrid::new_for_graph(&node_positions, &routed_nodes);
     let edge_endpoints = graph
         .edges
         .iter()
@@ -245,11 +290,22 @@ pub(super) fn build_graph_routing_layout_with_progress(
         content_size.x = content_size.x.max(point.x + 24.0);
         content_size.y = content_size.y.max(point.y + 24.0);
     }
-    let node_rects = node_positions
+    let connected_node_rects = routed_nodes
         .iter()
-        .map(|center| egui::Rect::from_center_size(*center, GRAPH_NODE_SIZE))
+        .map(|&index| egui::Rect::from_center_size(node_positions[index], GRAPH_NODE_SIZE))
         .collect::<Vec<_>>();
-    let canvas = egui::Rect::from_min_size(Pos2::ZERO, content_size);
+    let mut label_content_size = routed_nodes.iter().fold(Vec2::splat(48.0), |size, &index| {
+        let position = node_positions[index];
+        Vec2::new(
+            size.x.max(position.x + GRAPH_NODE_SIZE.x / 2.0 + 24.0),
+            size.y.max(position.y + GRAPH_NODE_SIZE.y / 2.0 + 24.0),
+        )
+    });
+    for point in routed_edges.iter().flatten() {
+        label_content_size.x = label_content_size.x.max(point.x + 24.0);
+        label_content_size.y = label_content_size.y.max(point.y + 24.0);
+    }
+    let label_canvas = egui::Rect::from_min_size(Pos2::ZERO, label_content_size);
     let mut occupied_label_rects = Vec::with_capacity(graph.edges.len());
     begin_graph_stage(progress, GraphStage::Labels, graph.edges.len(), 1);
     let mut edge_labels = graph
@@ -260,13 +316,13 @@ pub(super) fn build_graph_routing_layout_with_progress(
             let label = layout_graph_edge_label(
                 &edge.label,
                 points,
-                canvas,
-                &node_rects,
+                label_canvas,
+                &connected_node_rects,
                 &occupied_label_rects,
                 &routed_edges,
             )
             .or_else(|| {
-                graph_edge_label_callout(&edge.label, points, canvas, &occupied_label_rects)
+                graph_edge_label_callout(&edge.label, points, label_canvas, &occupied_label_rects)
             })
             .inspect(|label| {
                 occupied_label_rects.push(label.background);
@@ -277,7 +333,7 @@ pub(super) fn build_graph_routing_layout_with_progress(
             label
         })
         .collect::<Vec<_>>();
-    resolve_graph_label_leaders(&mut edge_labels, &node_rects, &routed_edges);
+    resolve_graph_label_leaders(&mut edge_labels, &connected_node_rects, &routed_edges);
     for (_, anchor) in edge_labels
         .iter()
         .flatten()

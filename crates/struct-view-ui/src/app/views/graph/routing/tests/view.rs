@@ -495,8 +495,7 @@ fn dense_graph_keeps_every_nonempty_relationship_label_inside_canvas() {
                     .map(|point| point.x)
                     .max_by(f32::total_cmp)
                     .unwrap()
-                    + GRAPH_STEP.x
-                    - GRAPH_NODE_SIZE.x / 2.0
+                    + GRAPH_NODE_SIZE.x / 2.0
                     + 24.0
         }),
         "Fixture must exercise reserved callout placement"

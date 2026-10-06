@@ -323,8 +323,9 @@ pub(in crate::app::views) const GRAPH_EDGE_CLEARANCE: f32 = 8.0;
 const GRAPH_ROUTING_OBSTACLE_CELL_SIZE: f32 = 256.0;
 const GRAPH_ROUTE_TRACK_LIMIT: usize = 12;
 const GRAPH_ROUTE_TURN_PENALTY: f32 = 48.0;
-const GRAPH_EDGE_ROUTE_PENALTY: f32 = 500.0;
-const GRAPH_EDGE_CROSSING_PENALTY: f32 = 10_000.0;
+const GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY: f32 = 240.0;
+const GRAPH_EDGE_ROUTE_PENALTY: f32 = 2_000.0;
+const GRAPH_EDGE_CROSSING_PENALTY: f32 = 50_000.0;
 const GRAPH_ROUTE_DIRECTIONS: usize = 3;
 const GRAPH_ROUTE_HORIZONTAL: usize = 0;
 const GRAPH_ROUTE_VERTICAL: usize = 1;
@@ -334,6 +335,11 @@ const GRAPH_ROUTE_NO_DIRECTION: usize = 2;
 struct GraphRoutePort {
     card: Pos2,
     route: Pos2,
+}
+
+struct GraphRoutePreferences<'a> {
+    direct_direction: Vec2,
+    detoured_obstacles: &'a [egui::Rect],
 }
 
 #[derive(Debug)]
@@ -379,7 +385,13 @@ pub(in crate::app::views) struct GraphRoutingGrid {
 }
 
 impl GraphRoutingGrid {
+    #[cfg(test)]
     pub(in crate::app::views) fn new(node_positions: &[Pos2]) -> Self {
+        let routed_nodes = (0..node_positions.len()).collect::<Vec<_>>();
+        Self::new_for_graph(node_positions, &routed_nodes)
+    }
+
+    pub(super) fn new_for_graph(node_positions: &[Pos2], routed_nodes: &[usize]) -> Self {
         let node_rects = node_positions
             .iter()
             .map(|center| egui::Rect::from_center_size(*center, GRAPH_NODE_SIZE))
@@ -389,15 +401,17 @@ impl GraphRoutingGrid {
             .map(|rect| rect.expand(GRAPH_ROUTE_CLEARANCE))
             .collect::<Vec<_>>();
         let mut obstacle_buckets = HashMap::<(i32, i32), Vec<usize>>::new();
-        for (index, obstacle) in obstacles.iter().enumerate() {
-            for cell in routing_grid_cells(*obstacle) {
+        for &index in routed_nodes {
+            for cell in routing_grid_cells(obstacles[index]) {
                 obstacle_buckets.entry(cell).or_default().push(index);
             }
         }
-        let mut x_coordinates = Vec::with_capacity(node_positions.len() * 3);
-        let mut y_coordinates = Vec::with_capacity(node_positions.len() * 3);
+        let mut x_coordinates = Vec::with_capacity(routed_nodes.len() * 3);
+        let mut y_coordinates = Vec::with_capacity(routed_nodes.len() * 3);
 
-        for (center, obstacle) in node_positions.iter().zip(&obstacles) {
+        for &index in routed_nodes {
+            let center = node_positions[index];
+            let obstacle = obstacles[index];
             x_coordinates.extend([obstacle.left(), center.x, obstacle.right()]);
             y_coordinates.extend([obstacle.top(), center.y, obstacle.bottom()]);
         }
@@ -474,6 +488,18 @@ impl GraphRoutingGrid {
         retain_nearest_route_tracks(&mut track_y, source_port.route.y, target_port.route.y);
         x_coordinates.extend(track_x);
         y_coordinates.extend(track_y);
+        let direct_direction = line_end - line_start;
+        let detoured_obstacles = self
+            .obstacles
+            .iter()
+            .enumerate()
+            .filter(|(index, obstacle)| {
+                *index != source
+                    && *index != target
+                    && segment_intersects_rect(line_start, line_end, **obstacle)
+            })
+            .map(|(_, obstacle)| *obstacle)
+            .collect::<Vec<_>>();
         x_coordinates.retain(|coordinate| *coordinate >= 0.0);
         y_coordinates.retain(|coordinate| *coordinate >= 0.0);
         sort_unique_coordinates(&mut x_coordinates);
@@ -484,6 +510,10 @@ impl GraphRoutingGrid {
             &x_coordinates,
             &y_coordinates,
             routed_edge_index,
+            GraphRoutePreferences {
+                direct_direction,
+                detoured_obstacles: &detoured_obstacles,
+            },
         );
 
         let mut points = Vec::with_capacity(route.len() + 2);
@@ -562,6 +592,7 @@ impl GraphRoutingGrid {
         x_coordinates: &[f32],
         y_coordinates: &[f32],
         segment_index: &GraphRouteSegmentIndex,
+        preferences: GraphRoutePreferences<'_>,
     ) -> Vec<Pos2> {
         let width = x_coordinates.len();
         let vertex_count = width * y_coordinates.len();
@@ -646,8 +677,17 @@ impl GraphRoutingGrid {
                 } else {
                     0.0
                 };
-                let next_distance =
-                    entry.distance + segment_length + turn_penalty + edge_overlap_penalty;
+                let side_preference_penalty = detour_side_preference_penalty(
+                    current_point,
+                    next_point,
+                    preferences.direct_direction,
+                    preferences.detoured_obstacles,
+                );
+                let next_distance = entry.distance
+                    + segment_length
+                    + turn_penalty
+                    + edge_overlap_penalty
+                    + side_preference_penalty;
                 let next_state = next_vertex * GRAPH_ROUTE_DIRECTIONS + direction;
                 if next_distance >= distances[next_state] {
                     continue;
@@ -728,6 +768,32 @@ fn route_heuristic(point: Pos2, goals: &[Pos2]) -> f32 {
         .iter()
         .map(|goal| (point.x - goal.x).abs() + (point.y - goal.y).abs())
         .fold(f32::INFINITY, f32::min)
+}
+
+fn detour_side_preference_penalty(
+    start: Pos2,
+    end: Pos2,
+    direct_direction: Vec2,
+    obstacles: &[egui::Rect],
+) -> f32 {
+    let mostly_horizontal = direct_direction.x.abs() >= direct_direction.y.abs();
+    obstacles
+        .iter()
+        .filter(|obstacle| {
+            if start.y == end.y
+                && start.y >= obstacle.bottom()
+                && start.x.max(end.x) >= obstacle.left()
+                && start.x.min(end.x) <= obstacle.right()
+            {
+                true
+            } else if !mostly_horizontal && start.x == end.x && start.x >= obstacle.right() {
+                start.y.max(end.y) >= obstacle.top() && start.y.min(end.y) <= obstacle.bottom()
+            } else {
+                false
+            }
+        })
+        .count() as f32
+        * GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY
 }
 
 #[cfg(test)]

@@ -42,6 +42,114 @@ fn relationship_layout_handles_cycles_disconnected_and_undirected_graphs() {
 }
 
 #[test]
+fn relationship_layout_packs_many_isolated_entities_into_a_compact_grid() {
+    let input = format!(
+        "[{}]",
+        (0..100)
+            .map(|index| format!(r#"{{"id":"isolated-{index}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let graph = layout_graph(&input);
+    let positions = graph_node_positions(&graph);
+    let row_count = positions
+        .iter()
+        .map(|position| position.y.to_bits())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    assert_eq!(graph.nodes.len(), 100);
+    assert!(graph.edges.is_empty());
+    assert_eq!(row_count, 10);
+    assert_eq!(positions, graph_node_positions(&graph));
+    for (index, &position) in positions.iter().enumerate() {
+        let rect = egui::Rect::from_center_size(position, GRAPH_NODE_SIZE);
+        for &other in &positions[..index] {
+            assert!(!rect.intersects(egui::Rect::from_center_size(other, GRAPH_NODE_SIZE)));
+        }
+    }
+}
+
+#[test]
+fn isolated_entities_do_not_spread_or_reroute_the_connected_graph() {
+    let connected =
+        layout_graph(r#"[{"id":"a","depends_on":"b"},{"id":"b","depends_on":"c"},{"id":"c"}]"#);
+    let mut input = r#"[{"id":"a","depends_on":"b"},{"id":"b","depends_on":"c"},{"id":"c"}"#
+        .trim_end_matches(']')
+        .to_string();
+    for index in 0..100 {
+        input.push_str(&format!(r#",{{"id":"isolated-{index}"}}"#));
+    }
+    input.push(']');
+    let with_isolated = layout_graph(&input);
+    let connected_routing = build_graph_routing_layout(&connected);
+    let isolated_routing = build_graph_routing_layout(&with_isolated);
+
+    assert_eq!(
+        &isolated_routing.node_positions[..connected.nodes.len()],
+        connected_routing.node_positions
+    );
+    assert_eq!(isolated_routing.edge_paths, connected_routing.edge_paths);
+    let connected_bottom = connected_routing
+        .node_positions
+        .iter()
+        .map(|position| position.y)
+        .fold(0.0, f32::max);
+    assert!(
+        isolated_routing.node_positions[connected.nodes.len()..]
+            .iter()
+            .all(|position| position.y < connected_bottom + GRAPH_STEP.y * 10.0)
+    );
+}
+
+#[test]
+fn relationship_labels_stay_next_to_the_connected_graph_when_isolated_nodes_are_added() {
+    let mut nodes = vec![
+        serde_json::json!({"id":"source"}),
+        serde_json::json!({"id":"target"}),
+    ];
+    let edges = (0..12)
+        .map(|index| {
+            serde_json::json!({
+                "source": "source",
+                "target": "target",
+                "label": format!("relationship label {index} with a long description")
+            })
+        })
+        .collect::<Vec<_>>();
+    let input = serde_json::json!({
+        "graph": {"type": "directed_multigraph"},
+        "nodes": nodes.clone(),
+        "edges": edges.clone()
+    });
+    let connected = layout_graph(&input.to_string());
+    nodes.extend((0..100).map(|index| serde_json::json!({"id":format!("isolated-{index}")})));
+    let input = serde_json::json!({
+        "graph": {"type": "directed_multigraph"},
+        "nodes": nodes,
+        "edges": edges
+    });
+    let graph = layout_graph(&input.to_string());
+    let with_isolated = build_graph_routing_layout(&graph);
+    let connected_routing = build_graph_routing_layout(&connected);
+
+    for (before, after) in connected_routing
+        .edge_labels
+        .iter()
+        .zip(&with_isolated.edge_labels)
+    {
+        let before = before.as_ref().unwrap();
+        let after = after.as_ref().unwrap();
+        assert_eq!(before.position, after.position);
+        assert_eq!(before.background, after.background);
+        assert!(
+            after.background.right()
+                < with_isolated.node_positions[connected.nodes.len()].x - GRAPH_STEP.x
+        );
+    }
+}
+
+#[test]
 fn partition_layout_keeps_columns_and_orders_neighbors_to_avoid_crossings() {
     let mut graph = layout_graph(
         r#"[{"id":"a","depends_on":"d"},{"id":"b","depends_on":"c"},{"id":"c"},{"id":"d"}]"#,
