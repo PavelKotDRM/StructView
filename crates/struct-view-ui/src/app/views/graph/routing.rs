@@ -534,7 +534,7 @@ impl GraphRoutingGrid {
                 let middle = simplified[simplified.len() - 1];
                 let first = middle - start;
                 let second = point - middle;
-                if cross_product(first, second) != 0.0 || first.dot(second) <= 0.0 {
+                if cross_product(first, second) != 0.0 {
                     break;
                 }
                 simplified.pop();
@@ -780,7 +780,8 @@ fn detour_side_preference_penalty(
     obstacles
         .iter()
         .filter(|obstacle| {
-            if start.y == end.y
+            if mostly_horizontal
+                && start.y == end.y
                 && start.y >= obstacle.bottom()
                 && start.x.max(end.x) >= obstacle.left()
                 && start.x.min(end.x) <= obstacle.right()

@@ -249,7 +249,7 @@ pub(super) fn build_graph_routing_layout_with_progress(
     progress: Option<&GraphProgressTracker>,
 ) -> GraphRoutingLayout {
     begin_graph_stage(progress, GraphStage::Layout, 0, 1);
-    let node_positions = graph_node_positions(graph);
+    let mut node_positions = graph_node_positions(graph);
     let mut content_size = node_positions
         .iter()
         .fold(Vec2::splat(48.0), |size, point| {
@@ -321,9 +321,6 @@ pub(super) fn build_graph_routing_layout_with_progress(
                 &occupied_label_rects,
                 &routed_edges,
             )
-            .or_else(|| {
-                graph_edge_label_callout(&edge.label, points, label_canvas, &occupied_label_rects)
-            })
             .inspect(|label| {
                 occupied_label_rects.push(label.background);
                 content_size.x = content_size.x.max(label.background.right() + 24.0);
@@ -333,6 +330,40 @@ pub(super) fn build_graph_routing_layout_with_progress(
             label
         })
         .collect::<Vec<_>>();
+    let callout_indices = edge_labels
+        .iter()
+        .enumerate()
+        .filter_map(|(index, label)| {
+            (label.is_none() && !graph.edges[index].label.trim().is_empty()).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let row_height = GRAPH_EDGE_LABEL_HEIGHT + 9.0;
+    let connected_bottom = connected_node_rects
+        .iter()
+        .map(egui::Rect::bottom)
+        .chain(routed_edges.iter().flatten().map(|point| point.y))
+        .fold(24.0_f32, f32::max)
+        + 24.0;
+    let max_rows = ((connected_bottom - 48.0) / row_height).floor().max(1.0) as usize;
+    let column_count = callout_indices.len().div_ceil(max_rows);
+    for (callout_index, &edge_index) in callout_indices.iter().enumerate() {
+        let row = callout_index / column_count;
+        let column = callout_index % column_count;
+        let position = Pos2::new(
+            label_canvas.right() + 24.0 + column as f32 * 156.0,
+            label_canvas.top() + 24.0 + row as f32 * row_height + GRAPH_EDGE_LABEL_HEIGHT / 2.0,
+        );
+        let label = graph_edge_label_callout_at(
+            &graph.edges[edge_index].label,
+            &routed_edges[edge_index],
+            position,
+        )
+        .inspect(|label| {
+            content_size.x = content_size.x.max(label.background.right() + 24.0);
+            content_size.y = content_size.y.max(label.background.bottom() + 24.0);
+        });
+        edge_labels[edge_index] = label;
+    }
     resolve_graph_label_leaders(&mut edge_labels, &connected_node_rects, &routed_edges);
     for (_, anchor) in edge_labels
         .iter()
@@ -341,6 +372,35 @@ pub(super) fn build_graph_routing_layout_with_progress(
     {
         content_size.x = content_size.x.max(anchor.x + 24.0);
         content_size.y = content_size.y.max(anchor.y + 24.0);
+    }
+    let label_right = edge_labels
+        .iter()
+        .flatten()
+        .map(|label| label.background.right())
+        .max_by(f32::total_cmp);
+    if let Some(label_right) = label_right {
+        let mut is_routed = vec![false; graph.nodes.len()];
+        for &index in &routed_nodes {
+            is_routed[index] = true;
+        }
+        let isolated_left = node_positions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, position)| (!is_routed[index]).then_some(position.x))
+            .min_by(f32::total_cmp);
+        if let Some(isolated_left) = isolated_left {
+            let shift = (label_right + GRAPH_STEP.x + 0.1 - isolated_left).max(0.0);
+            if shift > 0.0 {
+                for (index, position) in node_positions.iter_mut().enumerate() {
+                    if !is_routed[index] {
+                        position.x += shift;
+                        content_size.x = content_size
+                            .x
+                            .max(position.x + GRAPH_STEP.x - GRAPH_NODE_SIZE.x / 2.0 + 24.0);
+                    }
+                }
+            }
+        }
     }
 
     GraphRoutingLayout {

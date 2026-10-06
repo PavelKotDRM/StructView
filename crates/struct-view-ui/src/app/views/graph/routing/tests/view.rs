@@ -500,6 +500,45 @@ fn dense_graph_keeps_every_nonempty_relationship_label_inside_canvas() {
         }),
         "Fixture must exercise reserved callout placement"
     );
+    let connected_bottom = layout
+        .node_positions
+        .iter()
+        .map(|position| position.y + GRAPH_NODE_SIZE.y / 2.0)
+        .chain(layout.edge_paths.iter().flatten().map(|point| point.y))
+        .fold(0.0_f32, f32::max)
+        + 24.0;
+    let callouts = layout
+        .edge_labels
+        .iter()
+        .flatten()
+        .filter(|label| {
+            label.background.left()
+                > layout
+                    .node_positions
+                    .iter()
+                    .map(|point| point.x)
+                    .max_by(f32::total_cmp)
+                    .unwrap()
+                    + GRAPH_NODE_SIZE.x / 2.0
+                    + 24.0
+        })
+        .collect::<Vec<_>>();
+    let mut callout_rows = callouts
+        .iter()
+        .map(|label| label.background.center().y)
+        .collect::<Vec<_>>();
+    callout_rows.sort_by(f32::total_cmp);
+    callout_rows.dedup_by(|left, right| *left == *right);
+    assert!(
+        callout_rows.len() > 1,
+        "Tall callout legends should wrap into multiple rows"
+    );
+    assert!(
+        callouts
+            .iter()
+            .all(|label| label.background.bottom() <= connected_bottom),
+        "Callout legend should fit within the connected graph height"
+    );
     let mut occupied = Vec::new();
     for (edge, label) in graph.edges.iter().zip(&layout.edge_labels) {
         let label = label.as_ref().unwrap();

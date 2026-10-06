@@ -124,6 +124,57 @@ fn indexed_graph_conflicts_match_exhaustive_checks_when_routes_are_added_increme
 }
 
 #[test]
+fn route_simplification_removes_collinear_backtracking() {
+    let points = [
+        Pos2::new(0.0, 0.0),
+        Pos2::new(20.0, 0.0),
+        Pos2::new(10.0, 0.0),
+        Pos2::new(10.0, 20.0),
+    ];
+    assert_eq!(
+        GraphRoutingGrid::simplify_graph_route(points.to_vec()),
+        [Pos2::ZERO, Pos2::new(10.0, 0.0), Pos2::new(10.0, 20.0)]
+    );
+
+    let looped_points = [
+        Pos2::ZERO,
+        Pos2::new(0.0, 10.0),
+        Pos2::ZERO,
+        Pos2::new(10.0, 0.0),
+    ];
+    assert_eq!(
+        GraphRoutingGrid::simplify_graph_route(looped_points.to_vec()),
+        [Pos2::ZERO, Pos2::new(10.0, 0.0)]
+    );
+}
+
+#[test]
+fn detour_side_preference_matches_the_route_orientation() {
+    let obstacle = egui::Rect::from_min_max(Pos2::new(100.0, 100.0), Pos2::new(200.0, 200.0));
+    let below = (Pos2::new(80.0, 220.0), Pos2::new(220.0, 220.0));
+    let right = (Pos2::new(220.0, 80.0), Pos2::new(220.0, 220.0));
+
+    assert_eq!(
+        detour_side_preference_penalty(below.0, below.1, Vec2::X, &[obstacle]),
+        GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY
+    );
+    assert_eq!(
+        detour_side_preference_penalty(below.0, below.1, Vec2::Y, &[obstacle]),
+        0.0,
+        "A vertical route should not be penalized for passing below an obstacle"
+    );
+    assert_eq!(
+        detour_side_preference_penalty(right.0, right.1, Vec2::Y, &[obstacle]),
+        GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY
+    );
+    assert_eq!(
+        detour_side_preference_penalty(right.0, right.1, Vec2::X, &[obstacle]),
+        0.0,
+        "A horizontal route should not be penalized for passing right of an obstacle"
+    );
+}
+
+#[test]
 fn dense_parallel_conflict_resolution_is_deterministic_and_preserves_ports() {
     let (grid, _, _) = routing_fixture(4);
     let endpoints = vec![(0, 2); 12];

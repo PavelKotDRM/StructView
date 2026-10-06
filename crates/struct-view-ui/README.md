@@ -77,9 +77,11 @@ Routing is performed after node layout and follows these steps:
    routed independently. A final deterministic pass checks them in edge order
    and reroutes any path that conflicts with an earlier route. The single-worker
    path uses this same edge order and incrementally considers accepted routes.
-6. **Simplify the result.** Consecutive duplicate points and redundant
-   collinear points are removed before the path is drawn.
+6. **Simplify the result.** Consecutive duplicate points, redundant collinear
+   points, and collinear backtracking are removed before the path is drawn.
 
 Only nodes incident to at least one edge are routing obstacles. Isolated nodes
 are laid out separately and do not stretch the connected graph's routes or
-labels.
+labels. If fallback relationship labels would make a vertical legend taller
+than the connected graph, they are packed into multiple rows beside the graph;
+isolated nodes are shifted right as needed to leave the legend clear.

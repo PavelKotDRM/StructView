@@ -2,6 +2,7 @@ use super::super::*;
 use super::placement::aligned_label_rect;
 use super::placement::shorten_graph_edge_label;
 
+#[cfg(test)]
 pub(in crate::app::views::graph) fn graph_edge_label_callout(
     label: &str,
     points: &[Pos2],
@@ -17,6 +18,29 @@ pub(in crate::app::views::graph) fn graph_edge_label_callout(
         points,
         canvas,
         occupied_label_rects,
+    ))
+}
+
+pub(in crate::app::views::graph) fn graph_edge_label_callout_at(
+    label: &str,
+    points: &[Pos2],
+    position: Pos2,
+) -> Option<GraphEdgeLabelLayout> {
+    if label.trim().is_empty() {
+        return None;
+    }
+    let text = shorten_graph_edge_label(label, 144.0);
+    let size = Vec2::new(
+        text.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH,
+        GRAPH_EDGE_LABEL_HEIGHT,
+    );
+    let background = aligned_label_rect(position, size, Align2::LEFT_CENTER).expand(3.0);
+    Some(graph_edge_label_layout(
+        text,
+        position,
+        Align2::LEFT_CENTER,
+        background,
+        points,
     ))
 }
 
