@@ -37,14 +37,45 @@ pub fn compare_values(values: &[Value]) -> Vec<Difference> {
 }
 
 /// Compare a selected pair at an existing difference path.
+///
+/// A non-empty container replaced by a scalar is expanded into child changes
+/// plus a change for the scalar at the container path.
 pub fn compare_pair_at_path(
     path: &str,
     left: Option<&Value>,
     right: Option<&Value>,
 ) -> Vec<Difference> {
     let mut differences = Vec::new();
-    collect_differences(path.to_string(), vec![left, right], &mut differences);
+    match (left, right) {
+        (Some(left), Some(right)) if has_container_children(left) && !is_container(right) => {
+            collect_differences(path.to_string(), vec![Some(left), None], &mut differences);
+            differences.push(Difference {
+                path: path.to_string(),
+                values: vec![None, Some(right.clone())],
+            });
+        }
+        (Some(left), Some(right)) if !is_container(left) && has_container_children(right) => {
+            collect_differences(path.to_string(), vec![None, Some(right)], &mut differences);
+            differences.push(Difference {
+                path: path.to_string(),
+                values: vec![Some(left.clone()), None],
+            });
+        }
+        _ => collect_differences(path.to_string(), vec![left, right], &mut differences),
+    }
     differences
+}
+
+fn is_container(value: &Value) -> bool {
+    value.is_array() || value.is_object()
+}
+
+fn has_container_children(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => !values.is_empty(),
+        Value::Object(values) => !values.is_empty(),
+        _ => false,
+    }
 }
 
 /// Compare normalized values, retaining integer/float distinctions but not decimal spelling.
@@ -342,6 +373,64 @@ mod tests {
         let array = json!([]);
         assert!(compare_pair_at_path("$", Some(&object), Some(&object)).is_empty());
         assert!(compare_pair_at_path("$", Some(&array), Some(&array)).is_empty());
+    }
+
+    #[test]
+    fn pair_comparison_expands_non_empty_containers_replaced_by_scalars() {
+        let object = json!({"items": [1, 2], "unchanged": true});
+        let scalar = Value::Null;
+
+        assert_eq!(
+            compare_pair_at_path("$", Some(&object), Some(&scalar)),
+            [
+                Difference {
+                    path: "$.items[0]".to_string(),
+                    values: vec![Some(json!(1)), None],
+                },
+                Difference {
+                    path: "$.items[1]".to_string(),
+                    values: vec![Some(json!(2)), None],
+                },
+                Difference {
+                    path: "$.unchanged".to_string(),
+                    values: vec![Some(json!(true)), None],
+                },
+                Difference {
+                    path: "$".to_string(),
+                    values: vec![None, Some(Value::Null)],
+                },
+            ]
+        );
+        assert_eq!(
+            compare_pair_at_path("$", Some(&scalar), Some(&object)),
+            [
+                Difference {
+                    path: "$.items[0]".to_string(),
+                    values: vec![None, Some(json!(1))],
+                },
+                Difference {
+                    path: "$.items[1]".to_string(),
+                    values: vec![None, Some(json!(2))],
+                },
+                Difference {
+                    path: "$.unchanged".to_string(),
+                    values: vec![None, Some(json!(true))],
+                },
+                Difference {
+                    path: "$".to_string(),
+                    values: vec![Some(Value::Null), None],
+                },
+            ]
+        );
+
+        let empty_object = json!({});
+        assert_eq!(
+            compare_pair_at_path("$", Some(&empty_object), Some(&scalar)),
+            [Difference {
+                path: "$".to_string(),
+                values: vec![Some(empty_object), Some(Value::Null)],
+            }]
+        );
     }
 
     #[test]
