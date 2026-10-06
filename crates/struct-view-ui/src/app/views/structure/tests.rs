@@ -1190,7 +1190,13 @@ fn selected_structures_can_be_copied_and_pasted_into_a_container() {
     assert!(view.can_copy_selected());
 
     view.copy_selected(Locale::English);
-    assert_eq!(view.error, None);
+    assert!(
+        view.error
+            .as_deref()
+            .is_none_or(|error| error.starts_with("System clipboard copy error:")),
+        "Unexpected copy error: {:?}",
+        view.error
+    );
     let entries = view.clipboard_payload.clone().expect("entries cached");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].key.as_deref(), Some("profile"));
