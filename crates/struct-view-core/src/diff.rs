@@ -103,8 +103,15 @@ fn collect_differences(
     let has_scalars = values
         .iter()
         .any(|value| value.is_some_and(|value| !value.is_object() && !value.is_array()));
-    let has_container_type_mismatch = (has_objects || has_arrays)
-        && usize::from(has_objects) + usize::from(has_arrays) + usize::from(has_scalars) > 1;
+    if has_scalars && (has_objects || has_arrays) {
+        differences.push(Difference {
+            path,
+            values: values.into_iter().map(|value| value.cloned()).collect(),
+        });
+        return;
+    }
+
+    let has_container_type_mismatch = has_objects && has_arrays;
 
     if has_container_type_mismatch {
         let objects = values
@@ -306,6 +313,20 @@ mod tests {
         assert!(differences[3..].iter().all(|difference| {
             difference.values[0].is_none() && difference.values[1].is_some()
         }));
+    }
+
+    #[test]
+    fn reports_container_replaced_by_scalar_at_container_path() {
+        let before = json!({"settings": {"enabled": true}});
+        let after = json!({"settings": false});
+
+        assert_eq!(
+            compare_values(&[before, after]),
+            [Difference {
+                path: "$.settings".to_string(),
+                values: vec![Some(json!({"enabled": true})), Some(json!(false)),],
+            }]
+        );
     }
 
     #[test]
