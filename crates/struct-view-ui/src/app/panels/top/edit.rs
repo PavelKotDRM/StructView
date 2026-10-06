@@ -9,6 +9,38 @@ impl StructViewApp {
                 ui.close();
             }
             if self.visualization == VisualizationMode::Structure {
+                ui.menu_button(locale.text(TextKey::Mode), |ui| {
+                    ui.add_enabled_ui(self.structure_view.can_edit(), |ui| {
+                        if ui
+                            .selectable_label(
+                                !self.structure_view.is_editing(),
+                                locale.text(TextKey::ViewMode),
+                            )
+                            .clicked()
+                        {
+                            self.structure_view.set_editing(false);
+                        }
+                        if ui
+                            .selectable_label(
+                                self.structure_view.is_editing(),
+                                locale.text(TextKey::EditMode),
+                            )
+                            .clicked()
+                        {
+                            self.structure_view.set_editing(true);
+                        }
+                    });
+                });
+                if ui
+                    .add_enabled(
+                        self.structure_view.can_delete_selected(),
+                        egui::Button::new(locale.text(TextKey::DeleteSelectedStructures)),
+                    )
+                    .clicked()
+                {
+                    self.structure_view.delete_selected(locale);
+                    ui.close();
+                }
                 return;
             }
             if self.root.is_some() {

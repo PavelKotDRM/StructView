@@ -94,15 +94,63 @@ fn collect_differences(
         return;
     }
 
-    if values
+    let has_objects = values
         .iter()
-        .all(|value| value.is_some_and(Value::is_object))
+        .any(|value| value.is_some_and(Value::is_object));
+    let has_arrays = values
+        .iter()
+        .any(|value| value.is_some_and(Value::is_array));
+    let has_scalars = values
+        .iter()
+        .any(|value| value.is_some_and(|value| !value.is_object() && !value.is_array()));
+    let has_container_type_mismatch = (has_objects || has_arrays)
+        && usize::from(has_objects) + usize::from(has_arrays) + usize::from(has_scalars) > 1;
+
+    if has_container_type_mismatch {
+        let objects = values
+            .iter()
+            .map(|value| value.filter(|value| value.is_object()))
+            .collect::<Vec<_>>();
+        if objects.iter().any(Option::is_some) {
+            collect_differences(path.clone(), objects, differences);
+        }
+
+        let arrays = values
+            .iter()
+            .map(|value| value.filter(|value| value.is_array()))
+            .collect::<Vec<_>>();
+        if arrays.iter().any(Option::is_some) {
+            collect_differences(path.clone(), arrays, differences);
+        }
+
+        let scalars = values
+            .iter()
+            .map(|value| value.filter(|value| !value.is_object() && !value.is_array()))
+            .collect::<Vec<_>>();
+        if scalars.iter().any(Option::is_some) {
+            collect_differences(path, scalars, differences);
+        }
+        return;
+    }
+
+    if values.iter().any(Option::is_some)
+        && values
+            .iter()
+            .all(|value| value.is_none_or(Value::is_object))
     {
         let keys = values
             .iter()
             .filter_map(|value| value.and_then(Value::as_object))
             .flat_map(|object| object.keys().cloned())
             .collect::<BTreeSet<_>>();
+
+        if keys.is_empty() {
+            differences.push(Difference {
+                path,
+                values: values.into_iter().map(|value| value.cloned()).collect(),
+            });
+            return;
+        }
 
         for key in keys {
             let child_values = values
@@ -118,9 +166,8 @@ fn collect_differences(
         return;
     }
 
-    if values
-        .iter()
-        .all(|value| value.is_some_and(Value::is_array))
+    if values.iter().any(Option::is_some)
+        && values.iter().all(|value| value.is_none_or(Value::is_array))
     {
         let length = values
             .iter()
@@ -128,6 +175,14 @@ fn collect_differences(
             .map(Vec::len)
             .max()
             .unwrap_or(0);
+
+        if length == 0 {
+            differences.push(Difference {
+                path,
+                values: values.into_iter().map(|value| value.cloned()).collect(),
+            });
+            return;
+        }
 
         for index in 0..length {
             let child_values = values
@@ -180,21 +235,117 @@ mod tests {
     }
 
     #[test]
-    fn compares_arrays_and_type_changes() {
+    fn compares_added_or_removed_object_arrays_by_nested_fields() {
+        let values = [
+            json!({"edges": [
+                {"id": "e1", "relation": "supplies", "source": "a", "target": "b"},
+                {"id": "e2", "relation": "supports", "source": "a", "target": "b"}
+            ]}),
+            json!({}),
+        ];
+
+        let differences = compare_values(&values);
+
+        assert_eq!(
+            differences
+                .iter()
+                .map(|difference| difference.path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "$.edges[0].id",
+                "$.edges[0].relation",
+                "$.edges[0].source",
+                "$.edges[0].target",
+                "$.edges[1].id",
+                "$.edges[1].relation",
+                "$.edges[1].source",
+                "$.edges[1].target",
+            ]
+        );
+        assert!(differences.iter().all(|difference| {
+            difference.values[0].is_some() && difference.values[1].is_none()
+        }));
+    }
+
+    #[test]
+    fn compares_objects_replaced_by_arrays_as_removed_and_added_fields() {
+        let before = json!({
+            "entities": {
+                "account": "Account",
+                "customer": "Customer",
+                "order": "Order"
+            }
+        });
+        let after = json!({
+            "entities": [
+                {"id": "customer", "name": "Customer"},
+                {"id": "order", "name": "Order"}
+            ]
+        });
+
+        let differences = compare_values(&[before, after]);
+
+        assert_eq!(
+            differences
+                .iter()
+                .map(|difference| difference.path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "$.entities.account",
+                "$.entities.customer",
+                "$.entities.order",
+                "$.entities[0].id",
+                "$.entities[0].name",
+                "$.entities[1].id",
+                "$.entities[1].name",
+            ]
+        );
+        assert!(differences[..3].iter().all(|difference| {
+            difference.values[0].is_some() && difference.values[1].is_none()
+        }));
+        assert!(differences[3..].iter().all(|difference| {
+            difference.values[0].is_none() && difference.values[1].is_some()
+        }));
+    }
+
+    #[test]
+    fn empty_containers_still_report_a_difference_when_missing() {
+        for value in [json!({}), json!([])] {
+            let differences = compare_pair_at_path("$", Some(&value), None);
+            assert_eq!(differences.len(), 1);
+            assert_eq!(differences[0].path, "$");
+            assert_eq!(differences[0].values[0], Some(value));
+        }
+
+        let object = json!({});
+        let array = json!([]);
+        assert!(compare_pair_at_path("$", Some(&object), Some(&object)).is_empty());
+        assert!(compare_pair_at_path("$", Some(&array), Some(&array)).is_empty());
+    }
+
+    #[test]
+    fn compares_arrays_and_replaced_container_types_recursively() {
         let values = [json!([1, 2]), json!([1, 3, 4]), json!({"items": true})];
 
         let differences = compare_values(&values);
 
-        assert_eq!(differences.len(), 1);
-        assert_eq!(differences[0].path, "$");
         assert_eq!(
-            differences[0].values,
-            vec![
-                Some(json!([1, 2])),
-                Some(json!([1, 3, 4])),
-                Some(json!({"items": true})),
-            ]
+            differences
+                .iter()
+                .map(|difference| difference.path.as_str())
+                .collect::<Vec<_>>(),
+            ["$.items", "$[0]", "$[1]", "$[2]"]
         );
+        assert_eq!(differences[0].values, vec![None, None, Some(json!(true))]);
+        assert_eq!(
+            differences[1].values,
+            vec![Some(json!(1)), Some(json!(1)), None]
+        );
+        assert_eq!(
+            differences[2].values,
+            vec![Some(json!(2)), Some(json!(3)), None]
+        );
+        assert_eq!(differences[3].values, vec![None, Some(json!(4)), None]);
     }
 
     #[test]

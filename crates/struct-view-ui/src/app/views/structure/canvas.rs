@@ -80,6 +80,10 @@ impl StructureView {
             return;
         };
         let mut clicked = None;
+        let mut expansion_requested = None;
+        let mut add_requested = None;
+        let mut edit_requested = false;
+        let mut delete_requested = false;
         let mut focused = None;
         for &(id, rect) in &self.layout.nodes {
             let rect = Rect::from_min_max(transform(rect.min), transform(rect.max));
@@ -97,13 +101,19 @@ impl StructureView {
                 },
                 Color32::from_rgb(23, 29, 40),
             );
-            let highlight =
-                self.all_selected || self.path.contains(&id) || self.matched_paths.contains(&id);
+            let highlight = self.all_selected
+                || self.path.contains(&id)
+                || self.matched_paths.contains(&id)
+                || self.selected_nodes.contains(&id);
             painter.rect_stroke(
                 rect,
                 5.0 * self.zoom,
                 Stroke::new(
-                    if id == self.selected { 3.0 } else { 1.5 },
+                    if self.selected_nodes.contains(&id) {
+                        3.0
+                    } else {
+                        1.5
+                    },
                     if highlight {
                         Color32::from_rgb(255, 198, 64)
                     } else {
@@ -112,21 +122,10 @@ impl StructureView {
                 ),
                 StrokeKind::Inside,
             );
-            let heading = format!(
-                "{} {}",
-                if node.children.is_empty() {
-                    ""
-                } else if self.collapsed.contains(&id) {
-                    "+"
-                } else {
-                    "-"
-                },
-                shorten(&node.key, 24)
-            );
             painter.text(
                 rect.center_top() + Vec2::new(0.0, 8.0 * self.zoom),
                 Align2::CENTER_TOP,
-                heading,
+                shorten(&node.key, 24),
                 FontId::proportional(14.0 * self.zoom),
                 KEY_COLOR,
             );
@@ -150,7 +149,7 @@ impl StructureView {
                 egui::WidgetInfo::selected(
                     egui::WidgetType::Button,
                     true,
-                    self.all_selected || id == self.selected,
+                    self.all_selected || self.selected_nodes.contains(&id),
                     format!(
                         "{}: {} ({}, {})",
                         node.key,
@@ -167,6 +166,113 @@ impl StructureView {
                 });
             }
             let hit = hit.on_hover_text(format!("{}: {}\n{}", node.key, node.value, node.path));
+            hit.context_menu(|ui| {
+                if !self.editing || !self.can_edit() || node.parent.is_none() {
+                    return;
+                }
+                if ui.button(locale.text(TextKey::EditField)).clicked() {
+                    clicked = Some(id);
+                    edit_requested = true;
+                    ui.close();
+                }
+                if ui
+                    .button(locale.text(TextKey::DeleteSelectedStructures))
+                    .clicked()
+                {
+                    clicked = Some(id);
+                    delete_requested = true;
+                    ui.close();
+                }
+                if matches!(node.kind, Kind::Object | Kind::Array) {
+                    let label = if node.kind == Kind::Object {
+                        TextKey::AddField
+                    } else {
+                        TextKey::AddElement
+                    };
+                    if ui.button(locale.text(label)).clicked() {
+                        clicked = Some(id);
+                        add_requested = Some(id);
+                        ui.close();
+                    }
+                }
+            });
+            if !node.children.is_empty() {
+                let button_size = 18.0 * self.zoom;
+                let button_rect = Rect::from_center_size(
+                    rect.left_top() + Vec2::new(button_size * 0.75, button_size * 0.75),
+                    Vec2::splat(button_size),
+                );
+                let button_color = if self.collapsed.contains(&id) {
+                    ui.visuals().widgets.inactive.bg_fill
+                } else {
+                    ui.visuals().widgets.hovered.bg_fill
+                };
+                painter.circle_filled(button_rect.center(), button_size * 0.48, button_color);
+                let center = button_rect.center();
+                let arm = button_size * 0.22;
+                let stroke = Stroke::new((button_size * 0.1).max(1.0), ui.visuals().text_color());
+                painter.line_segment([center - Vec2::X * arm, center + Vec2::X * arm], stroke);
+                if self.collapsed.contains(&id) {
+                    painter.line_segment([center - Vec2::Y * arm, center + Vec2::Y * arm], stroke);
+                }
+                let expand = ui.interact(
+                    button_rect.intersect(viewport),
+                    ui.id().with(("structure-expand-node", id)),
+                    Sense::click(),
+                );
+                expand.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        locale.text(TextKey::StructureToggle),
+                    )
+                });
+                if expand
+                    .on_hover_text(locale.text(TextKey::StructureToggle))
+                    .clicked()
+                {
+                    expansion_requested = Some(id);
+                    response.request_focus();
+                }
+            }
+            if self.can_edit() && self.editing && matches!(node.kind, Kind::Object | Kind::Array) {
+                let button_size = 18.0 * self.zoom;
+                let button_rect = Rect::from_center_size(
+                    rect.right_top() + Vec2::new(-button_size * 0.7, button_size * 0.7),
+                    Vec2::splat(button_size),
+                );
+                painter.circle_filled(
+                    button_rect.center(),
+                    button_size * 0.48,
+                    ui.visuals().widgets.active.bg_fill,
+                );
+                let center = button_rect.center();
+                let arm = button_size * 0.22;
+                let stroke = Stroke::new((button_size * 0.1).max(1.0), ui.visuals().text_color());
+                painter.line_segment([center - Vec2::X * arm, center + Vec2::X * arm], stroke);
+                painter.line_segment([center - Vec2::Y * arm, center + Vec2::Y * arm], stroke);
+                let add = ui.interact(
+                    button_rect.intersect(viewport),
+                    ui.id().with(("structure-add-node", id)),
+                    Sense::click(),
+                );
+                add.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        locale.text(if node.kind == Kind::Object {
+                            TextKey::AddField
+                        } else {
+                            TextKey::AddElement
+                        }),
+                    )
+                });
+                if add.clicked() {
+                    clicked = Some(id);
+                    add_requested = Some(id);
+                    response.request_focus();
+                }
+            }
             if hit.has_focus() {
                 focused = Some(id);
             }
@@ -176,12 +282,30 @@ impl StructureView {
             }
         }
         if let Some(id) = clicked {
-            self.select(id, false);
-            self.toggle(id);
+            let is_action = edit_requested || delete_requested || add_requested.is_some();
+            if is_action {
+                self.select(id, false);
+            } else {
+                self.select_canvas_node(
+                    id,
+                    ui.input(|input| input.modifiers.command || input.modifiers.ctrl),
+                );
+            }
             ui.ctx().request_repaint();
         }
-        if let Some(id) = focused {
+        if let Some(id) = add_requested {
             self.select(id, false);
+            self.open_add_dialog();
+        } else if edit_requested {
+            self.open_edit_dialog();
+        } else if delete_requested {
+            self.delete_selected(locale);
+        }
+        if let Some(id) = expansion_requested {
+            self.toggle_expansion(id);
+        }
+        if let Some(id) = focused {
+            self.selected = id;
             self.keyboard(ui);
             if ui.input(|i| {
                 [
@@ -197,6 +321,11 @@ impl StructureView {
             }) {
                 response.request_focus();
             }
+        }
+        if response.clicked() && clicked.is_none() && !super::super::diagram::keyboard_activate(ui)
+        {
+            self.selected_nodes.clear();
+            self.source_preview = None;
         }
     }
 }

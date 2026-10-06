@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use super::diagram::{DiagramAction, export_controls, view_controls};
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use struct_view_core::parser::JsonValueType;
 use struct_view_core::parser::{DataFormat, ParseError};
 use struct_view_core::search::{SearchOptions, SearchState};
 use struct_view_core::structure::{Document, Kind, Node};
@@ -12,6 +13,7 @@ use struct_view_core::structure::{Document, Kind, Node};
 use super::super::i18n::{Locale, TextKey};
 
 mod canvas;
+mod edit;
 mod export;
 mod layout;
 mod navigation;
@@ -61,9 +63,11 @@ pub(in crate::app) struct StructureView {
     source: String,
     source_open: bool,
     source_changed: bool,
+    unsaved: bool,
     format: Option<DataFormat>,
     imported_path: Option<PathBuf>,
     origin: Option<PathBuf>,
+    pending_origin: Option<PathBuf>,
     pending: Option<Receiver<ParseResult>>,
     export_pending: Option<Receiver<Result<(), String>>>,
     document: Option<Document>,
@@ -79,6 +83,7 @@ pub(in crate::app) struct StructureView {
     canvas_size: Vec2,
     fit: bool,
     selected: usize,
+    selected_nodes: HashSet<usize>,
     path: HashSet<usize>,
     query: String,
     matches: Vec<usize>,
@@ -88,6 +93,30 @@ pub(in crate::app) struct StructureView {
     search_dirty: bool,
     all_selected: bool,
     center_selected: bool,
+    editing: bool,
+    edit_dialog: Option<StructureEditDialog>,
+    source_show_full: bool,
+    source_preview: Option<(Vec<usize>, Vec<Result<String, String>>)>,
+}
+
+struct StructureEditDialog {
+    target: StructureEditTarget,
+    key: String,
+    value_type: JsonValueType,
+    value: String,
+    error: Option<String>,
+}
+
+enum StructureEditTarget {
+    Add {
+        parent_path: String,
+        is_object: bool,
+    },
+    Edit {
+        path: String,
+        key_editable: bool,
+        current_type: JsonValueType,
+    },
 }
 
 impl Default for StructureView {
@@ -96,9 +125,11 @@ impl Default for StructureView {
             source: String::new(),
             source_open: false,
             source_changed: false,
+            unsaved: false,
             format: None,
             imported_path: None,
             origin: None,
+            pending_origin: None,
             pending: None,
             export_pending: None,
             document: None,
@@ -114,6 +145,7 @@ impl Default for StructureView {
             canvas_size: Vec2::ZERO,
             fit: true,
             selected: 0,
+            selected_nodes: HashSet::new(),
             path: HashSet::new(),
             query: String::new(),
             matches: Vec::new(),
@@ -123,6 +155,10 @@ impl Default for StructureView {
             search_dirty: true,
             all_selected: false,
             center_selected: false,
+            editing: false,
+            edit_dialog: None,
+            source_show_full: false,
+            source_preview: None,
         }
     }
 }
@@ -155,6 +191,7 @@ impl StructureView {
         self.poll(ui, locale);
         self.ensure_layout();
         self.show_source_window(ui.ctx(), locale);
+        self.show_edit_dialog(ui.ctx(), locale);
         if self.pending.is_some() || self.export_pending.is_some() {
             ui.spinner();
         }

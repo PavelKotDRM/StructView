@@ -50,10 +50,20 @@ impl StructViewApp {
     /// Обработать горячие клавиши команд редактирования и работы со структурами.
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if self.visualization == VisualizationMode::Structure {
-            if !ctx.egui_wants_keyboard_input()
-                && ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F))
-            {
+            if ctx.egui_wants_keyboard_input() {
+                return;
+            }
+            let (find, delete) = ctx.input(|input| {
+                (
+                    input.modifiers.command && input.key_pressed(egui::Key::F),
+                    input.key_pressed(egui::Key::Delete),
+                )
+            });
+            if find {
                 self.search_window_open = true;
+            }
+            if delete && self.structure_view.can_delete_selected() {
+                self.structure_view.delete_selected(self.locale);
             }
             return;
         }

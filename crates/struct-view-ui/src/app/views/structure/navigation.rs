@@ -22,7 +22,12 @@ impl StructureView {
 
     pub(super) fn select(&mut self, id: usize, reveal: bool) {
         self.all_selected = false;
+        if self.selected != id {
+            self.source_preview = None;
+        }
         self.selected = id;
+        self.selected_nodes.clear();
+        self.selected_nodes.insert(id);
         self.path.clear();
         if let Some(doc) = &self.document {
             let mut cursor = Some(id);
@@ -49,7 +54,43 @@ impl StructureView {
         }
     }
 
+    pub(super) fn select_canvas_node(&mut self, id: usize, additive: bool) {
+        self.all_selected = false;
+        self.selected = id;
+        self.source_preview = None;
+        if additive {
+            if !self.selected_nodes.insert(id) {
+                self.selected_nodes.remove(&id);
+                if !self.selected_nodes.contains(&id)
+                    && let Some(&next) = self.selected_nodes.iter().min()
+                {
+                    self.selected = next;
+                }
+            }
+        } else if self.selected_nodes.len() == 1 && self.selected_nodes.contains(&id) {
+            self.selected_nodes.clear();
+        } else {
+            self.selected_nodes.clear();
+            self.selected_nodes.insert(id);
+        }
+        self.path.clear();
+        if self.selected_nodes.contains(&self.selected)
+            && let Some(doc) = &self.document
+        {
+            let mut cursor = Some(self.selected);
+            while let Some(id) = cursor {
+                self.path.insert(id);
+                cursor = doc.nodes[id].parent;
+            }
+        }
+    }
+
     pub(super) fn toggle(&mut self, id: usize) {
+        self.selected = id;
+        self.toggle_expansion(id);
+    }
+
+    pub(super) fn toggle_expansion(&mut self, id: usize) {
         if self
             .document
             .as_ref()
@@ -60,7 +101,6 @@ impl StructureView {
         if !self.collapsed.remove(&id) {
             self.collapsed.insert(id);
         }
-        self.select(id, false);
         self.dirty = true;
         self.center_selected = true;
     }

@@ -41,8 +41,7 @@ mod history;
 mod models;
 mod save;
 
-#[cfg(test)]
-pub(super) use dialog_helpers::field_value_types;
+pub(super) use dialog_helpers::{default_field_value, field_value_types};
 pub(super) use models::{
     AppMode, ComparisonDocument, ComparisonState, FieldDialog, FieldDialogTarget, FileState,
     LoadedDocument, PairDifferenceCache, PendingInlineEdit, PreviousDocumentState, Toast,

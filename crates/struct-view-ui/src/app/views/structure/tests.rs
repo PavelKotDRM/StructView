@@ -6,6 +6,7 @@ fn view(text: &str) -> StructureView {
     let mut view = StructureView::default();
     view.reset(&document);
     view.document = Some(document);
+    view.source = text.to_string();
     view.source_open = false;
     view
 }
@@ -147,6 +148,42 @@ fn keyboard_changes_selection_and_expansion() {
         .drop_without_applying_deltas();
     assert!(view.collapsed.contains(&1));
     assert_eq!(view.path, HashSet::from([0, 1]));
+}
+
+#[test]
+fn dedicated_container_button_expands_it_in_edit_mode() {
+    let mut view = view(r#"{"a":{"b":1}}"#);
+    view.editing = true;
+    view.collapsed.insert(1);
+    view.dirty = true;
+    let context = egui::Context::default();
+    context.enable_accesskit();
+    let output = frame(&mut view, &context, Vec::new());
+    let bounds = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .map(|(_, node)| node)
+        .find(|node| node.label().is_some_and(|label| label.starts_with("a:")))
+        .unwrap()
+        .bounds()
+        .unwrap();
+    let position = Pos2::new(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    let expand_position = Pos2::new(bounds.x0 as f32 + 13.5, bounds.y0 as f32 + 13.5);
+    output.drop_without_applying_deltas();
+
+    frame(&mut view, &context, click_at(position)).drop_without_applying_deltas();
+    assert!(view.collapsed.contains(&1));
+    assert_eq!(view.selected, 1);
+
+    frame(&mut view, &context, click_at(expand_position)).drop_without_applying_deltas();
+    assert!(!view.collapsed.contains(&1));
 }
 
 #[test]
@@ -298,7 +335,6 @@ fn canvas_omits_status_selection_legend_and_help() {
         TextKey::Open,
         TextKey::StructureParse,
         TextKey::GraphFit,
-        TextKey::StructureToggle,
         TextKey::DiagramExport,
     ] {
         assert!(
@@ -800,5 +836,294 @@ fn both_diagrams_use_identical_menu_controls_and_shared_search_window() {
             label_center(&output, Locale::English.text(key));
         }
         output.drop_without_applying_deltas();
+    }
+}
+
+#[test]
+fn edit_mode_updates_selected_field_and_marks_source_unsaved() {
+    let mut view = view(r#"{"name":"old"}"#);
+    view.selected = 1;
+    view.open_edit_dialog();
+    assert!(view.edit_dialog.is_some(), "{:?}", view.error);
+    let mut dialog = view.edit_dialog.take().unwrap();
+    dialog.key = "title".into();
+    dialog.value = "new".into();
+
+    view.apply_edit_dialog(&dialog).unwrap();
+
+    let document = view.document.as_ref().unwrap();
+    assert_eq!(document.nodes[1].key, "title");
+    assert_eq!(document.nodes[1].value, "new");
+    assert!(view.source.contains("\"title\""));
+    assert!(view.unsaved);
+    assert!(!view.source_changed);
+}
+
+#[test]
+fn selected_structure_can_be_deleted_and_root_is_protected() {
+    let mut view = view(r#"{"keep":1,"remove":{"nested":true}}"#);
+    assert!(!view.can_delete_selected());
+    view.editing = true;
+    view.selected = 2;
+    view.selected_nodes = HashSet::from([2]);
+    assert!(view.can_delete_selected());
+
+    view.delete_selected(Locale::English);
+
+    let document = view.document.as_ref().unwrap();
+    assert_eq!(document.nodes.len(), 2);
+    assert_eq!(document.nodes[1].key, "keep");
+    assert!(!view.source.contains("remove"));
+    assert!(view.unsaved);
+    assert_eq!(view.notice.as_deref(), Some("Structures deleted: 1"));
+
+    view.selected = 0;
+    view.selected_nodes = HashSet::from([0]);
+    assert!(!view.can_delete_selected());
+    view.delete_selected(Locale::English);
+    assert_eq!(
+        view.error.as_deref(),
+        Some(Locale::English.text(TextKey::CannotDeleteRoot))
+    );
+    assert_eq!(view.document.as_ref().unwrap().nodes.len(), 2);
+}
+
+#[test]
+fn multiple_selected_structures_can_be_deleted_together() {
+    let mut view = view(r#"{"first":1,"second":2,"keep":3}"#);
+    view.editing = true;
+    view.selected_nodes = HashSet::from([1, 2]);
+
+    view.delete_selected(Locale::English);
+
+    let document = view.document.as_ref().unwrap();
+    assert_eq!(document.nodes.len(), 2);
+    assert_eq!(document.nodes[1].key, "keep");
+    assert_eq!(view.notice.as_deref(), Some("Structures deleted: 2"));
+}
+
+#[test]
+fn source_text_editor_highlights_syntax_for_supported_data_formats() {
+    let colors = super::super::super::theme::SyntaxColors::new(&egui::Visuals::dark());
+    let cases = [
+        (
+            DataFormat::Json,
+            r#"{"name":"Ada","age":42,"enabled":true}"#,
+            vec![
+                ("\"name\"", colors.key),
+                ("\"Ada\"", colors.string),
+                ("42", colors.number),
+                ("true", colors.boolean),
+            ],
+        ),
+        (
+            DataFormat::Yaml,
+            "name: Ada\ncount: 3 # note",
+            vec![
+                ("name", colors.key),
+                ("Ada", colors.string),
+                ("3", colors.number),
+                ("# note", colors.comment),
+            ],
+        ),
+        (
+            DataFormat::Toml,
+            "name = 'Ada'\nactive = true",
+            vec![
+                ("name", colors.key),
+                ("'Ada'", colors.string),
+                ("true", colors.boolean),
+            ],
+        ),
+    ];
+
+    for (format, text, expected) in cases {
+        let job = super::StructureView::source_syntax_job(text, format, colors, 14.0);
+        for (token, color) in expected {
+            let start = text.find(token).unwrap();
+            let section = job
+                .sections
+                .iter()
+                .find(|section| {
+                    section.byte_range.start <= egui::text::ByteIndex(start)
+                        && section.byte_range.end >= egui::text::ByteIndex(start + token.len())
+                })
+                .unwrap_or_else(|| panic!("No syntax section for {token:?} in {text:?}"));
+            assert_eq!(section.format.color, color, "wrong color for {token:?}");
+        }
+    }
+}
+
+#[test]
+fn source_window_preview_tracks_selected_values_and_includes_descendants() {
+    let mut view =
+        view(r#"{"keep":0,"resource":{"id":7,"items":[{"name":"one"},{"name":"two"}]}}"#);
+    let resource = view
+        .document
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .position(|node| node.key == "resource")
+        .unwrap();
+    view.select(resource, false);
+
+    let preview = view
+        .selected_source_preview(resource, DataFormat::Json)
+        .unwrap();
+    assert!(preview.contains("\"id\": 7"));
+    assert!(preview.contains("\"items\""));
+    assert!(preview.contains("\"name\": \"one\""));
+    assert!(preview.contains("\"name\": \"two\""));
+    assert!(!preview.contains("\"keep\""));
+
+    let id = view
+        .document
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .position(|node| node.key == "id")
+        .unwrap();
+    view.select(id, false);
+    assert_eq!(
+        view.selected_source_preview(id, DataFormat::Json).unwrap(),
+        "{\n  \"id\": 7\n}"
+    );
+}
+
+#[test]
+fn structure_canvas_selection_matches_graph_toggle_and_additive_behavior() {
+    let mut view = view(r#"{"first":{"nested":1},"second":2}"#);
+    let first = 1;
+    let second = 3;
+
+    view.select_canvas_node(first, false);
+    assert_eq!(view.selected_nodes, HashSet::from([first]));
+    assert!(!view.collapsed.contains(&first));
+    view.select_canvas_node(first, false);
+    assert!(view.selected_nodes.is_empty());
+
+    view.select_canvas_node(first, false);
+    view.select_canvas_node(second, true);
+    assert_eq!(view.selected_nodes, HashSet::from([first, second]));
+    view.select_canvas_node(first, true);
+    assert_eq!(view.selected_nodes, HashSet::from([second]));
+    view.select_canvas_node(first, false);
+    assert_eq!(view.selected_nodes, HashSet::from([first]));
+}
+
+#[test]
+fn dedicated_expand_control_toggles_children_without_changing_selection() {
+    let mut view = view(r#"{"first":{"nested":1},"second":2}"#);
+    let first = 1;
+    let second = 3;
+    view.select_canvas_node(second, false);
+    view.collapsed.insert(first);
+
+    view.toggle_expansion(first);
+
+    assert!(!view.collapsed.contains(&first));
+    assert_eq!(view.selected_nodes, HashSet::from([second]));
+    assert_eq!(view.selected, second);
+
+    view.toggle_expansion(first);
+    assert!(view.collapsed.contains(&first));
+    assert_eq!(view.selected_nodes, HashSet::from([second]));
+}
+#[test]
+fn plus_constructor_adds_typed_fields_and_array_items() {
+    let mut view = view(r#"{"items":[]}"#);
+    view.open_add_dialog();
+    assert!(view.edit_dialog.is_some(), "{:?}", view.error);
+    let mut dialog = view.edit_dialog.take().unwrap();
+    dialog.key = "count".into();
+    dialog.value_type = JsonValueType::Number;
+    dialog.value = "42".into();
+    view.apply_edit_dialog(&dialog).unwrap();
+    assert!(view.source.contains("\"count\": 42"));
+
+    view.selected = view
+        .document
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .position(|node| node.key == "items")
+        .unwrap();
+    view.open_add_dialog();
+    assert!(view.edit_dialog.is_some(), "{:?}", view.error);
+    let mut dialog = view.edit_dialog.take().unwrap();
+    dialog.value_type = JsonValueType::Bool;
+    dialog.value = "true".into();
+    view.apply_edit_dialog(&dialog).unwrap();
+
+    let document = view.document.as_ref().unwrap();
+    let added = document.nodes.iter().find(|node| node.key == "0").unwrap();
+    assert_eq!(added.value, "true");
+}
+
+#[test]
+fn edits_reject_ambiguous_duplicate_keys() {
+    let mut view = view(r#"{"same":1,"same":2}"#);
+    view.selected = 2;
+    view.open_edit_dialog();
+    assert!(view.edit_dialog.is_none());
+    assert!(
+        view.error
+            .as_deref()
+            .is_some_and(|error| error.to_lowercase().contains("повторяется"))
+    );
+}
+
+#[test]
+fn saving_structure_edits_writes_the_source_and_clears_unsaved_state() {
+    let mut view = view(r#"{"name":"old"}"#);
+    view.source = r#"{"name":"new"}"#.into();
+    view.unsaved = true;
+    let path = std::env::temp_dir().join(format!(
+        "structview-structure-save-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+
+    view.write_source(&path, Locale::English);
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), view.source);
+    assert_eq!(view.origin.as_deref(), Some(path.as_path()));
+    assert!(!view.unsaved);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn structure_constructor_edits_yaml_and_toml_documents() {
+    for (source, format) in [
+        ("name: old\n", DataFormat::Yaml),
+        ("name = \"old\"\n", DataFormat::Toml),
+    ] {
+        let document = struct_view_core::structure::parse(source, Some(format)).unwrap();
+        let mut view = StructureView::default();
+        view.reset(&document);
+        view.document = Some(document);
+        view.source = source.to_string();
+        view.format = Some(format);
+        view.open_add_dialog();
+        let mut dialog = view.edit_dialog.take().unwrap();
+        dialog.key = "count".into();
+        dialog.value_type = JsonValueType::Number;
+        dialog.value = "7".into();
+
+        view.apply_edit_dialog(&dialog).unwrap();
+
+        let edited = struct_view_core::structure::parse(&view.source, Some(format)).unwrap();
+        assert!(
+            edited
+                .nodes
+                .iter()
+                .any(|node| node.key == "count" && node.value == "7")
+        );
     }
 }

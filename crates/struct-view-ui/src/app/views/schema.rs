@@ -112,22 +112,20 @@ pub(in crate::app) fn show_schema(
                     RichText::new(required).color(required_color),
                 )
                 .on_hover_text(required);
-                let constraints = if row.constraints.is_empty() {
-                    "—"
-                } else {
-                    &row.constraints
-                };
+                let (constraints, constraints_help) =
+                    format_schema_constraints(&row.constraints, locale);
                 column_label(
                     ui,
                     constraints_width,
-                    RichText::new(single_line_text(constraints)).monospace(),
+                    RichText::new(single_line_text(&constraints)),
                 )
-                .on_hover_text(&row.constraints);
+                .on_hover_text(constraints_help);
                 let reference = row.reference.as_deref().unwrap_or("—");
+                let reference_summary = schema_reference_summary(reference);
                 column_label(
                     ui,
                     reference_width,
-                    RichText::new(single_line_text(reference))
+                    RichText::new(single_line_text(&reference_summary))
                         .color(colors.matched)
                         .monospace(),
                 )
@@ -135,6 +133,255 @@ pub(in crate::app) fn show_schema(
             });
         },
     );
+}
+
+pub(super) fn schema_reference_summary(reference: &str) -> String {
+    const MAX_CHARS: usize = 28;
+    let reference = reference.trim();
+    if reference.chars().count() <= MAX_CHARS {
+        return reference.to_string();
+    }
+
+    let target = reference.rsplit('/').next().unwrap_or(reference);
+    let target_chars = target.chars().count();
+    if target_chars + 2 <= MAX_CHARS {
+        return format!("…/{target}");
+    }
+
+    let suffix = target
+        .chars()
+        .rev()
+        .take(MAX_CHARS - 2)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    format!("…/{suffix}")
+}
+
+pub(super) fn format_schema_constraints(constraints: &str, locale: Locale) -> (String, String) {
+    if constraints.is_empty() {
+        return ("—".to_string(), String::new());
+    }
+    let Ok(serde_json::Value::Object(object)) =
+        serde_json::from_str::<serde_json::Value>(constraints)
+    else {
+        if let Some(counts) = constraints
+            .strip_prefix("observed in ")
+            .and_then(|value| value.strip_suffix(" sample object(s)"))
+            .and_then(|value| value.split_once('/'))
+        {
+            let (seen, total) = counts;
+            let total = total.trim_end_matches(|character: char| !character.is_ascii_digit());
+            let summary = match locale {
+                Locale::Russian => format!(
+                    "{}: {seen} из {total} {}",
+                    locale.text(TextKey::SchemaConstraintObserved),
+                    struct_view_core::parser::plural_ru(
+                        total.parse().unwrap_or_default(),
+                        "объект",
+                        "объекта",
+                        "объектов"
+                    )
+                ),
+                Locale::English => format!(
+                    "{}: {seen} of {total} samples",
+                    locale.text(TextKey::SchemaConstraintObserved)
+                ),
+            };
+            return (summary, constraints.to_string());
+        }
+        return (constraints.to_string(), constraints.to_string());
+    };
+
+    let summary_items = object
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{}: {}",
+                constraint_label(key, locale),
+                constraint_value(key, value, locale, false)
+            )
+        })
+        .collect::<Vec<_>>();
+    let details = object
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{}: {}",
+                constraint_label(key, locale),
+                constraint_value(key, value, locale, true)
+            )
+        })
+        .collect::<Vec<_>>();
+    let summary = summary_items
+        .iter()
+        .take(2)
+        .cloned()
+        .chain((details.len() > 2).then(|| {
+            format!(
+                "+{} {}",
+                details.len() - 2,
+                locale.text(TextKey::SchemaConstraintsMore)
+            )
+        }))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let help = details.join("\n");
+    (summary, help)
+}
+
+fn constraint_label(key: &str, locale: Locale) -> String {
+    locale
+        .text(match key {
+            "format" | "contentMediaType" => TextKey::SchemaConstraintFormat,
+            "enum" => TextKey::SchemaConstraintAllowedValues,
+            "const" => TextKey::SchemaConstraintConstant,
+            "default" => TextKey::SchemaConstraintDefault,
+            "minimum" => TextKey::SchemaConstraintMinimum,
+            "maximum" => TextKey::SchemaConstraintMaximum,
+            "exclusiveMinimum" => TextKey::SchemaConstraintExclusiveMinimum,
+            "exclusiveMaximum" => TextKey::SchemaConstraintExclusiveMaximum,
+            "multipleOf" => TextKey::SchemaConstraintMultipleOf,
+            "minLength" => TextKey::SchemaConstraintMinLength,
+            "maxLength" => TextKey::SchemaConstraintMaxLength,
+            "pattern" => TextKey::SchemaConstraintPattern,
+            "minItems" | "minContains" => TextKey::SchemaConstraintMinItems,
+            "maxItems" | "maxContains" => TextKey::SchemaConstraintMaxItems,
+            "uniqueItems" => TextKey::SchemaConstraintUniqueItems,
+            "minProperties" => TextKey::SchemaConstraintMinProperties,
+            "maxProperties" => TextKey::SchemaConstraintMaxProperties,
+            "additionalProperties"
+            | "unevaluatedProperties"
+            | "unevaluatedItems"
+            | "contentSchema" => TextKey::SchemaConstraintAdditionalProperties,
+            "required" | "dependentRequired" => TextKey::SchemaConstraintRequiredProperties,
+            "allOf" | "anyOf" | "oneOf" | "not" | "if" | "then" | "else" | "contains"
+            | "propertyNames" | "patternProperties" | "dependentSchemas" | "prefixItems" => {
+                TextKey::SchemaConstraintConditional
+            }
+            "deprecated" => TextKey::SchemaConstraintDeprecated,
+            "readOnly" => TextKey::SchemaConstraintReadOnly,
+            "writeOnly" => TextKey::SchemaConstraintWriteOnly,
+            "nullable" => TextKey::SchemaConstraintNullable,
+            "description" | "title" | "examples" | "externalDocs" | "discriminator" | "xml"
+            | "contentEncoding" => TextKey::SchemaConstraintNote,
+            _ => return key.to_string(),
+        })
+        .to_string()
+}
+
+fn constraint_value(key: &str, value: &serde_json::Value, locale: Locale, full: bool) -> String {
+    use serde_json::Value;
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Bool(value)
+            if matches!(
+                key,
+                "additionalProperties"
+                    | "unevaluatedProperties"
+                    | "unevaluatedItems"
+                    | "deprecated"
+                    | "readOnly"
+                    | "writeOnly"
+                    | "nullable"
+                    | "uniqueItems"
+            ) =>
+        {
+            match (locale, value) {
+                (Locale::Russian, true) => "да".to_string(),
+                (Locale::Russian, false) => "нет".to_string(),
+                (Locale::English, true) => "yes".to_string(),
+                (Locale::English, false) => "no".to_string(),
+            }
+        }
+        Value::Array(values) if key == "enum" => {
+            let total = values.len();
+            let shown = if full { total } else { total.min(3) };
+            let shown_values = values
+                .iter()
+                .take(shown)
+                .map(constraint_scalar)
+                .collect::<Vec<_>>();
+            let suffix = if shown < total {
+                format!(" … +{}", total - shown)
+            } else {
+                String::new()
+            };
+            format!("{}{}", shown_values.join(", "), suffix)
+        }
+        Value::Array(values) if key == "required" && !full => values.len().to_string(),
+        Value::Array(values) if matches!(key, "required" | "dependentRequired") => {
+            format_constraint_list(values, full)
+        }
+        Value::Array(values) if full => Value::Array(values.clone()).to_string(),
+        Value::Array(values) => format!(
+            "{} {}",
+            values.len(),
+            if locale == Locale::Russian {
+                struct_view_core::parser::plural_ru(
+                    values.len(),
+                    "вариант",
+                    "варианта",
+                    "вариантов",
+                )
+            } else if values.len() == 1 {
+                "option"
+            } else {
+                "options"
+            }
+        ),
+        Value::Object(object) => format!(
+            "{}",
+            if full {
+                Value::Object(object.clone()).to_string()
+            } else {
+                format!(
+                    "{} {}",
+                    object.len(),
+                    if locale == Locale::Russian {
+                        struct_view_core::parser::plural_ru(
+                            object.len(),
+                            "условие",
+                            "условия",
+                            "условий",
+                        )
+                    } else if object.len() == 1 {
+                        "condition"
+                    } else {
+                        "conditions"
+                    }
+                )
+            }
+        ),
+        _ => value.to_string(),
+    }
+}
+
+fn format_constraint_list(values: &[serde_json::Value], full: bool) -> String {
+    let shown = if full {
+        values.len()
+    } else {
+        values.len().min(3)
+    };
+    let items = values
+        .iter()
+        .take(shown)
+        .map(constraint_scalar)
+        .collect::<Vec<_>>();
+    let suffix = if shown < values.len() {
+        format!(" … +{}", values.len() - shown)
+    } else {
+        String::new()
+    };
+    format!("{}{}", items.join(", "), suffix)
+}
+
+fn constraint_scalar(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(value) => value.clone(),
+        _ => value.to_string(),
+    }
 }
 
 fn schema_source_label(source: SchemaSource, locale: Locale) -> &'static str {

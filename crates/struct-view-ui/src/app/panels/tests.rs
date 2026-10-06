@@ -233,7 +233,10 @@ fn comparison_and_diff_keep_long_values_in_single_line_columns() {
 
     fn collect_long_values(shape: &egui::epaint::Shape, values: &mut Vec<(f32, usize)>) {
         match shape {
-            egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with("\"VV") => {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text.starts_with("\"VV")
+                    || text.galley.job.text.starts_with("VV") =>
+            {
                 values.push((text.galley.rect.width(), text.galley.rows.len()));
             }
             egui::epaint::Shape::Vec(shapes) => {

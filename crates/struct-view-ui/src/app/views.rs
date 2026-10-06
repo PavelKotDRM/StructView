@@ -34,6 +34,8 @@ use diff::{PairChange, document_label_for_path, pair_change};
 pub(super) use diff::{
     comparison_column_width, comparison_value_color, show_diff, show_difference_legend,
 };
+#[cfg(test)]
+pub(super) use diff::{display_diff_value, human_diff_path};
 pub(super) use graph::headless_graph_image as graph_image_for_headless;
 pub(super) use graph::headless_graph_image_with_progress as graph_image_with_progress_for_headless;
 pub(super) use graph::{GraphCalculationState, export_graph_image, show_graph};

@@ -34,7 +34,7 @@ pub(in crate::app) fn field_value_types(
     types
 }
 
-pub(super) fn default_field_value(value_type: &JsonValueType) -> String {
+pub(in crate::app) fn default_field_value(value_type: &JsonValueType) -> String {
     match value_type {
         JsonValueType::Bool => "true".to_string(),
         JsonValueType::String

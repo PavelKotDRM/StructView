@@ -1,8 +1,9 @@
 use super::{
-    PairChange, comparison_column_width, comparison_value_color, document_label_for_path,
-    pair_change,
+    PairChange, comparison_column_width, comparison_value_color, display_diff_value,
+    document_label_for_path, human_diff_path, pair_change,
 };
 
+use super::super::i18n::{Locale, TextKey};
 use super::super::theme::SyntaxColors;
 use egui::Color32;
 use serde_json::json;
@@ -13,6 +14,117 @@ fn diff_file_labels_include_format() {
     assert_eq!(
         document_label_for_path(std::path::Path::new("before.json"), DataFormat::Json),
         "before.json (JSON)"
+    );
+}
+
+#[test]
+fn schema_constraints_are_localized_summarized_and_have_full_details() {
+    let constraints = json!({
+        "format": "email",
+        "minLength": 3,
+        "maxLength": 80,
+        "enum": ["one", "two", "three", "four"],
+        "pattern": "^[a-z]+$"
+    })
+    .to_string();
+
+    let (summary, details) =
+        super::schema::format_schema_constraints(&constraints, Locale::Russian);
+    assert!(summary.contains("Допустимые значения: one, two, three … +1"));
+    assert!(summary.contains("Формат: email"));
+    assert!(summary.contains("+3 ещё"));
+    assert!(details.contains("Мин. длина: 3"));
+    assert!(details.contains("Макс. длина: 80"));
+    assert!(details.contains("Шаблон: ^[a-z]+$"));
+    assert!(details.contains("Допустимые значения: one, two, three, four"));
+
+    let (summary, _) = super::schema::format_schema_constraints(&constraints, Locale::English);
+    assert!(summary.contains("Allowed values"));
+    assert!(summary.contains("Format: email"));
+
+    let (summary, details) = super::schema::format_schema_constraints(
+        "observed in 2/3 sample object(s)",
+        Locale::Russian,
+    );
+    assert_eq!(summary, "Наблюдалось в примерах: 2 из 3 объекта");
+    assert_eq!(details, "observed in 2/3 sample object(s)");
+}
+
+#[test]
+fn schema_required_fields_use_a_compact_summary_and_keep_the_full_list() {
+    let constraints = json!({
+        "required": [
+            "id",
+            "resource_type",
+            "resource_id",
+            "created_at",
+            "updated_at",
+            "status",
+            "owner_id"
+        ]
+    })
+    .to_string();
+
+    let (summary, details) =
+        super::schema::format_schema_constraints(&constraints, Locale::Russian);
+    assert_eq!(summary, "Обязательные поля: 7");
+    assert_eq!(
+        details,
+        "Обязательные поля: id, resource_type, resource_id, created_at, updated_at, status, owner_id"
+    );
+}
+
+#[test]
+fn schema_references_keep_the_target_visible_when_paths_are_long() {
+    assert_eq!(
+        super::schema::schema_reference_summary("#/components/schemas/Pet"),
+        "#/components/schemas/Pet"
+    );
+    assert_eq!(
+        super::schema::schema_reference_summary(
+            "#/components/schemas/VeryLongResourceDefinitionName"
+        ),
+        "…/LongResourceDefinitionName"
+    );
+    assert_eq!(
+        super::schema::schema_reference_summary(
+            "#/components/schemas/AnExtremelyLongResourceDefinitionNameThatCannotFit"
+        ),
+        "…/efinitionNameThatCannotFit"
+    );
+}
+
+#[test]
+fn diff_paths_are_displayed_as_readable_breadcrumbs() {
+    assert_eq!(
+        human_diff_path("$.user.profile.name", Locale::Russian),
+        "user → profile → name"
+    );
+    assert_eq!(
+        human_diff_path("$[\"a-b\"][1]", Locale::Russian),
+        "a-b → Элемент 2"
+    );
+    assert_eq!(
+        human_diff_path("$", Locale::Russian),
+        Locale::Russian.text(TextKey::DiffRoot)
+    );
+    assert_eq!(human_diff_path("$.invalid[", Locale::English), "$.invalid[");
+}
+
+#[test]
+fn diff_values_use_readable_scalars_and_summarize_containers() {
+    assert_eq!(
+        display_diff_value(&json!("Hello"), Locale::English),
+        "Hello"
+    );
+    assert_eq!(display_diff_value(&json!(null), Locale::English), "null");
+    assert_eq!(
+        display_diff_value(&json!({"name":"Ada"}), Locale::English),
+        "Object (1 field)"
+    );
+    assert_eq!(
+        display_diff_value(&json!([1, 2]), Locale::Russian),
+        "Массив (2 элемента)"
     );
 }
 
@@ -32,6 +144,36 @@ fn pair_diff_classifies_missing_changed_and_unchanged_values() {
     let decimal_one: serde_json::Value = serde_json::from_str("1.00").unwrap();
     let decimal_two: serde_json::Value = serde_json::from_str("1.0").unwrap();
     assert_eq!(pair_change(Some(&decimal_one), Some(&decimal_two)), None);
+}
+
+#[test]
+fn pair_diff_displays_added_array_of_objects_as_field_level_changes() {
+    let before = json!({});
+    let after = json!({
+        "edges": [
+            {"contract": "SUP-001", "id": "e1", "relation": "supplies", "source": "a", "target": "b"},
+            {"contract": "SUPPORT-002", "id": "e2", "relation": "supports", "source": "a", "target": "b"},
+            {"contract": "LOG-003", "id": "e3", "relation": "transports", "source": "b", "target": "c"}
+        ]
+    });
+    let differences = struct_view_core::diff::compare_values(&[before, after]);
+
+    assert_eq!(differences.len(), 15);
+    assert!(
+        differences
+            .iter()
+            .any(|difference| difference.path == "$.edges[0].contract")
+    );
+    assert!(
+        differences
+            .iter()
+            .any(|difference| difference.path == "$.edges[2].relation")
+    );
+    assert!(
+        differences
+            .iter()
+            .all(|difference| { difference.values[0].is_none() && difference.values[1].is_some() })
+    );
 }
 
 #[test]
@@ -87,10 +229,188 @@ fn pair_diff_descends_into_containers_when_a_third_document_has_another_type() {
         })
         .drop_without_applying_deltas();
     let differences = &comparison.pair_cache.as_ref().unwrap().differences;
-    assert_eq!(differences.len(), 1);
+    assert_eq!(
+        differences
+            .iter()
+            .map(|difference| difference.path.as_str())
+            .collect::<Vec<_>>(),
+        ["$.items[0]", "$.items[1]", "$.unchanged", "$"]
+    );
+    assert_eq!(differences[0].values, vec![Some(json!(1)), None]);
+    assert_eq!(differences[1].values, vec![Some(json!(3)), None]);
+    assert_eq!(differences[2].values, vec![Some(json!(true)), None]);
+    assert_eq!(differences[3].values, vec![None, Some(json!(null))]);
+}
+
+#[test]
+fn pair_diff_compares_json_objects_stored_in_string_fields_as_structures() {
+    use super::super::state::{ComparisonDocument, ComparisonState};
+    use struct_view_core::diff::compare_values;
+
+    let left_text = serde_json::to_string(&json!({
+        "ab_test": "Эксперимент",
+        "account": "Учётная запись",
+        "api_key": "Ключ API",
+        "campaign": "Кампания"
+    }))
+    .unwrap();
+    let right_text = serde_json::to_string(&json!({
+        "ab_test": "Эксперимент",
+        "account": "Учётная запись",
+        "api_key": "Обновлённый ключ API",
+        "campaign": "Кампания",
+        "customer": "Покупатель"
+    }))
+    .unwrap();
+    let values = [json!(left_text), json!(right_text)];
+    let mut comparison = ComparisonState {
+        documents: (0..2)
+            .map(|index| ComparisonDocument {
+                path: format!("{index}.json").into(),
+                size_bytes: 0,
+                load_time_ms: 0,
+                format: DataFormat::Json,
+            })
+            .collect(),
+        differences: compare_values(&values),
+        left_index: 0,
+        right_index: 1,
+        pair_cache: None,
+        previous_document: None,
+    };
+
+    let context = egui::Context::default();
+    context
+        .run_ui(window_input(), |ui| {
+            super::show_diff(ui, &mut comparison, Locale::Russian);
+        })
+        .drop_without_applying_deltas();
+
+    let differences = &comparison.pair_cache.as_ref().unwrap().differences;
+    assert_eq!(differences.len(), 2);
+    assert_eq!(
+        differences
+            .iter()
+            .map(|difference| difference.path.as_str())
+            .collect::<Vec<_>>(),
+        ["$.api_key", "$.customer"]
+    );
     assert_eq!(
         differences[0].values,
-        vec![Some(values[1].clone()), Some(json!(null))]
+        vec![Some(json!("Ключ API")), Some(json!("Обновлённый ключ API"))]
+    );
+    assert_eq!(differences[1].values, vec![None, Some(json!("Покупатель"))]);
+}
+
+#[test]
+fn pair_diff_keeps_plain_or_invalid_json_strings_as_values() {
+    use super::super::state::{ComparisonDocument, ComparisonState};
+    use struct_view_core::diff::compare_values;
+
+    for values in [
+        [json!("old"), json!("new")],
+        [json!("{not valid json}"), json!("{still not valid}")],
+        [json!("1"), json!("2")],
+    ] {
+        let mut comparison = ComparisonState {
+            documents: (0..2)
+                .map(|index| ComparisonDocument {
+                    path: format!("{index}.json").into(),
+                    size_bytes: 0,
+                    load_time_ms: 0,
+                    format: DataFormat::Json,
+                })
+                .collect(),
+            differences: compare_values(&values),
+            left_index: 0,
+            right_index: 1,
+            pair_cache: None,
+            previous_document: None,
+        };
+        let context = egui::Context::default();
+        context
+            .run_ui(window_input(), |ui| {
+                super::show_diff(ui, &mut comparison, Locale::English);
+            })
+            .drop_without_applying_deltas();
+
+        let differences = &comparison.pair_cache.as_ref().unwrap().differences;
+        assert_eq!(differences.len(), 1);
+        assert_eq!(differences[0].path, "$");
+        assert_eq!(
+            differences[0].values,
+            vec![Some(values[0].clone()), Some(values[1].clone())]
+        );
+    }
+}
+
+#[test]
+fn pair_diff_breaks_embedded_json_object_to_array_change_into_fields() {
+    use super::super::state::{ComparisonDocument, ComparisonState};
+    use struct_view_core::diff::compare_values;
+
+    let before = serde_json::to_string(&json!({
+        "ab_test": "Эксперимент",
+        "account": "Учётная запись",
+        "customer": "Покупатель",
+        "order": "Заказ"
+    }))
+    .unwrap();
+    let after = serde_json::to_string(&json!([
+        {"id": "customer", "name": "Покупатель"},
+        {"id": "order", "name": "Заказ"}
+    ]))
+    .unwrap();
+    let values = [json!(before), json!(after)];
+    let mut comparison = ComparisonState {
+        documents: (0..2)
+            .map(|index| ComparisonDocument {
+                path: format!("{index}.toml").into(),
+                size_bytes: 0,
+                load_time_ms: 0,
+                format: DataFormat::Toml,
+            })
+            .collect(),
+        differences: compare_values(&values),
+        left_index: 0,
+        right_index: 1,
+        pair_cache: None,
+        previous_document: None,
+    };
+
+    let context = egui::Context::default();
+    context
+        .run_ui(window_input(), |ui| {
+            super::show_diff(ui, &mut comparison, Locale::Russian);
+        })
+        .drop_without_applying_deltas();
+
+    let differences = &comparison.pair_cache.as_ref().unwrap().differences;
+    assert_eq!(
+        differences
+            .iter()
+            .map(|difference| difference.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "$.ab_test",
+            "$.account",
+            "$.customer",
+            "$.order",
+            "$[0].id",
+            "$[0].name",
+            "$[1].id",
+            "$[1].name",
+        ]
+    );
+    assert!(
+        differences[..4]
+            .iter()
+            .all(|difference| { difference.values[0].is_some() && difference.values[1].is_none() })
+    );
+    assert!(
+        differences[4..]
+            .iter()
+            .all(|difference| { difference.values[0].is_none() && difference.values[1].is_some() })
     );
 }
 

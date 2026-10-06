@@ -52,8 +52,12 @@ pub(in crate::app) fn show_diff(
             .differences
             .iter()
             .flat_map(|difference| {
-                let left = difference.values.get(left_index).and_then(Option::as_ref);
-                let right = difference.values.get(right_index).and_then(Option::as_ref);
+                let left_value = difference.values.get(left_index).and_then(Option::as_ref);
+                let right_value = difference.values.get(right_index).and_then(Option::as_ref);
+                let left_json = parse_json_structure_text(left_value);
+                let right_json = parse_json_structure_text(right_value);
+                let left = left_json.as_ref().or(left_value);
+                let right = right_json.as_ref().or(right_value);
                 compare_pair_at_path(&difference.path, left, right)
             })
             .collect();
@@ -78,6 +82,11 @@ pub(in crate::app) fn show_diff(
         return;
     }
 
+    ui.label(format!(
+        "{} {}",
+        locale.text(TextKey::DiffCount),
+        pair_differences.len()
+    ));
     show_difference_legend(ui, locale, None);
     let column_count = 4;
     let column_width = comparison_column_width(ui.available_width(), column_count);
@@ -94,22 +103,25 @@ pub(in crate::app) fn show_diff(
                     column_label(
                         ui,
                         column_width,
-                        RichText::new(locale.text(TextKey::ComparisonPath)).strong(),
+                        RichText::new(locale.text(TextKey::DiffPath)).strong(),
                     );
                     column_label(
                         ui,
                         column_width,
                         RichText::new(locale.text(TextKey::DiffChangeType)).strong(),
                     );
-                    for index in [left_index, right_index] {
-                        let label = document_label(comparison, index);
-                        column_label(
-                            ui,
-                            column_width,
-                            RichText::new(single_line_text(&label)).strong().monospace(),
-                        )
-                        .on_hover_text(label);
-                    }
+                    column_label(
+                        ui,
+                        column_width,
+                        RichText::new(locale.text(TextKey::DiffBefore)).strong(),
+                    )
+                    .on_hover_text(document_label(comparison, left_index));
+                    column_label(
+                        ui,
+                        column_width,
+                        RichText::new(locale.text(TextKey::DiffAfter)).strong(),
+                    )
+                    .on_hover_text(document_label(comparison, right_index));
                     ui.end_row();
 
                     for difference in pair_differences {
@@ -133,30 +145,193 @@ pub(in crate::app) fn show_diff(
                         column_label(
                             ui,
                             column_width,
-                            RichText::new(single_line_text(&difference.path))
-                                .color(colors.matched)
-                                .monospace(),
+                            RichText::new(single_line_text(&human_diff_path(
+                                &difference.path,
+                                locale,
+                            )))
+                            .color(colors.matched),
                         )
                         .on_hover_text(&difference.path);
                         column_label(ui, column_width, RichText::new(change_type))
                             .on_hover_text(change_type);
-                        for (value, color) in [(left, left_color), (right, right_color)] {
-                            let text = value
-                                .map(|value| format_value(Some(value)))
-                                .unwrap_or_else(|| locale.text(TextKey::MissingValue).to_string());
-                            column_label(
-                                ui,
-                                column_width,
-                                RichText::new(single_line_text(&text))
-                                    .color(color)
-                                    .monospace(),
-                            )
-                            .on_hover_text(text);
+                        for (index, (value, color)) in [(left, left_color), (right, right_color)]
+                            .into_iter()
+                            .enumerate()
+                        {
+                            if let Some(value @ (Value::Array(_) | Value::Object(_))) = value {
+                                ui.set_width(column_width);
+                                ui.push_id((&difference.path, index), |ui| {
+                                    egui::CollapsingHeader::new(
+                                        RichText::new(display_diff_value(value, locale))
+                                            .color(color),
+                                    )
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        egui::ScrollArea::vertical().max_height(220.0).show(
+                                            ui,
+                                            |ui| {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(format_value(Some(value)))
+                                                            .monospace(),
+                                                    )
+                                                    .wrap(),
+                                                );
+                                            },
+                                        );
+                                    });
+                                });
+                            } else {
+                                let text = value
+                                    .map(|value| display_diff_value(value, locale))
+                                    .unwrap_or_else(|| {
+                                        locale.text(TextKey::MissingValue).to_string()
+                                    });
+                                column_label(
+                                    ui,
+                                    column_width,
+                                    RichText::new(single_line_text(&text)).color(color),
+                                )
+                                .on_hover_text(value.map_or_else(
+                                    || locale.text(TextKey::MissingValue).to_string(),
+                                    |value| format_value(Some(value)),
+                                ));
+                            }
                         }
                         ui.end_row();
                     }
                 });
         });
+}
+
+fn parse_json_structure_text(value: Option<&Value>) -> Option<Value> {
+    let Value::String(text) = value? else {
+        return None;
+    };
+    let text = text.trim();
+    if !text.starts_with(['{', '[']) {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(text).ok()?;
+    matches!(value, Value::Object(_) | Value::Array(_)).then_some(value)
+}
+
+pub(in crate::app) fn display_diff_value(value: &Value, locale: Locale) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Null => "null".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(values) => format!(
+            "{} ({} {})",
+            locale.text(TextKey::TypeArray),
+            values.len(),
+            collection_count_word(locale, values.len(), true)
+        ),
+        Value::Object(values) => format!(
+            "{} ({} {})",
+            locale.text(TextKey::TypeObject),
+            values.len(),
+            collection_count_word(locale, values.len(), false)
+        ),
+    }
+}
+
+fn collection_count_word(locale: Locale, count: usize, is_array: bool) -> &'static str {
+    match locale {
+        Locale::Russian if is_array => {
+            struct_view_core::parser::plural_ru(count, "элемент", "элемента", "элементов")
+        }
+        Locale::Russian => struct_view_core::parser::plural_ru(count, "поле", "поля", "полей"),
+        Locale::English if is_array && count == 1 => "item",
+        Locale::English if is_array => "items",
+        Locale::English if count == 1 => "field",
+        Locale::English => "fields",
+    }
+}
+
+pub(in crate::app) fn human_diff_path(path: &str, locale: Locale) -> String {
+    let mut chars = path.char_indices().peekable();
+    let mut segments = Vec::new();
+    if chars.next().is_none_or(|(_, character)| character != '$') {
+        return path.to_string();
+    }
+
+    while let Some((_, character)) = chars.next() {
+        match character {
+            '.' => {
+                let mut key = String::new();
+                while let Some(&(_, next)) = chars.peek() {
+                    if matches!(next, '.' | '[') {
+                        break;
+                    }
+                    chars.next();
+                    key.push(next);
+                }
+                if !key.is_empty() {
+                    segments.push(key);
+                }
+            }
+            '[' => {
+                let Some(&(_, first)) = chars.peek() else {
+                    return path.to_string();
+                };
+                if first == '"' {
+                    chars.next();
+                    let mut quoted = String::from("\"");
+                    let mut escaped = false;
+                    let mut closed = false;
+                    for (_, next) in chars.by_ref() {
+                        quoted.push(next);
+                        if next == '"' && !escaped {
+                            closed = true;
+                            break;
+                        }
+                        if next == '\\' && !escaped {
+                            escaped = true;
+                        } else {
+                            escaped = false;
+                        }
+                    }
+                    if !closed || chars.next().is_none_or(|(_, next)| next != ']') {
+                        return path.to_string();
+                    }
+                    match serde_json::from_str::<String>(&quoted) {
+                        Ok(key) => segments.push(key),
+                        Err(_) => return path.to_string(),
+                    }
+                } else {
+                    let mut index = String::new();
+                    let mut closed = false;
+                    for (_, next) in chars.by_ref() {
+                        if next == ']' {
+                            closed = true;
+                            break;
+                        }
+                        index.push(next);
+                    }
+                    if !closed {
+                        return path.to_string();
+                    }
+                    let Some(index) = index.parse::<usize>().ok() else {
+                        return path.to_string();
+                    };
+                    segments.push(format!(
+                        "{} {}",
+                        locale.text(TextKey::DiffArrayItem),
+                        index + 1
+                    ));
+                }
+            }
+            _ => return path.to_string(),
+        }
+    }
+
+    if segments.is_empty() {
+        locale.text(TextKey::DiffRoot).to_string()
+    } else {
+        segments.join(" → ")
+    }
 }
 
 pub(in crate::app) fn comparison_column_width(available_width: f32, column_count: usize) -> f32 {

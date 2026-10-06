@@ -1015,7 +1015,10 @@ fn schema_view_reads_json_schema_requirements_and_constraints() {
         .unwrap();
     assert_eq!(name.type_name, "string");
     assert_eq!(name.required, Some(true));
-    assert!(name.constraints.contains("minLength=1"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&name.constraints).unwrap()["minLength"],
+        1
+    );
     let age = diagram.rows.iter().find(|row| row.path == "$.age").unwrap();
     assert_eq!(age.required, Some(false));
 }
@@ -1138,12 +1141,10 @@ fn swagger_definitions_and_inline_constraint_only_schemas_are_visible() {
             .iter()
             .any(|row| row.path == "$.definitions.Pet.name")
     );
-    assert!(
-        diagram
-            .rows
-            .iter()
-            .any(|row| row.constraints == "minimum=0")
-    );
+    assert!(diagram.rows.iter().any(|row| {
+        serde_json::from_str::<serde_json::Value>(&row.constraints)
+            .is_ok_and(|constraints| constraints["minimum"] == 0)
+    }));
     assert!(!diagram.rows.iter().any(|row| row.path.contains(".example")));
 }
 
