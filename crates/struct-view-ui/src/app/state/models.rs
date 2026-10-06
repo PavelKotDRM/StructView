@@ -32,6 +32,8 @@ pub(in crate::app) struct FileState {
     pub(in crate::app) load_time_ms: u128,
     /// Формат открытого файла.
     pub(in crate::app) format: Option<DataFormat>,
+    /// Отпечаток последнего сохранённого содержимого.
+    pub(in crate::app) saved_content_fingerprint: Option<u64>,
 }
 
 pub(in crate::app) struct LoadedDocument {
@@ -40,6 +42,7 @@ pub(in crate::app) struct LoadedDocument {
     pub(in crate::app) size_bytes: u64,
     pub(in crate::app) load_time_ms: u128,
     pub(in crate::app) format: DataFormat,
+    pub(in crate::app) saved_content_fingerprint: Option<u64>,
     pub(in crate::app) visible_rows: VisibleRows,
 }
 

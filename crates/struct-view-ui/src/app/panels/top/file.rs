@@ -73,14 +73,12 @@ impl StructViewApp {
             });
             if ui.button(locale.text(TextKey::CloseFile)).clicked() {
                 ui.close();
-                if self.visualization == VisualizationMode::Structure {
-                    self.structure_view = crate::app::views::structure::StructureView::default();
-                }
-                self.close_file();
+                self.request_close_file();
             }
             ui.separator();
             if ui.button(locale.text(TextKey::Exit)).clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                ui.close();
+                self.request_exit(ui.ctx());
             }
         });
     }

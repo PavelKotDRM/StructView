@@ -31,7 +31,12 @@ impl StructureView {
             }
         }
         if response.has_focus() {
-            self.keyboard(ui);
+            if ui.input(|input| input.key_pressed(egui::Key::Delete)) && self.can_delete_selected()
+            {
+                self.delete_selected(locale);
+            } else {
+                self.keyboard(ui);
+            }
         }
         self.ensure_layout();
         if self.fit {
@@ -84,6 +89,8 @@ impl StructureView {
         let mut add_requested = None;
         let mut edit_requested = false;
         let mut delete_requested = false;
+        let mut copy_requested = false;
+        let mut paste_requested = false;
         let mut focused = None;
         for &(id, rect) in &self.layout.nodes {
             let rect = Rect::from_min_max(transform(rect.min), transform(rect.max));
@@ -125,7 +132,11 @@ impl StructureView {
             painter.text(
                 rect.center_top() + Vec2::new(0.0, 8.0 * self.zoom),
                 Align2::CENTER_TOP,
-                shorten(&node.key, 24),
+                if node.kind == Kind::Comment {
+                    locale.text(TextKey::TypeComment).to_string()
+                } else {
+                    shorten(&node.key, 24)
+                },
                 FontId::proportional(14.0 * self.zoom),
                 KEY_COLOR,
             );
@@ -152,7 +163,11 @@ impl StructureView {
                     self.all_selected || self.selected_nodes.contains(&id),
                     format!(
                         "{}: {} ({}, {})",
-                        node.key,
+                        if node.kind == Kind::Comment {
+                            locale.text(TextKey::TypeComment)
+                        } else {
+                            &node.key
+                        },
                         node.value,
                         kind_name(node.kind, locale),
                         node.path
@@ -167,8 +182,26 @@ impl StructureView {
             }
             let hit = hit.on_hover_text(format!("{}: {}\n{}", node.key, node.value, node.path));
             hit.context_menu(|ui| {
+                if self.can_edit()
+                    && ui
+                        .button(locale.text(TextKey::CopySelectedStructures))
+                        .clicked()
+                {
+                    clicked = Some(id);
+                    copy_requested = true;
+                    ui.close();
+                }
                 if !self.editing || !self.can_edit() || node.parent.is_none() {
                     return;
+                }
+                if matches!(node.kind, Kind::Object | Kind::Array)
+                    && ui
+                        .button(locale.text(TextKey::PasteSelectedContainer))
+                        .clicked()
+                {
+                    clicked = Some(id);
+                    paste_requested = true;
+                    ui.close();
                 }
                 if ui.button(locale.text(TextKey::EditField)).clicked() {
                     clicked = Some(id);
@@ -282,7 +315,11 @@ impl StructureView {
             }
         }
         if let Some(id) = clicked {
-            let is_action = edit_requested || delete_requested || add_requested.is_some();
+            let is_action = edit_requested
+                || delete_requested
+                || copy_requested
+                || paste_requested
+                || add_requested.is_some();
             if is_action {
                 self.select(id, false);
             } else {
@@ -300,6 +337,10 @@ impl StructureView {
             self.open_edit_dialog();
         } else if delete_requested {
             self.delete_selected(locale);
+        } else if copy_requested {
+            self.copy_selected(locale);
+        } else if paste_requested {
+            self.paste_into_selected(locale);
         }
         if let Some(id) = expansion_requested {
             self.toggle_expansion(id);

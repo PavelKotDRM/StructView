@@ -11,6 +11,19 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::SaveAs => "💾  Save as…",
         TextKey::ConvertTo => "🔄  Convert to",
         TextKey::CloseFile => "✖  Close file",
+        TextKey::CloseFileUnsavedTitle => "Unsaved changes",
+        TextKey::CloseFileUnsavedMessage => {
+            "This file has unsaved changes. If you continue without saving, they will be lost."
+        }
+        TextKey::ContinueWithoutSaving => "Continue",
+        TextKey::ExitUnsavedMessage => {
+            "There are unsaved changes in the application. They will be lost if you exit."
+        }
+        TextKey::ExitWithoutSaving => "Exit",
+        TextKey::SaveChanges => "Save changes",
+        TextKey::SaveViewsSeparately => {
+            "The main document and structure source both have unsaved changes. Save them separately before closing."
+        }
         TextKey::Exit => "❌  Exit",
         TextKey::EditMenu => "Edit",
         TextKey::Undo => "Undo  Ctrl/Cmd+Z",

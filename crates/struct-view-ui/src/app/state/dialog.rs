@@ -3,6 +3,86 @@ use super::*;
 use crate::app::docking::{DetachedViewportAction, show_detached_viewport, show_docking_controls};
 
 impl StructViewApp {
+    pub(super) fn show_unsaved_changes_confirmation(&mut self, ctx: &egui::Context) {
+        if !self.close_file_confirmation_open {
+            return;
+        }
+
+        #[derive(Clone, Copy)]
+        enum Action {
+            ContinueWithoutSaving,
+            Cancel,
+            SaveChanges,
+        }
+
+        let locale = self.locale;
+        let exiting = self.exit_after_close_confirmation;
+        let message = if exiting {
+            TextKey::ExitUnsavedMessage
+        } else {
+            TextKey::CloseFileUnsavedMessage
+        };
+        let continue_label = if exiting {
+            TextKey::ExitWithoutSaving
+        } else {
+            TextKey::ContinueWithoutSaving
+        };
+        let mut action = None;
+        egui::Modal::new(egui::Id::new("close-file-confirmation")).show(ctx, |ui| {
+            ui.set_min_width(540.0);
+            ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+            ui.horizontal(|ui| {
+                let warning_color = ui.visuals().warn_fg_color;
+                ui.label(egui::RichText::new("⚠").size(32.0).color(warning_color));
+                ui.vertical(|ui| {
+                    ui.heading(locale.text(TextKey::CloseFileUnsavedTitle));
+                    ui.label(locale.text(message));
+                });
+            });
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
+            ui.columns(3, |columns| {
+                let button_width = columns[0].available_width();
+                let button_size = [button_width, 38.0];
+                let discard_label = egui::RichText::new(locale.text(continue_label))
+                    .color(columns[0].visuals().warn_fg_color);
+                if columns[0]
+                    .add_sized(button_size, egui::Button::new(discard_label))
+                    .clicked()
+                {
+                    action = Some(Action::ContinueWithoutSaving);
+                }
+                if columns[1]
+                    .add_sized(button_size, egui::Button::new(locale.text(TextKey::Cancel)))
+                    .clicked()
+                {
+                    action = Some(Action::Cancel);
+                }
+                let save_button = egui::Button::new(
+                    egui::RichText::new(locale.text(TextKey::SaveChanges)).strong(),
+                )
+                .fill(columns[2].visuals().selection.bg_fill);
+                if columns[2].add_sized(button_size, save_button).clicked() {
+                    action = Some(Action::SaveChanges);
+                }
+            });
+        });
+
+        match action {
+            Some(Action::ContinueWithoutSaving) => self.continue_without_saving(ctx),
+            Some(Action::Cancel) => self.cancel_close_file_confirmation(),
+            Some(Action::SaveChanges) => {
+                if self.save_changes_and_close_file() && exiting {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+impl StructViewApp {
     /// Отрисовать конструктор и добавить или изменить узел после подтверждения.
     pub(in crate::app) fn show_field_dialog(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.field_dialog.take() else {

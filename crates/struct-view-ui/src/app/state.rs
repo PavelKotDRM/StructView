@@ -4,6 +4,8 @@
 //! дерево данных, состояние поиска, метаданные файла и настройки темы.
 
 use std::collections::BTreeSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -51,6 +53,21 @@ pub(super) use models::{
 const HISTORY_LIMIT: usize = 100;
 const TOAST_LIFETIME: Duration = Duration::from_secs(3);
 
+pub(super) fn document_content_fingerprint(root: &JsonNode, format: DataFormat) -> Option<u64> {
+    if !format.is_serializable() {
+        return None;
+    }
+
+    let serialized = serialize_node(root, format, false).ok()?;
+    Some(content_fingerprint(&serialized))
+}
+
+fn content_fingerprint(content: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
+
 impl Toast {
     pub(super) fn remaining(&self) -> Duration {
         TOAST_LIFETIME.saturating_sub(self.shown_at.elapsed())
@@ -87,6 +104,10 @@ pub struct StructViewApp {
     pub(super) search_scroll_target: Option<String>,
     /// Отложенный запрос на сохранение текущего файла.
     pub(super) save_requested: bool,
+    /// Открыто ли подтверждение закрытия документа с несохранёнными изменениями.
+    pub(super) close_file_confirmation_open: bool,
+    /// Закрывать ли приложение после подтверждения выхода.
+    pub(super) exit_after_close_confirmation: bool,
     /// Мета-информация о загруженном файле.
     pub(super) file_state: FileState,
     /// Результат фонового чтения и разбора файла.
@@ -153,6 +174,8 @@ impl Default for StructViewApp {
             search_window_docking: DockingState::default(),
             search_scroll_target: None,
             save_requested: false,
+            close_file_confirmation_open: false,
+            exit_after_close_confirmation: false,
             file_state: FileState::default(),
             file_load_receiver: None,
             comparison: None,
@@ -246,6 +269,7 @@ impl eframe::App for StructViewApp {
         self.show_bottom_panel(ui);
         self.show_central_panel(ui);
         self.show_field_dialog(ui.ctx());
+        self.show_unsaved_changes_confirmation(ui.ctx());
         if let Some(toast) = &self.toast {
             if Some(toast.shown_at) != previous_toast {
                 ui.ctx().request_repaint();

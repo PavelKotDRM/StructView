@@ -36,6 +36,7 @@ pub(in crate::app) fn show_legend(ui: &mut Ui, locale: Locale) {
         (Kind::Object, TextKey::LegendObject),
         (Kind::Array, TextKey::LegendArray),
         (Kind::String, TextKey::LegendString),
+        (Kind::Comment, TextKey::TypeComment),
         (Kind::Number, TextKey::LegendNumber),
         (Kind::Bool, TextKey::LegendBool),
         (Kind::Null, TextKey::LegendNull),
@@ -99,6 +100,7 @@ pub(in crate::app) struct StructureView {
     edit_dialog: Option<StructureEditDialog>,
     source_show_full: bool,
     source_preview: Option<StructureSourcePreview>,
+    clipboard_payload: Option<Vec<crate::clipboard::ClipboardEntry>>,
 }
 
 struct StructureEditDialog {
@@ -161,6 +163,7 @@ impl Default for StructureView {
             edit_dialog: None,
             source_show_full: false,
             source_preview: None,
+            clipboard_payload: None,
         }
     }
 }
@@ -239,6 +242,7 @@ fn kind_color(kind: Kind) -> Color32 {
         Kind::Null => Color32::from_rgb(210, 215, 225),
         Kind::Date => Color32::from_rgb(106, 224, 224),
         Kind::Reference => Color32::from_rgb(255, 160, 221),
+        Kind::Comment => Color32::from_rgb(100, 157, 169),
     }
 }
 
@@ -252,6 +256,7 @@ fn kind_name(kind: Kind, locale: Locale) -> &'static str {
         Kind::Null => TextKey::TypeNull,
         Kind::Date => TextKey::TypeDateTime,
         Kind::Reference => TextKey::StructureReference,
+        Kind::Comment => TextKey::TypeComment,
     })
 }
 
@@ -267,9 +272,15 @@ fn node_label(node: &Node, collapsed: bool, limit: usize) -> String {
         } else {
             ""
         };
+        let child_count = node
+            .value
+            .split_whitespace()
+            .last()
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(node.children.len());
         format!(
             "{open}{}{close} {anchor}{}",
-            node.children.len(),
+            child_count,
             if collapsed {
                 " (+)"
             } else if node.children.len() > limit {

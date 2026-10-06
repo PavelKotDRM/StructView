@@ -22,8 +22,9 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
   whole-word matching, and regular expressions;
 - a regex builder for escaped literal text and common pattern fragments;
 - switchable tree, relationship graph, flattened table, and schema views;
-- a separate JSON/YAML/TOML data-structure diagram with source-ordered nodes,
-  collapse/expand, three layouts, search, zoom/pan, and SVG/PNG export;
+- a separate JSON/JSON5/YAML/TOML data-structure diagram with source-ordered
+  nodes, comment nodes for supported formats, collapse/expand, three layouts,
+  search, zoom/pan, and SVG/PNG export;
 - graph links inferred from common entity identifiers and reference fields;
 - per-edge directed, undirected, bidirectional, and reverse links, mixed graphs,
   and self-loops in the GUI and graph exports;
@@ -165,6 +166,10 @@ The interface provides:
   expands the necessary ancestors, reveals paged children, and centers the
   result. Selection highlights its path back to the root. Hover a node for
   its full key, value, and JSON Pointer path.
+  Selected nodes, including whole objects and arrays, copy via `Edit -> Copy`,
+  `Ctrl+C`, or a node's context menu. In edit mode, paste them into a selected
+  object or array via `Edit -> Paste`, `Ctrl+V`, or the container's
+  `Paste here` context-menu entry, just like in the JSON tree.
   Drag the canvas to pan and use the wheel or +/- to zoom. With the canvas or
   a node focused, use Up/Down to select, Left to collapse/go to the parent,
   Right to expand/go to a child, Enter/Space to toggle, and Home to fit.

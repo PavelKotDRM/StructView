@@ -10,6 +10,7 @@ mod special_graphs;
 mod tests;
 mod tree;
 
+pub(crate) use comments::extract_comments;
 pub use comments::{comment_input, format_comment_for_format};
 pub use format::DataFormat;
 pub use parse::{parse_data, parse_json};

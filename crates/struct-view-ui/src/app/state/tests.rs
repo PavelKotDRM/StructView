@@ -430,6 +430,144 @@ fn close_file_clears_document_state() {
 }
 
 #[test]
+fn closing_modified_document_requires_confirmation_and_cancel_keeps_it_open() {
+    let path = std::env::temp_dir().join(format!(
+        "struct_view-close-confirmation-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"value":1}"#).unwrap();
+
+    let mut app = StructViewApp::default();
+    app.load_file(path.clone());
+    let before = app.root.as_ref().unwrap().clone();
+    app.root.as_mut().unwrap().children[0].display_value = "2".to_string();
+    app.push_undo_snapshot(before);
+
+    app.request_close_file();
+
+    assert!(app.close_file_confirmation_open);
+    assert!(app.root.is_some());
+    app.cancel_close_file_confirmation();
+    assert!(!app.close_file_confirmation_open);
+    assert!(app.root.is_some());
+    assert_eq!(app.file_state.path, Some(path.clone()));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn saving_from_close_confirmation_writes_changes_before_closing() {
+    let path = std::env::temp_dir().join(format!(
+        "struct_view-close-save-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"value":1}"#).unwrap();
+
+    let mut app = StructViewApp::default();
+    app.load_file(path.clone());
+    let before = app.root.as_ref().unwrap().clone();
+    app.root.as_mut().unwrap().children[0].display_value = "2".to_string();
+    app.push_undo_snapshot(before);
+    app.request_close_file();
+
+    assert!(app.close_file_confirmation_open);
+    assert!(app.save_changes_and_close_file());
+
+    assert!(app.root.is_none());
+    let saved = std::fs::read_to_string(&path).unwrap();
+    let (saved_root, _) = parse_data(&saved, Some(DataFormat::Json)).unwrap();
+    assert_eq!(
+        node_to_value(&saved_root).unwrap()["value"],
+        serde_json::json!(2)
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn undo_back_to_saved_document_does_not_show_close_confirmation() {
+    let path = std::env::temp_dir().join(format!(
+        "struct_view-close-undo-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"value":1}"#).unwrap();
+
+    let mut app = StructViewApp::default();
+    app.load_file(path.clone());
+    app.mode = AppMode::Edit;
+    let before = app.root.as_ref().unwrap().clone();
+    app.root.as_mut().unwrap().children[0].display_value = "2".to_string();
+    app.push_undo_snapshot(before);
+    app.undo();
+
+    app.request_close_file();
+
+    assert!(!app.close_file_confirmation_open);
+    assert!(app.root.is_none());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn exiting_with_unsaved_document_requires_confirmation() {
+    let path = std::env::temp_dir().join(format!(
+        "struct_view-exit-confirmation-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"value":1}"#).unwrap();
+
+    let mut app = StructViewApp::default();
+    app.load_file(path.clone());
+    let before = app.root.as_ref().unwrap().clone();
+    app.root.as_mut().unwrap().children[0].display_value = "2".to_string();
+    app.push_undo_snapshot(before);
+    let context = egui::Context::default();
+
+    app.request_exit(&context);
+
+    assert!(app.close_file_confirmation_open);
+    assert!(app.exit_after_close_confirmation);
+    app.cancel_close_file_confirmation();
+    assert!(!app.close_file_confirmation_open);
+    assert!(!app.exit_after_close_confirmation);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn exiting_from_comparison_saves_the_modified_previous_document() {
+    let prefix = std::env::temp_dir().join(format!(
+        "struct_view-exit-comparison-{}",
+        std::process::id()
+    ));
+    let open_path = prefix.with_extension("open.json");
+    let selected_path = prefix.with_extension("selected.json");
+    std::fs::write(&open_path, r#"{"value":1}"#).unwrap();
+    std::fs::write(&selected_path, r#"{"value":2}"#).unwrap();
+
+    let mut app = StructViewApp::default();
+    app.load_file(open_path.clone());
+    let before = app.root.as_ref().unwrap().clone();
+    app.root.as_mut().unwrap().children[0].display_value = "3".to_string();
+    app.push_undo_snapshot(before);
+    app.load_comparison(vec![selected_path.clone()]);
+    let context = egui::Context::default();
+
+    app.request_exit(&context);
+
+    assert!(app.close_file_confirmation_open);
+    assert!(app.exit_after_close_confirmation);
+    assert!(app.comparison.is_some());
+    assert!(app.save_changes_and_close_file());
+    assert!(app.root.is_none());
+
+    let saved = std::fs::read_to_string(&open_path).unwrap();
+    let (saved_root, _) = parse_data(&saved, Some(DataFormat::Json)).unwrap();
+    assert_eq!(
+        node_to_value(&saved_root).unwrap()["value"],
+        serde_json::json!(3)
+    );
+    std::fs::remove_file(open_path).unwrap();
+    std::fs::remove_file(selected_path).unwrap();
+}
+
+#[test]
 fn comparison_loads_all_documents_and_changed_paths() {
     let prefix =
         std::env::temp_dir().join(format!("struct_view-compare-test-{}", std::process::id()));

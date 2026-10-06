@@ -53,10 +53,13 @@ impl StructViewApp {
             if ctx.egui_wants_keyboard_input() {
                 return;
             }
-            let (find, delete) = ctx.input(|input| {
+            let (find, delete, copy, paste) = ctx.input(|input| {
+                let command = input.modifiers.command;
                 (
-                    input.modifiers.command && input.key_pressed(egui::Key::F),
+                    command && input.key_pressed(egui::Key::F),
                     input.key_pressed(egui::Key::Delete),
+                    command && input.key_pressed(egui::Key::C),
+                    command && input.key_pressed(egui::Key::V),
                 )
             });
             if find {
@@ -64,6 +67,12 @@ impl StructViewApp {
             }
             if delete && self.structure_view.can_delete_selected() {
                 self.structure_view.delete_selected(self.locale);
+            }
+            if copy && self.structure_view.can_copy_selected() {
+                self.structure_view.copy_selected(self.locale);
+            }
+            if paste && self.structure_view.can_paste_into_selected() {
+                self.structure_view.paste_into_selected(self.locale);
             }
             return;
         }

@@ -87,6 +87,7 @@ impl StructViewApp {
                     size_bytes: document.size_bytes,
                     load_time_ms: document.load_time_ms,
                     format: Some(document.format),
+                    saved_content_fingerprint: document.saved_content_fingerprint,
                 };
             }
             Err(error) => self.report_document_load_error(error),
@@ -161,7 +162,7 @@ impl StructViewApp {
         };
 
         match self.write_node_to_path(&root, &path, format) {
-            Ok(size_bytes) => {
+            Ok((size_bytes, saved_content_fingerprint)) => {
                 self.clear_document_state();
                 self.root = Some(root);
                 self.mode = AppMode::Edit;
@@ -170,6 +171,7 @@ impl StructViewApp {
                     size_bytes,
                     load_time_ms: started_at.elapsed().as_millis(),
                     format: Some(format),
+                    saved_content_fingerprint: Some(saved_content_fingerprint),
                 };
                 self.show_toast(self.locale.text(TextKey::FileCreated));
             }
@@ -187,6 +189,7 @@ fn read_document(path: PathBuf, locale: Locale) -> Result<LoadedDocument, ParseE
     })?;
     let size_bytes = content.len() as u64;
     let (root, format) = parse_data(&content, DataFormat::from_path(&path))?;
+    let saved_content_fingerprint = super::document_content_fingerprint(&root, format);
     let visible_rows = VisibleRows::from_root(&root);
     Ok(LoadedDocument {
         path,
@@ -194,6 +197,7 @@ fn read_document(path: PathBuf, locale: Locale) -> Result<LoadedDocument, ParseE
         size_bytes,
         load_time_ms: started_at.elapsed().as_millis(),
         format,
+        saved_content_fingerprint,
         visible_rows,
     })
 }

@@ -4,7 +4,7 @@ use super::format::DataFormat;
 mod hash;
 mod json5;
 
-pub(super) fn extract_comments(input: &str, format: DataFormat) -> Vec<String> {
+pub(crate) fn extract_comments(input: &str, format: DataFormat) -> Vec<String> {
     match format {
         DataFormat::Json => Vec::new(),
         DataFormat::Json5 => json5::extract(input),

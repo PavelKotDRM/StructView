@@ -33,6 +33,27 @@ impl StructViewApp {
                 });
                 if ui
                     .add_enabled(
+                        self.structure_view.can_copy_selected(),
+                        egui::Button::new(locale.text(TextKey::CopySelectedStructures)),
+                    )
+                    .clicked()
+                {
+                    self.structure_view.copy_selected(locale);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.structure_view.can_paste_into_selected(),
+                        egui::Button::new(locale.text(TextKey::PasteSelectedContainer)),
+                    )
+                    .clicked()
+                {
+                    self.structure_view.paste_into_selected(locale);
+                    ui.close();
+                }
+                ui.separator();
+                if ui
+                    .add_enabled(
                         self.structure_view.can_delete_selected(),
                         egui::Button::new(locale.text(TextKey::DeleteSelectedStructures)),
                     )

@@ -24,6 +24,7 @@
 mod build;
 mod node;
 
+pub(crate) use build::extract_comments;
 pub use build::{
     DataFormat, build_path, comment_input, format_comment_for_format, node_to_value, parse_data,
     parse_json, plural_ru, serialize_data, serialize_node,

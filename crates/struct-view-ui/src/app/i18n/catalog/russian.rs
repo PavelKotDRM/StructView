@@ -11,6 +11,19 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::SaveAs => "💾  Сохранить как…",
         TextKey::ConvertTo => "🔄  Преобразовать в",
         TextKey::CloseFile => "✖  Закрыть файл",
+        TextKey::CloseFileUnsavedTitle => "Несохранённые изменения",
+        TextKey::CloseFileUnsavedMessage => {
+            "В файле есть несохранённые изменения. Если продолжить без сохранения, они будут потеряны."
+        }
+        TextKey::ContinueWithoutSaving => "Продолжить",
+        TextKey::ExitUnsavedMessage => {
+            "В приложении есть несохранённые изменения. При выходе они будут потеряны."
+        }
+        TextKey::ExitWithoutSaving => "Выйти",
+        TextKey::SaveChanges => "Сохранить изменения",
+        TextKey::SaveViewsSeparately => {
+            "В основном документе и исходном тексте схемы есть несохранённые изменения. Сохраните их по отдельности перед закрытием."
+        }
         TextKey::Exit => "❌  Выход",
         TextKey::EditMenu => "Правка",
         TextKey::Undo => "Отменить  Ctrl/Cmd+Z",

@@ -2,11 +2,16 @@ use super::*;
 mod help;
 
 fn view(text: &str) -> StructureView {
-    let document = struct_view_core::structure::parse(text, Some(DataFormat::Json)).unwrap();
+    view_with_format(text, DataFormat::Json)
+}
+
+fn view_with_format(text: &str, format: DataFormat) -> StructureView {
+    let document = struct_view_core::structure::parse(text, Some(format)).unwrap();
     let mut view = StructureView::default();
     view.reset(&document);
     view.document = Some(document);
     view.source = text.to_string();
+    view.format = Some(format);
     view.source_open = false;
     view
 }
@@ -557,6 +562,24 @@ fn click_at(position: Pos2) -> Vec<egui::Event> {
     ]
 }
 
+fn right_click_at(position: Pos2) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
+
 #[test]
 fn main_menu_exposes_structure_controls_and_opens_source() {
     let context = egui::Context::default();
@@ -860,6 +883,74 @@ fn edit_mode_updates_selected_field_and_marks_source_unsaved() {
 }
 
 #[test]
+fn structure_view_displays_adds_and_edits_comments_in_supported_formats() {
+    for (format, source, marker) in [
+        (DataFormat::Json5, "// existing\n{value: 1,}", "//"),
+        (DataFormat::Yaml, "# existing\nvalue: 1\n", "#"),
+        (DataFormat::Toml, "# existing\nvalue = 1\n", "#"),
+    ] {
+        let mut view = view_with_format(source, format);
+        let initial_comment = view
+            .document
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|node| node.kind == Kind::Comment)
+            .unwrap();
+        assert_eq!(initial_comment.value, format!("{marker} existing"));
+
+        view.editing = true;
+        view.open_add_dialog();
+        let mut dialog = view.edit_dialog.take().unwrap();
+        dialog.value_type = JsonValueType::Comment;
+        dialog.value = "added note".into();
+        view.apply_edit_dialog(&dialog).unwrap();
+
+        assert!(view.source.contains(&format!("{marker} added note")));
+        assert_eq!(
+            view.document
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .filter(|node| node.kind == Kind::Comment)
+                .count(),
+            2
+        );
+
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let output = frame(&mut view, &context, Vec::new());
+        let update = output.platform_output.accesskit_update.as_ref().unwrap();
+        assert!(update.nodes.iter().any(|(_, node)| {
+            node.label()
+                .is_some_and(|label| label.contains("Comment") && label.contains("existing"))
+        }));
+        output.drop_without_applying_deltas();
+
+        let comment_id = view
+            .document
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .position(|node| node.kind == Kind::Comment && node.value.contains("added note"))
+            .unwrap();
+        view.selected = comment_id;
+        view.selected_nodes = HashSet::from([comment_id]);
+        view.open_edit_dialog();
+        let mut comment_dialog = view.edit_dialog.take().unwrap();
+        assert_eq!(comment_dialog.value_type, JsonValueType::Comment);
+        comment_dialog.value = "edited note".into();
+        view.apply_edit_dialog(&comment_dialog).unwrap();
+
+        assert!(view.source.contains(&format!("{marker} edited note")));
+        assert!(view.unsaved);
+    }
+}
+
+#[test]
 fn selected_structure_can_be_deleted_and_root_is_protected() {
     let mut view = view(r#"{"keep":1,"remove":{"nested":true}}"#);
     assert!(!view.can_delete_selected());
@@ -889,6 +980,195 @@ fn selected_structure_can_be_deleted_and_root_is_protected() {
 }
 
 #[test]
+fn delete_key_removes_selected_structure_from_structure_view() {
+    let mut app = crate::app::StructViewApp::default();
+    app.locale = Locale::English;
+    app.visualization = crate::app::visualization::VisualizationMode::Structure;
+    let mut structure_view = view(r#"{"keep":1,"remove":2}"#);
+    structure_view.editing = true;
+    app.structure_view = structure_view;
+    let context = egui::Context::default();
+    context.enable_accesskit();
+
+    let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let bounds = update
+        .nodes
+        .iter()
+        .map(|(_, node)| node)
+        .find(|node| {
+            node.label()
+                .is_some_and(|label| label.starts_with("remove:"))
+        })
+        .unwrap()
+        .bounds()
+        .unwrap();
+    let node_position = Pos2::new(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    output.drop_without_applying_deltas();
+    app_frame(&mut app, &context, 1000.0, click_at(node_position)).drop_without_applying_deltas();
+    assert_eq!(app.structure_view.selected_nodes, HashSet::from([2]));
+    assert!(app.structure_view.can_delete_selected());
+    assert!(
+        context.egui_wants_keyboard_input(),
+        "The canvas focus should exercise the keyboard-input guard"
+    );
+
+    let delete_key = egui::Event::Key {
+        key: egui::Key::Delete,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    app_frame(&mut app, &context, 1000.0, vec![delete_key]).drop_without_applying_deltas();
+
+    assert!(!app.structure_view.source.contains("remove"));
+    assert_eq!(app.structure_view.document.as_ref().unwrap().nodes.len(), 2);
+}
+
+#[test]
+fn structure_delete_menu_button_removes_selected_structure() {
+    let mut app = crate::app::StructViewApp::default();
+    app.locale = Locale::English;
+    app.visualization = crate::app::visualization::VisualizationMode::Structure;
+    let mut structure_view = view(r#"{"keep":1,"remove":2}"#);
+    structure_view.editing = true;
+    structure_view.selected = 2;
+    structure_view.selected_nodes = HashSet::from([2]);
+    app.structure_view = structure_view;
+    let context = egui::Context::default();
+    context.enable_accesskit();
+
+    let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+    let edit_menu_position = label_center(&output, "Edit");
+    output.drop_without_applying_deltas();
+    app_frame(&mut app, &context, 1000.0, click_at(edit_menu_position))
+        .drop_without_applying_deltas();
+
+    let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+    let delete_position = label_center(
+        &output,
+        Locale::English.text(TextKey::DeleteSelectedStructures),
+    );
+    output.drop_without_applying_deltas();
+    app_frame(&mut app, &context, 1000.0, click_at(delete_position)).drop_without_applying_deltas();
+
+    assert!(!app.structure_view.source.contains("remove"));
+    assert_eq!(app.structure_view.document.as_ref().unwrap().nodes.len(), 2);
+}
+
+#[test]
+fn structure_context_delete_button_removes_the_context_node() {
+    let mut structure_view = view(r#"{"keep":1,"remove":2}"#);
+    structure_view.editing = true;
+    let context = egui::Context::default();
+    context.enable_accesskit();
+
+    let output = frame(&mut structure_view, &context, Vec::new());
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let bounds = update
+        .nodes
+        .iter()
+        .map(|(_, node)| node)
+        .find(|node| {
+            node.label()
+                .is_some_and(|label| label.starts_with("remove:"))
+        })
+        .unwrap()
+        .bounds()
+        .unwrap();
+    let node_position = Pos2::new(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    output.drop_without_applying_deltas();
+    frame(&mut structure_view, &context, right_click_at(node_position))
+        .drop_without_applying_deltas();
+
+    let output = frame(&mut structure_view, &context, Vec::new());
+    let delete_position = label_center(
+        &output,
+        Locale::English.text(TextKey::DeleteSelectedStructures),
+    );
+    output.drop_without_applying_deltas();
+    frame(&mut structure_view, &context, click_at(delete_position)).drop_without_applying_deltas();
+
+    assert!(!structure_view.source.contains("remove"));
+    assert_eq!(structure_view.document.as_ref().unwrap().nodes.len(), 2);
+}
+
+#[test]
+fn tree_delete_menu_button_removes_selected_structure() {
+    let mut app = crate::app::StructViewApp::default();
+    app.locale = Locale::English;
+    app.mode = crate::app::state::AppMode::Edit;
+    let (root, format) =
+        struct_view_core::parser::parse_data(r#"{"keep":1,"remove":2}"#, None).unwrap();
+    app.file_state.format = Some(format);
+    app.root = Some(root);
+    app.visualization = crate::app::visualization::VisualizationMode::Tree;
+    let remove_path = app.root.as_ref().unwrap().children[1].path.clone();
+    app.selected_paths.insert(remove_path);
+    let context = egui::Context::default();
+    context.enable_accesskit();
+
+    let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+    let edit_menu_position = label_center(&output, "Edit");
+    output.drop_without_applying_deltas();
+    app_frame(&mut app, &context, 1000.0, click_at(edit_menu_position))
+        .drop_without_applying_deltas();
+
+    let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+    let delete_position = label_center(
+        &output,
+        Locale::English.text(TextKey::DeleteSelectedStructures),
+    );
+    output.drop_without_applying_deltas();
+    app_frame(&mut app, &context, 1000.0, click_at(delete_position)).drop_without_applying_deltas();
+
+    assert!(
+        struct_view_core::parser::node_to_value(app.root.as_ref().unwrap())
+            .unwrap()
+            .get("remove")
+            .is_none()
+    );
+}
+
+#[test]
+fn delete_key_removes_selected_structure_from_tree_view() {
+    let mut app = crate::app::StructViewApp::default();
+    app.locale = Locale::English;
+    app.mode = crate::app::state::AppMode::Edit;
+    let (root, format) =
+        struct_view_core::parser::parse_data(r#"{"keep":1,"remove":2}"#, None).unwrap();
+    app.file_state.format = Some(format);
+    app.root = Some(root);
+    let remove_path = app.root.as_ref().unwrap().children[1].path.clone();
+    app.selected_paths.insert(remove_path);
+    let context = egui::Context::default();
+    app_frame(&mut app, &context, 1000.0, Vec::new()).drop_without_applying_deltas();
+
+    let delete_key = egui::Event::Key {
+        key: egui::Key::Delete,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    app_frame(&mut app, &context, 1000.0, vec![delete_key]).drop_without_applying_deltas();
+
+    assert!(
+        struct_view_core::parser::node_to_value(app.root.as_ref().unwrap())
+            .unwrap()
+            .get("remove")
+            .is_none()
+    );
+}
+
+#[test]
 fn multiple_selected_structures_can_be_deleted_together() {
     let mut view = view(r#"{"first":1,"second":2,"keep":3}"#);
     view.editing = true;
@@ -900,6 +1180,66 @@ fn multiple_selected_structures_can_be_deleted_together() {
     assert_eq!(document.nodes.len(), 2);
     assert_eq!(document.nodes[1].key, "keep");
     assert_eq!(view.notice.as_deref(), Some("Structures deleted: 2"));
+}
+
+#[test]
+fn selected_structures_can_be_copied_and_pasted_into_a_container() {
+    let mut view = view(r#"{"profile":{"name":"Ada"},"tags":["admin"]}"#);
+    view.editing = true;
+    view.selected_nodes = HashSet::from([1]);
+    assert!(view.can_copy_selected());
+
+    view.copy_selected(Locale::English);
+    assert_eq!(view.error, None);
+    let entries = view.clipboard_payload.clone().expect("entries cached");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].key.as_deref(), Some("profile"));
+
+    // Target the array container "tags" to paste the copied object as a new element.
+    let document = view.document.as_ref().unwrap();
+    let tags_id = document
+        .nodes
+        .iter()
+        .position(|node| node.key == "tags")
+        .unwrap();
+    view.selected_nodes = HashSet::from([tags_id]);
+    assert!(view.can_paste_into_selected());
+
+    view.paste_into_selected(Locale::English);
+
+    assert_eq!(view.error, None);
+    assert_eq!(view.notice.as_deref(), Some("Structures pasted: 1"));
+    assert!(view.unsaved);
+    let document = view.document.as_ref().unwrap();
+    let tags_id = document
+        .nodes
+        .iter()
+        .position(|node| node.key == "tags")
+        .unwrap();
+    assert_eq!(document.nodes[tags_id].children.len(), 2);
+}
+
+#[test]
+fn pasting_requires_editing_mode_and_a_single_container_selected() {
+    let mut view = view(r#"{"keep":1,"other":2}"#);
+    view.selected_nodes = HashSet::from([1]);
+    view.copy_selected(Locale::English);
+    assert!(view.clipboard_payload.is_some());
+
+    // View mode: paste is disabled even though a container is selected.
+    view.selected_nodes = HashSet::from([0]);
+    assert!(!view.can_paste_into_selected());
+
+    view.editing = true;
+    assert!(view.can_paste_into_selected());
+
+    // Selecting a scalar field disables paste.
+    view.selected_nodes = HashSet::from([1]);
+    assert!(!view.can_paste_into_selected());
+
+    // Selecting more than one node disables paste.
+    view.selected_nodes = HashSet::from([0, 1]);
+    assert!(!view.can_paste_into_selected());
 }
 
 #[test]
@@ -1126,4 +1466,28 @@ fn structure_constructor_edits_yaml_and_toml_documents() {
                 .any(|node| node.key == "count" && node.value == "7")
         );
     }
+}
+
+#[test]
+fn closing_modified_structure_source_requires_confirmation_and_saves_it() {
+    let path = std::env::temp_dir().join(format!(
+        "structview-structure-close-save-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"value":1}"#).unwrap();
+
+    let mut app = crate::app::StructViewApp::default();
+    app.visualization = crate::app::visualization::VisualizationMode::Structure;
+    let mut source_view = view(r#"{"value":2}"#);
+    source_view.origin = Some(path.clone());
+    source_view.unsaved = true;
+    app.structure_view = source_view;
+
+    app.request_close_file();
+
+    assert!(app.close_file_confirmation_open);
+    assert!(app.save_changes_and_close_file());
+    assert!(app.root.is_none());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"value":2}"#);
+    std::fs::remove_file(path).unwrap();
 }

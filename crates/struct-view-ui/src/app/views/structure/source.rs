@@ -170,7 +170,10 @@ impl StructureView {
 
     pub(in crate::app) fn open_file_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("JSON / YAML / TOML", &["json", "yaml", "yml", "toml"])
+            .add_filter(
+                "JSON / JSON5 / YAML / TOML",
+                &["json", "json5", "yaml", "yml", "toml"],
+            )
             .pick_file()
         {
             self.open(path);
@@ -302,33 +305,49 @@ impl StructureView {
         character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '$' | '~')
     }
 
-    fn save_source(&mut self, locale: Locale) {
+    pub(in crate::app) fn has_unsaved_changes(&self) -> bool {
+        self.unsaved
+    }
+
+    pub(in crate::app) fn save_changes(&mut self, locale: Locale) -> bool {
+        self.save_source(locale)
+    }
+
+    fn save_source(&mut self, locale: Locale) -> bool {
         if let Some(path) = self.origin.clone() {
-            self.write_source(&path, locale);
+            self.write_source(&path, locale)
         } else {
-            self.save_source_as(locale);
+            self.save_source_as(locale)
         }
     }
 
-    fn save_source_as(&mut self, locale: Locale) {
-        let mut dialog = rfd::FileDialog::new()
-            .add_filter("JSON / YAML / TOML", &["json", "yaml", "yml", "toml"]);
+    fn save_source_as(&mut self, locale: Locale) -> bool {
+        let mut dialog = rfd::FileDialog::new().add_filter(
+            "JSON / JSON5 / YAML / TOML",
+            &["json", "json5", "yaml", "yml", "toml"],
+        );
         if let Some(format) = self.format {
             dialog = dialog.set_file_name(format!("data.{}", format.extension()));
         }
         if let Some(path) = dialog.save_file() {
-            self.write_source(&path, locale);
+            self.write_source(&path, locale)
+        } else {
+            false
         }
     }
 
-    pub(super) fn write_source(&mut self, path: &Path, locale: Locale) {
+    pub(super) fn write_source(&mut self, path: &Path, locale: Locale) -> bool {
         match struct_view_core::files::write_text_atomic(path, &self.source) {
             Ok(()) => {
                 self.origin = Some(path.to_path_buf());
                 self.unsaved = false;
                 self.notice = Some(locale.text(TextKey::FileSaved).to_string());
+                true
             }
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => {
+                self.error = Some(error.to_string());
+                false
+            }
         }
     }
 
@@ -508,7 +527,12 @@ impl StructureView {
                 let mut changed = ui
                     .selectable_value(&mut self.format, None, locale.text(TextKey::StructureAuto))
                     .changed();
-                for format in [DataFormat::Json, DataFormat::Yaml, DataFormat::Toml] {
+                for format in [
+                    DataFormat::Json,
+                    DataFormat::Json5,
+                    DataFormat::Yaml,
+                    DataFormat::Toml,
+                ] {
                     changed |= ui
                         .selectable_value(&mut self.format, Some(format), format.to_string())
                         .changed();

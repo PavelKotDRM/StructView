@@ -1,9 +1,12 @@
 use super::*;
 use crate::app::edit::{
     DeleteError, add_typed_child_at_path, delete_selected_structures, edit_child_at_path,
-    rename_at_path,
+    paste_structures_at_path, rename_at_path, selected_structures,
 };
 use crate::app::state::{default_field_value, field_value_types};
+use crate::clipboard::{
+    copy_to_clipboard, decode_structures, encode_structures, read_from_clipboard,
+};
 
 impl StructureView {
     pub(in crate::app) fn can_edit(&self) -> bool {
@@ -28,6 +31,148 @@ impl StructureView {
             })
     }
 
+    pub(in crate::app) fn can_copy_selected(&self) -> bool {
+        self.can_edit() && !self.selected_nodes.is_empty()
+    }
+
+    pub(in crate::app) fn can_paste_into_selected(&self) -> bool {
+        self.editing
+            && self.can_edit()
+            && self.selected_nodes.len() == 1
+            && self.document.as_ref().is_some_and(|document| {
+                self.selected_nodes.iter().next().is_some_and(|&id| {
+                    document
+                        .nodes
+                        .get(id)
+                        .is_some_and(|node| matches!(node.kind, Kind::Object | Kind::Array))
+                })
+            })
+    }
+
+    /// Скопировать выбранные узлы диаграммы в буфер обмена.
+    pub(in crate::app) fn copy_selected(&mut self, locale: Locale) {
+        if !self.can_copy_selected() {
+            return;
+        }
+        let mut selected_paths = std::collections::BTreeSet::new();
+        for &id in &self.selected_nodes {
+            match self.selected_source_node_at(id) {
+                Ok((path, _)) => {
+                    selected_paths.insert(path);
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        let Some(document) = &self.document else {
+            return;
+        };
+        let format = document.format;
+        let (root, _) = match struct_view_core::parser::parse_data(&self.source, Some(format)) {
+            Ok(result) => result,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+        let entries = match selected_structures(&root, &selected_paths) {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+        let encoded = match encode_structures(&entries) {
+            Ok(encoded) => encoded,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+        self.clipboard_payload = Some(entries.clone());
+        match copy_to_clipboard(&encoded) {
+            Ok(()) => {
+                self.notice = Some(locale.structures_copied(entries.len()));
+                self.error = None;
+            }
+            Err(error) => self.error = Some(locale.system_copy_error(&error)),
+        }
+    }
+
+    /// Вставить структуры из буфера обмена в выбранный контейнер диаграммы.
+    pub(in crate::app) fn paste_into_selected(&mut self, locale: Locale) {
+        if !self.can_paste_into_selected() {
+            return;
+        }
+        let Some(&id) = self.selected_nodes.iter().next() else {
+            return;
+        };
+        let target_path = match self.selected_source_node_at(id) {
+            Ok((path, _)) => path,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+
+        let entries = match read_from_clipboard() {
+            Ok(text) => decode_structures(&text),
+            Err(system_error) => self
+                .clipboard_payload
+                .clone()
+                .ok_or_else(|| locale.clipboard_read_error(&system_error)),
+        };
+        let entries = match entries {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+
+        let Some(document) = &self.document else {
+            return;
+        };
+        let format = document.format;
+        let (mut root, _) = match struct_view_core::parser::parse_data(&self.source, Some(format)) {
+            Ok(result) => result,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+        let count = match paste_structures_at_path(&mut root, &target_path, &entries) {
+            Ok(count) => count,
+            Err(error) => {
+                self.error = Some(locale.paste_error(&error));
+                return;
+            }
+        };
+        let source = match struct_view_core::parser::serialize_node(&root, format, false) {
+            Ok(source) => source,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+        let document = match struct_view_core::structure::parse(&source, Some(format)) {
+            Ok(document) => document,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+        self.source = source;
+        self.reset(&document);
+        self.document = Some(document);
+        self.unsaved = true;
+        self.source_changed = false;
+        self.notice = Some(locale.structures_pasted(count));
+        self.error = None;
+    }
+
     pub(in crate::app) fn set_editing(&mut self, editing: bool) {
         self.editing = editing;
         if !editing {
@@ -49,9 +194,10 @@ impl StructureView {
         let result = self.selected_source_node();
         match result {
             Ok((path, source_node)) => {
-                let key_editable = node
-                    .parent
-                    .is_some_and(|parent| document.nodes[parent].kind == Kind::Object);
+                let key_editable = node.kind != Kind::Comment
+                    && node
+                        .parent
+                        .is_some_and(|parent| document.nodes[parent].kind == Kind::Object);
                 let value = node.value.clone();
                 let value_type = source_node.value_type.clone();
                 self.edit_dialog = Some(StructureEditDialog {
@@ -190,10 +336,20 @@ impl StructureView {
         let (mut root, _) =
             struct_view_core::parser::parse_data(&self.source, Some(document.format))
                 .map_err(|error| error.to_string())?;
-        document
+        let selected_node = document
             .nodes
             .get(selected)
             .ok_or_else(|| "Выбранный узел не найден".to_string())?;
+        if selected_node.kind == Kind::Comment {
+            let source_node = root
+                .children
+                .iter()
+                .find(|child| {
+                    child.value_type == JsonValueType::Comment && child.path == selected_node.path
+                })
+                .ok_or_else(|| "Не найден комментарий в исходном тексте".to_string())?;
+            return Ok((source_node.path.clone(), source_node.clone()));
+        }
 
         let mut ancestors = Vec::new();
         let mut cursor = Some(selected);
@@ -241,6 +397,7 @@ impl StructureView {
             .as_ref()
             .map_or(self.format.unwrap_or(DataFormat::Json), |doc| doc.format);
         let is_edit = matches!(&dialog.target, StructureEditTarget::Edit { .. });
+        let is_comment_edit = is_edit && dialog.value_type == JsonValueType::Comment;
         let key_editable = match &dialog.target {
             StructureEditTarget::Add { is_object, .. } => *is_object,
             StructureEditTarget::Edit { key_editable, .. } => *key_editable,
@@ -271,7 +428,7 @@ impl StructureView {
                     egui::ComboBox::from_id_salt("structure_edit_type")
                         .selected_text(locale.value_type_label(&dialog.value_type))
                         .show_ui(ui, |ui| {
-                            for value_type in field_value_types(format, false, false) {
+                            for value_type in field_value_types(format, false, is_comment_edit) {
                                 ui.selectable_value(
                                     &mut dialog.value_type,
                                     value_type.clone(),
@@ -371,6 +528,11 @@ impl StructureView {
 
     pub(super) fn apply_edit_dialog(&mut self, dialog: &StructureEditDialog) -> Result<(), String> {
         let selected = self.selected;
+        let selected_path = self
+            .document
+            .as_ref()
+            .and_then(|document| document.nodes.get(selected))
+            .map(|node| node.path.clone());
         let format = self
             .document
             .as_ref()
@@ -415,11 +577,13 @@ impl StructureView {
         let source = struct_view_core::parser::serialize_node(&root, format, false)?;
         let document = struct_view_core::structure::parse(&source, Some(format))
             .map_err(|error| error.to_string())?;
+        let selected_after_edit = selected_path
+            .and_then(|path| document.nodes.iter().position(|node| node.path == path))
+            .or_else(|| (selected < document.nodes.len()).then_some(selected));
         self.source = source;
         self.reset(&document);
-        let node_count = document.nodes.len();
         self.document = Some(document);
-        if selected < node_count {
+        if let Some(selected) = selected_after_edit {
             self.select(selected, true);
         }
         self.source_changed = false;

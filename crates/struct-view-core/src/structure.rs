@@ -1,7 +1,9 @@
 //! Independent, source-ordered data hierarchy. YAML aliases remain leaves.
 
-use crate::parser::{DataFormat, ParseError};
-use serde::Deserialize;
+use crate::parser::{DataFormat, ParseError, extract_comments};
+use serde::de::{MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer};
+use std::fmt;
 
 mod yaml;
 
@@ -17,6 +19,7 @@ pub enum Kind {
     Null,
     Date,
     Reference,
+    Comment,
 }
 
 #[derive(Debug)]
@@ -60,6 +63,96 @@ impl Raw {
     }
 }
 
+enum Json5Value {
+    Object(Vec<(String, Json5Value)>),
+    Array(Vec<Json5Value>),
+    String(String),
+    Number(String),
+    Bool(bool),
+    Null,
+}
+
+struct Json5ValueVisitor;
+
+impl<'de> Visitor<'de> for Json5ValueVisitor {
+    type Value = Json5Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON5 value")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(Json5Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(Json5Value::Number(value.to_string()))
+    }
+
+    fn visit_i128<E>(self, value: i128) -> Result<Self::Value, E> {
+        Ok(Json5Value::Number(value.to_string()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(Json5Value::Number(value.to_string()))
+    }
+
+    fn visit_u128<E>(self, value: u128) -> Result<Self::Value, E> {
+        Ok(Json5Value::Number(value.to_string()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
+        Ok(Json5Value::Number(value.to_string()))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(Json5Value::String(value.to_string()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(Json5Value::String(value))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(Json5Value::Null)
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(Json5Value::Null)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(Json5Value::Array(values))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut entries = Vec::new();
+        while let Some(entry) = map.next_entry()? {
+            entries.push(entry);
+        }
+        Ok(Json5Value::Object(entries))
+    }
+}
+
+impl<'de> Deserialize<'de> for Json5Value {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(Json5ValueVisitor)
+    }
+}
+
 fn error(message: impl Into<String>, line: Option<usize>) -> ParseError {
     ParseError {
         message: message.into(),
@@ -74,18 +167,21 @@ pub fn parse(input: &str, format: Option<DataFormat>) -> Result<Document, ParseE
     let format = format.unwrap_or_else(|| {
         if serde_json::from_str::<serde_json::Value>(input).is_ok() {
             DataFormat::Json
+        } else if json5::from_str::<Json5Value>(input).is_ok() {
+            DataFormat::Json5
         } else if toml::from_str::<toml::Value>(input).is_ok() {
             DataFormat::Toml
         } else {
             DataFormat::Yaml
         }
     });
-    let raw = match format {
+    let mut raw = match format {
         DataFormat::Json => {
             let raw: &serde_json::value::RawValue =
                 serde_json::from_str(input).map_err(json_error)?;
             json(raw.get(), 0)?
         }
+        DataFormat::Json5 => json5(input, 0)?,
         DataFormat::Toml => {
             let value = input.parse::<toml_edit::DocumentMut>().map_err(|e| {
                 let offset = e
@@ -103,11 +199,20 @@ pub fn parse(input: &str, format: Option<DataFormat>) -> Result<Document, ParseE
         DataFormat::Yaml => yaml::parse(input)?,
         _ => {
             return Err(error(
-                "Structure mode supports JSON, YAML and TOML only",
+                "Structure mode supports JSON, JSON5, YAML and TOML only",
                 None,
             ));
         }
     };
+    let comments = extract_comments(input, format);
+    if !comments.is_empty() {
+        let mut comment_children = comments
+            .into_iter()
+            .map(|comment| (String::new(), Raw::leaf(Kind::Comment, comment)))
+            .collect::<Vec<_>>();
+        comment_children.append(&mut raw.children);
+        raw.children = comment_children;
+    }
     let mut document = Document {
         format,
         nodes: Vec::new(),
@@ -193,6 +298,37 @@ fn json(input: &str, depth: usize) -> Result<Raw, ParseError> {
     })
 }
 
+fn json5(input: &str, depth: usize) -> Result<Raw, ParseError> {
+    let value = json5::from_str::<Json5Value>(input)
+        .map_err(|parse_error| error(parse_error.to_string(), None))?;
+    json5_node(value, depth)
+}
+
+fn json5_node(value: Json5Value, depth: usize) -> Result<Raw, ParseError> {
+    check_depth(depth)?;
+    match value {
+        Json5Value::Object(entries) => Ok(Raw::container(
+            Kind::Object,
+            entries
+                .into_iter()
+                .map(|(key, child)| Ok((key, json5_node(child, depth + 1)?)))
+                .collect::<Result<_, ParseError>>()?,
+        )),
+        Json5Value::Array(values) => Ok(Raw::container(
+            Kind::Array,
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(index, child)| Ok((index.to_string(), json5_node(child, depth + 1)?)))
+                .collect::<Result<_, ParseError>>()?,
+        )),
+        Json5Value::String(value) => Ok(Raw::leaf(Kind::String, value)),
+        Json5Value::Number(value) => Ok(Raw::leaf(Kind::Number, value)),
+        Json5Value::Bool(value) => Ok(Raw::leaf(Kind::Bool, value.to_string())),
+        Json5Value::Null => Ok(Raw::leaf(Kind::Null, "null".into())),
+    }
+}
+
 fn toml_table(table: &toml_edit::Table, depth: usize) -> Result<Raw, ParseError> {
     check_depth(depth)?;
     Ok(Raw::container(
@@ -262,8 +398,15 @@ fn flatten(
         value: raw.value,
         children: Vec::new(),
     });
+    let mut comment_index = 0;
     for (key, child) in raw.children {
-        let child_path = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
+        let child_path = if child.kind == Kind::Comment {
+            let child_path = format!("{path}::comment[{comment_index}]");
+            comment_index += 1;
+            child_path
+        } else {
+            format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"))
+        };
         let child_id = flatten(child, key, Some(id), child_path, nodes);
         nodes[id].children.push(child_id);
     }
@@ -295,6 +438,30 @@ mod tests {
                 assert!(doc.nodes[parent].children.contains(&id));
             }
         }
+    }
+
+    #[test]
+    fn supported_comments_and_json5_are_parsed_as_structure_nodes() {
+        for (input, format, expected_comment) in [
+            ("// first\n{z: 1, a: 2,}", DataFormat::Json5, "// first"),
+            ("# first\nz: 1\na: 2", DataFormat::Yaml, "# first"),
+            ("# first\nz = 1\na = 2", DataFormat::Toml, "# first"),
+        ] {
+            let document = parse(input, Some(format)).unwrap();
+            let comment = document
+                .nodes
+                .iter()
+                .find(|node| node.kind == Kind::Comment)
+                .unwrap();
+            assert_eq!(comment.value, expected_comment);
+            assert_eq!(comment.path, "::comment[0]");
+            assert_eq!(comment.parent, Some(0));
+        }
+
+        let json5 = parse("// detected\n{z: 1, a: 2,}", None).unwrap();
+        assert_eq!(json5.format, DataFormat::Json5);
+        assert_eq!(json5.nodes[2].key, "z");
+        assert_eq!(json5.nodes[3].key, "a");
     }
 
     #[test]

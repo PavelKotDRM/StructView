@@ -16,6 +16,7 @@ fn legend_displays_matching_color_swatches_with_accessible_labels() {
                 (Kind::Object, TextKey::LegendObject),
                 (Kind::Array, TextKey::LegendArray),
                 (Kind::String, TextKey::LegendString),
+                (Kind::Comment, TextKey::TypeComment),
                 (Kind::Number, TextKey::LegendNumber),
                 (Kind::Bool, TextKey::LegendBool),
                 (Kind::Null, TextKey::LegendNull),
