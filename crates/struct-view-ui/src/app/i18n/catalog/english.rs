@@ -86,6 +86,9 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::HelpParentCollapse => "Collapse or go to parent",
         TextKey::HelpChildExpand => "Expand or go to child",
         TextKey::HelpNeighbors => "Incoming/outgoing neighbor, or another connected node",
+        TextKey::HelpPinRouteTooltip => {
+            "Hold while moving from a connection to its popup; release there to scroll"
+        }
         TextKey::HelpSelectNode => "Select current node",
         TextKey::HelpToggleSelection => "Toggle node in selection",
         TextKey::HelpRectangle => "Rectangle selection",
@@ -94,6 +97,7 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::HelpWheel => "Wheel",
         TextKey::HelpPinch => "Pinch",
         TextKey::HelpClick => "Click",
+        TextKey::HelpHover => "Hover",
         TextKey::BuildInformation => "Build information",
         TextKey::BuildTime => "Build time",
         TextKey::TargetPlatform => "Target platform",

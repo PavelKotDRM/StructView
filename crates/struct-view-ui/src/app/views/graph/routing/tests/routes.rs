@@ -124,7 +124,41 @@ fn indexed_graph_conflicts_match_exhaustive_checks_when_routes_are_added_increme
 }
 
 #[test]
-fn route_simplification_removes_collinear_backtracking() {
+fn indexed_graph_overlap_detection_rejects_shared_segments_not_endpoint_touches() {
+    let index = GraphRouteSegmentIndex::new(&[vec![Pos2::ZERO, Pos2::new(100.0, 0.0)]]);
+    assert!(index.overlaps_segment(Pos2::new(40.0, 0.0), Pos2::new(80.0, 0.0)));
+    assert!(index.overlaps_segment(Pos2::new(80.0, 0.0), Pos2::new(40.0, 0.0)));
+    assert!(!index.overlaps_segment(Pos2::new(100.0, 0.0), Pos2::new(140.0, 0.0)));
+    assert!(!index.overlaps_segment(Pos2::new(50.0, -20.0), Pos2::new(50.0, 20.0)));
+}
+
+#[test]
+fn shared_segment_penalty_scales_with_overlap_and_is_bounded() {
+    let short_overlap = segment_pair_penalty(
+        Pos2::ZERO,
+        Pos2::new(100.0, 0.0),
+        [Pos2::new(49.0, 0.0), Pos2::new(51.0, 0.0)],
+    );
+    let long_overlap = segment_pair_penalty(
+        Pos2::ZERO,
+        Pos2::new(1_000.0, 0.0),
+        [Pos2::new(100.0, 0.0), Pos2::new(900.0, 0.0)],
+    );
+    let medium_overlap = segment_pair_penalty(
+        Pos2::ZERO,
+        Pos2::new(100.0, 0.0),
+        [Pos2::new(30.0, 0.0), Pos2::new(70.0, 0.0)],
+    );
+    assert_eq!(short_overlap, GRAPH_EDGE_SHARED_SEGMENT_PENALTY_MINIMUM);
+    assert!(short_overlap < medium_overlap && medium_overlap < long_overlap);
+    assert_eq!(
+        long_overlap, GRAPH_EDGE_SHARED_SEGMENT_PENALTY_LIMIT,
+        "Long overlaps must not make a distant detour cheaper"
+    );
+}
+
+#[test]
+fn route_simplification_preserves_collinear_backtracking() {
     let points = [
         Pos2::new(0.0, 0.0),
         Pos2::new(20.0, 0.0),
@@ -133,7 +167,7 @@ fn route_simplification_removes_collinear_backtracking() {
     ];
     assert_eq!(
         GraphRoutingGrid::simplify_graph_route(points.to_vec()),
-        [Pos2::ZERO, Pos2::new(10.0, 0.0), Pos2::new(10.0, 20.0)]
+        points
     );
 
     let looped_points = [
@@ -144,7 +178,18 @@ fn route_simplification_removes_collinear_backtracking() {
     ];
     assert_eq!(
         GraphRoutingGrid::simplify_graph_route(looped_points.to_vec()),
-        [Pos2::ZERO, Pos2::new(10.0, 0.0)]
+        looped_points
+    );
+
+    let straight_points = [
+        Pos2::ZERO,
+        Pos2::new(10.0, 0.0),
+        Pos2::new(20.0, 0.0),
+        Pos2::new(20.0, 10.0),
+    ];
+    assert_eq!(
+        GraphRoutingGrid::simplify_graph_route(straight_points.to_vec()),
+        [Pos2::ZERO, Pos2::new(20.0, 0.0), Pos2::new(20.0, 10.0)]
     );
 }
 
@@ -175,6 +220,45 @@ fn detour_side_preference_matches_the_route_orientation() {
 }
 
 #[test]
+fn route_avoids_unnecessary_excursion_to_distant_graph_boundary() {
+    let positions = [
+        Pos2::new(100.0, 100.0),
+        Pos2::new(400.0, 100.0),
+        Pos2::new(700.0, 100.0),
+        Pos2::new(4_000.0, 100.0),
+    ];
+    let grid = GraphRoutingGrid::new(&positions);
+    let endpoints = [(0, 2), (0, 2)];
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let routes = route_graph_edges(&grid, &endpoints, &ports, 1);
+    let local_limit = positions[2].x + GRAPH_STEP.x;
+
+    assert!(
+        routes
+            .iter()
+            .all(|route| route.iter().all(|point| point.x < local_limit)),
+        "Routes should use the nearby lane instead of escaping toward unrelated nodes: {routes:?}"
+    );
+}
+
+#[test]
+fn direct_route_detours_when_it_runs_inside_the_edge_clearance() {
+    let positions = [Pos2::new(100.0, 100.0), Pos2::new(700.0, 100.0)];
+    let grid = GraphRoutingGrid::new(&positions);
+    let endpoints = [(0, 1)];
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let existing = vec![vec![Pos2::new(260.0, 106.0), Pos2::new(540.0, 106.0)]];
+
+    let route = grid.route_edge_with_ports(0, 1, ports[0], &existing);
+
+    assert!(route.len() > 2, "Near-parallel edges need separate tracks");
+    assert!(
+        !graph_route_conflicts(&route, &existing),
+        "The direct route must clear the existing track: {route:?}"
+    );
+}
+
+#[test]
 fn dense_parallel_conflict_resolution_is_deterministic_and_preserves_ports() {
     let (grid, _, _) = routing_fixture(4);
     let endpoints = vec![(0, 2); 12];
@@ -187,9 +271,17 @@ fn dense_parallel_conflict_resolution_is_deterministic_and_preserves_ports() {
         );
     }
     let serial = route_graph_edges(&grid, &endpoints, &ports, 1);
+    let mut routed_index = GraphRouteSegmentIndex::new(&[]);
     for (index, route) in expected.iter().enumerate() {
         assert_eq!(route.first(), serial[index].first());
         assert_eq!(route.last(), serial[index].last());
+        let overlap = routed_index
+            .first_overlapping_segment(route, GRAPH_ROUTE_SHARED_SEGMENT_VISIBLE_THRESHOLD);
+        assert!(
+            overlap.is_none(),
+            "Routes must not have visibly shared path sections: {index} {overlap:?} {route:?}"
+        );
+        routed_index.insert_route(route);
         for rect in &grid.node_rects {
             assert!(
                 route.windows(2).all(|segment| {
@@ -474,37 +566,7 @@ fn graph_routing_parallel_timing() {
 #[test]
 #[ignore = "Manual large-fixture routing benchmark; run with --release --ignored --nocapture"]
 fn graph_routing_large_fixture_timing() {
-    let fixture = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/fixtures/large-routing-graph.json"
-    ))
-    .unwrap();
-    let graph: serde_json::Value = serde_json::from_str(&fixture).unwrap();
-    let entities = graph["entities"].as_object().unwrap();
-    let ids = entities.keys().collect::<Vec<_>>();
-    let node_indices = ids
-        .iter()
-        .enumerate()
-        .map(|(index, id)| ((*id).clone(), index))
-        .collect::<std::collections::HashMap<_, _>>();
-    let positions = (0..ids.len())
-        .map(|index| {
-            Pos2::new(
-                128.0 + (index / 20) as f32 * GRAPH_STEP.x,
-                59.0 + (index % 20) as f32 * GRAPH_STEP.y,
-            )
-        })
-        .collect::<Vec<_>>();
-    let edges = graph["relations"]["edges"].as_array().unwrap();
-    let endpoints = edges
-        .iter()
-        .map(|edge| {
-            (
-                node_indices[edge[0].as_str().unwrap()],
-                node_indices[edge[1].as_str().unwrap()],
-            )
-        })
-        .collect::<Vec<_>>();
+    let (positions, endpoints) = large_routing_fixture_inputs();
     assert_eq!(positions.len(), 240);
     assert_eq!(endpoints.len(), 1320);
     let ports = graph_edge_ports(&positions, &endpoints);
@@ -536,6 +598,64 @@ fn graph_routing_large_fixture_timing() {
                 );
             }
         }
+    }
+}
+
+fn large_routing_fixture_inputs() -> (Vec<Pos2>, Vec<(usize, usize)>) {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/large-routing-graph.json"
+    ))
+    .unwrap();
+    let graph: serde_json::Value = serde_json::from_str(&fixture).unwrap();
+    let entities = graph["entities"].as_object().unwrap();
+    let ids = entities.keys().collect::<Vec<_>>();
+    let node_indices = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| ((*id).clone(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    let positions = (0..ids.len())
+        .map(|index| {
+            Pos2::new(
+                128.0 + (index / 20) as f32 * GRAPH_STEP.x,
+                59.0 + (index % 20) as f32 * GRAPH_STEP.y,
+            )
+        })
+        .collect::<Vec<_>>();
+    let edges = graph["relations"]["edges"].as_array().unwrap();
+    let endpoints = edges
+        .iter()
+        .map(|edge| {
+            (
+                node_indices[edge[0].as_str().unwrap()],
+                node_indices[edge[1].as_str().unwrap()],
+            )
+        })
+        .collect::<Vec<_>>();
+    (positions, endpoints)
+}
+
+#[test]
+fn early_large_fixture_routes_stay_near_their_endpoints() {
+    let (positions, all_endpoints) = large_routing_fixture_inputs();
+    let ports = graph_edge_ports(&positions, &all_endpoints);
+    let endpoints = &all_endpoints[..26];
+    let grid = GraphRoutingGrid::new(&positions);
+    let routes = route_graph_edges(&grid, endpoints, &ports[..endpoints.len()], 4);
+    for (index, route) in routes.iter().enumerate() {
+        let (source, target) = endpoints[index];
+        let endpoint_bounds = egui::Rect::from_two_pos(positions[source], positions[target])
+            .expand(
+                2.0 * GRAPH_STEP.x
+                    + GRAPH_NODE_SIZE.x / 2.0
+                    + GRAPH_ROUTE_CLEARANCE
+                    + GRAPH_ROUTE_PORT_LEAD,
+            );
+        assert!(
+            route.iter().all(|point| endpoint_bounds.contains(*point)),
+            "Large fixture route {index} leaves its local endpoint region: {route:?}"
+        );
     }
 }
 

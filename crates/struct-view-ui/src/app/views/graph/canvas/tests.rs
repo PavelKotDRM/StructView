@@ -1,10 +1,50 @@
 use super::*;
+use std::collections::HashSet;
 
 fn graph() -> (RelationshipGraph, GraphRoutingLayout) {
     let root = struct_view_core::parser::parse_json(r#"[{"id":"a","name":"Source","depends_on":"b"},{"id":"b","name":"Target"},{"id":"c","name":"Other"}]"#).unwrap();
     let graph = build_relationship_graph(&root);
     let routing = build_graph_routing_layout(&graph);
     (graph, routing)
+}
+
+#[test]
+fn graph_paths_are_drawn_without_panel_fill_casing() {
+    let (graph, routing) = graph();
+    let ctx = egui::Context::default();
+    let mut panel_fill = egui::Color32::TRANSPARENT;
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                Vec2::new(1000.0, 700.0),
+            )),
+            ..Default::default()
+        },
+        |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                panel_fill = ui.visuals().panel_fill;
+                show_graph(
+                    ui,
+                    &graph,
+                    &routing,
+                    &SearchState::default(),
+                    Locale::English,
+                );
+            });
+        },
+    );
+    assert!(
+        !output.shapes.iter().any(|clipped| {
+            matches!(
+                &clipped.shape,
+                egui::Shape::LineSegment { stroke, .. }
+                    if stroke.color == panel_fill && stroke.width > 2.0
+            )
+        }),
+        "Relationship paths must not be rendered with a wide panel-colored stroke"
+    );
+    output.drop_without_applying_deltas();
 }
 
 fn render(

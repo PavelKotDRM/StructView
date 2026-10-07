@@ -163,6 +163,8 @@ fn controls_help_draws_keycaps_and_accessible_action_rows_without_old_paragraphs
             locale.text(TextKey::HelpParentCollapse),
             locale.text(TextKey::HelpChildExpand),
             locale.text(TextKey::HelpCanvasFocus),
+            locale.text(TextKey::HelpHover),
+            locale.text(TextKey::HelpPinRouteTooltip),
         ] {
             assert!(
                 update

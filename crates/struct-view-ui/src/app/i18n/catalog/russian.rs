@@ -86,6 +86,9 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::HelpParentCollapse => "Свернуть или перейти к родителю",
         TextKey::HelpChildExpand => "Развернуть или перейти к потомку",
         TextKey::HelpNeighbors => "Входящий/исходящий сосед или другой связанный узел",
+        TextKey::HelpPinRouteTooltip => {
+            "Удерживайте при переходе от линии к окну; отпустите клавишу для прокрутки"
+        }
         TextKey::HelpSelectNode => "Выбрать текущий узел",
         TextKey::HelpToggleSelection => "Переключить узел в выделении",
         TextKey::HelpRectangle => "Выделить рамкой",
@@ -94,6 +97,7 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::HelpWheel => "Колесо",
         TextKey::HelpPinch => "Жест",
         TextKey::HelpClick => "Клик",
+        TextKey::HelpHover => "Наведение",
         TextKey::BuildInformation => "Информация о сборке",
         TextKey::BuildTime => "Время сборки",
         TextKey::TargetPlatform => "Целевая платформа",

@@ -11,6 +11,7 @@ egui.workspace = true
 rfd.workspace = true
 resvg = "0.48"
 serde_json.workspace = true
+struct-view-routing.workspace = true
 struct-view-build-info = { path = "../struct-view-build-info" }
 struct-view-core = { path = "../struct-view-core" }
 

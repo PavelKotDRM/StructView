@@ -120,6 +120,8 @@ pub(in crate::app::views::graph) fn layout_graph_edge_label(
     if label.trim().is_empty() {
         return None;
     }
+    let full_text = single_line_text(label).into_owned();
+    let prefer_callout = full_text.chars().count() <= 18;
     let minimum_width =
         single_line_text(label).chars().count().min(6) as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH;
     let mut candidates = vec![edge_label_placement(points, node_rects)];
@@ -163,6 +165,9 @@ pub(in crate::app::views::graph) fn layout_graph_edge_label(
             continue;
         }
         let text = shorten_graph_edge_label(label, width);
+        if prefer_callout && text != full_text {
+            continue;
+        }
         if let Some(background) = place_edge_label(
             &text,
             position,

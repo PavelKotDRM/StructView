@@ -1,0 +1,8 @@
+[package]
+name = "struct-view-routing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Reusable graph pathfinding algorithms"
+
+[dependencies]

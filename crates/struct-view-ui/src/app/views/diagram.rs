@@ -54,6 +54,7 @@ pub(in crate::app) fn show_controls_help(ui: &mut Ui, locale: Locale) {
         "graph-controls-help",
         &[
             (&["←", "→"], TextKey::HelpNeighbors),
+            (&["Ctrl/Cmd", "Hover"], TextKey::HelpPinRouteTooltip),
             (&["Enter", "Space"], TextKey::HelpSelectNode),
             (&["Ctrl/Cmd", "Click"], TextKey::HelpToggleSelection),
             (&["Shift", "Drag"], TextKey::HelpRectangle),
@@ -75,6 +76,7 @@ fn help_rows(ui: &mut Ui, locale: Locale, id: &str, rows: &[(&[&str], TextKey)])
                             "Wheel" => locale.text(TextKey::HelpWheel),
                             "Pinch" => locale.text(TextKey::HelpPinch),
                             "Click" => locale.text(TextKey::HelpClick),
+                            "Hover" => locale.text(TextKey::HelpHover),
                             _ => gesture,
                         };
                         egui::Frame::new()

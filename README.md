@@ -227,7 +227,9 @@ The interface provides:
   Enter/Space select the current node. Selected nodes highlight their connections.
   Hover a connection line or its label to see its full label, direction, and
   endpoint names, identifiers, and document paths. At a crossing, equally
-  close connections are listed together.
+  close connections are listed together. Hold Ctrl/Cmd while hovering a
+  connection line to keep its popup open as you move the pointer into it;
+  release the modifier there to scroll through the connection details.
   `File -> Export diagram -> SVG / PNG` saves the entire graph at its original scale,
   without temporary selection or search highlights. Choose light styling
   with a transparent canvas or dark styling with an opaque dark canvas,
@@ -237,9 +239,10 @@ The interface provides:
   downscaled to at most 16 million pixels to bound memory use, preserving
   the entire graph, aspect ratio, and selected background style. Small images
   retain their original resolution. For full detail at any scale, use SVG.
-  Incoming and outgoing links share distinct, neighbor-ordered card ports;
-  detours use separate tracks where space permits, and relationship labels
-  avoid cards, connection lines, and arrowheads. Displaced labels have dashed
+  Incoming and outgoing links use distinct, neighbor-ordered card ports.
+  Long shared route segments are locally detoured when a clear lane is
+  available; routes may still cross in dense layouts.
+  Relationship labels avoid cards, connection lines, and arrowheads. Displaced labels have dashed
   leaders identifying their connection. If a dense graph has no free space
   near a route, its label is placed in a reserved callout column instead of
   being hidden; the scrollable canvas and exported image expand to include it;
@@ -670,6 +673,8 @@ Cargo workspace crates:
 
 - [`struct-view-core`](crates/struct-view-core/README.md) — parsing, document
   trees, search, and comparison;
+- [`struct-view-routing`](crates/struct-view-routing/README.md) — reusable
+  weighted-graph algorithms, orthogonal routing, and an adjacency-list graph;
 - [`struct-view-cli`](crates/struct-view-cli/README.md) — command-line parsing
   and headless commands;
 - [`struct-view-ui`](crates/struct-view-ui/README.md) — native GUI, views,
