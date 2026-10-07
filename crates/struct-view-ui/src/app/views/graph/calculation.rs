@@ -287,13 +287,51 @@ fn calculate_graph(
         worker_setting,
         search_backend,
         Some(progress),
-    );
+    )?;
     Ok(GraphCalculationResult { graph, routing })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dense_graph_calculation_completes_in_the_background() {
+        let nodes = (0..6)
+            .map(|id| serde_json::json!({"id": id.to_string()}))
+            .collect::<Vec<_>>();
+        let edges = (0..6)
+            .flat_map(|source| {
+                (0..6).map(move |target| {
+                    serde_json::json!({
+                        "source": source.to_string(), "target": target.to_string()
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let input = serde_json::json!({"nodes": nodes, "edges": edges}).to_string();
+        let root = struct_view_core::parser::parse_json(&input).unwrap();
+        let mut state = GraphCalculationState::default();
+        let context = egui::Context::default();
+        state.ensure_started(
+            &root,
+            GraphRoutingWorkerSetting::Manual(4),
+            RoutingSearchBackend::Builtin,
+            &context,
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while state.result().is_none() && state.error().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "graph calculation timed out"
+            );
+            state.poll(&context);
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(state.error().is_none(), "{:?}", state.error());
+        assert_eq!(state.result().unwrap().routing.edge_paths.len(), 36);
+        assert!(state.progress.lock().unwrap().finished.is_some());
+    }
 
     #[test]
     fn image_progress_remains_active_between_calculation_and_rendering() {

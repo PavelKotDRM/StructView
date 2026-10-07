@@ -50,6 +50,41 @@ crossings, shared segments, and indexed A* search. Its geometry types are
 independent of UI frameworks, so an application only needs to convert its
 node rectangles and positions to `Point`, `Size`, and `Rect`.
 
+Unobstructed connections stay straight, even when they cross other edges.
+Otherwise, the selected A* backend minimizes route length plus
+`GRAPH_ROUTE_BEND_COST` (48 units) per bend, including turns at port leads, on
+the retained routing grid, so a short jog is never taken just to save a few
+units of length. Detours keep out of the port-lead band around the route's own
+source and target nodes, which prevents loops back across its own port lead;
+the band is only entered when no other path exists. Among otherwise equal
+routes, the search avoids the straight exits of other reserved ports, so later
+edges can leave their ports without extra bends. There are no crossing
+penalties and no first-found local-route shortcut.
+
+Shared collinear sections are forbidden, including short overlaps and port
+leads. Parallel tracks normally retain the configured edge clearance. If dense
+ports leave no path with that clearance, intermediate tracks are added between
+existing coordinates and lane spacing is relaxed;
+overlapping sections and node obstacles remain forbidden. Incompatible fixed
+ports return `RoutingError::NoOrthogonalPath` instead of an overlapping route.
+Legacy geometry-scoring helpers remain available independently of route search.
+Call `OrthogonalRouter::reserve_port_leads` with all edges and their ports to
+reserve every port lead up front: other routes may cross a reserved lead but never
+run along it, so edges routed later always find their own port entry free.
+
+The graph UI propagates routing failures with the edge endpoints to the
+background-operation error display instead of panicking the calculation worker.
+Spacing is local: only the column and row gaps next to a node with more than
+eight incident edges grow (parallel edges and both ends of self-loops count).
+Each layout pass collects every edge without a free path; the next pass widens
+only the gaps around those edges' endpoints (and, for edges that stay crowded,
+the gaps between their endpoints) and rebuilds ports and routes. Up to eight
+passes run; node card sizes stay unchanged. Only `NoOrthogonalPath` triggers
+expansion; invalid inputs are reported directly. After a successful pass, up to
+two straightening passes compare every route with the same edge routed alone
+and widen the gaps around edges that other routes forced into extra bends or
+noticeably longer paths.
+
 ```rust
 use struct_view_routing::orthogonal::{
     OrthogonalRouter, OrthogonalRouterOptions, Point, RouteIndex, Size, assign_edge_ports,

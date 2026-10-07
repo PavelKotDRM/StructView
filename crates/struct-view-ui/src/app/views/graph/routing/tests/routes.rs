@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn impossible_fixed_ports_return_an_error_without_panicking_workers() {
+    let positions = [Pos2::new(160.0, 100.0), Pos2::new(700.0, 100.0)];
+    let grid = GraphRoutingGrid::new(&positions);
+    let endpoints = [(0, 1), (0, 1)];
+    let port = graph_edge_ports(&positions, &endpoints[..1])[0];
+    for workers in [1, 2] {
+        let error =
+            route_graph_edges_with_progress(&grid, &endpoints, &[port, port], workers, None)
+                .unwrap_err();
+        assert!(
+            error.to_string().contains("Cannot route graph edge 0 -> 1"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn dense_cyclic_graphs_complete_in_serial_and_parallel_without_shared_sections() {
+    let positions = (0..9)
+        .map(|index| {
+            Pos2::new(
+                128.0 + (index / 3) as f32 * 340.0,
+                59.0 + (index % 3) as f32 * 150.0,
+            )
+        })
+        .collect::<Vec<_>>();
+    let endpoints = (0..positions.len())
+        .flat_map(|source| (0..positions.len()).map(move |target| (source, target)))
+        .collect::<Vec<_>>();
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let grid = GraphRoutingGrid::new(&positions);
+    let serial = route_graph_edges_with_progress(&grid, &endpoints, &ports, 1, None).unwrap();
+    let parallel = route_graph_edges_with_progress(&grid, &endpoints, &ports, 4, None).unwrap();
+    assert_eq!(serial, parallel);
+    let mut index = GraphRouteSegmentIndex::new(&[]);
+    for route in &serial {
+        assert!(
+            index.first_overlapping_segment(route, 0.0).is_none(),
+            "{route:?}"
+        );
+        index.insert_route(route);
+    }
+}
+
+#[test]
 fn self_loops_route_outside_cards_with_distinct_ports_and_parallel_tracks() {
     let positions = [Pos2::new(160.0, 100.0), Pos2::new(500.0, 100.0)];
     let grid = GraphRoutingGrid::new(&positions);
@@ -253,9 +298,35 @@ fn direct_route_detours_when_it_runs_inside_the_edge_clearance() {
 
     assert!(route.len() > 2, "Near-parallel edges need separate tracks");
     assert!(
-        !graph_route_conflicts(&route, &existing),
+        !GraphRouteSegmentIndex::new(&existing).parallel_conflicts_route(&route),
         "The direct route must clear the existing track: {route:?}"
     );
+}
+
+#[test]
+fn crossing_routes_stay_straight_in_serial_and_parallel_routing() {
+    let positions = [
+        Pos2::new(200.0, 200.0),
+        Pos2::new(800.0, 800.0),
+        Pos2::new(200.0, 800.0),
+        Pos2::new(800.0, 200.0),
+    ];
+    let endpoints = [(0, 1), (2, 3)];
+    let ports = graph_edge_ports(&positions, &endpoints);
+    let grid = GraphRoutingGrid::new(&positions);
+    let serial = route_graph_edges(&grid, &endpoints, &ports, 1);
+    let parallel = route_graph_edges(&grid, &endpoints, &ports, 2);
+    assert_eq!(serial, parallel);
+    assert!(serial.iter().all(|route| route.len() == 2), "{serial:?}");
+    assert!(segments_intersect(
+        serial[0][0],
+        serial[0][1],
+        serial[1][0],
+        serial[1][1],
+    ));
+    let index = GraphRouteSegmentIndex::new(&serial[..1]);
+    assert!(!index.parallel_conflicts_route(&serial[1]));
+    assert!(index.first_overlapping_segment(&serial[1], 0.0).is_none());
 }
 
 #[test]
@@ -275,11 +346,10 @@ fn dense_parallel_conflict_resolution_is_deterministic_and_preserves_ports() {
     for (index, route) in expected.iter().enumerate() {
         assert_eq!(route.first(), serial[index].first());
         assert_eq!(route.last(), serial[index].last());
-        let overlap = routed_index
-            .first_overlapping_segment(route, GRAPH_ROUTE_SHARED_SEGMENT_VISIBLE_THRESHOLD);
+        let overlap = routed_index.first_overlapping_segment(route, 0.0);
         assert!(
             overlap.is_none(),
-            "Routes must not have visibly shared path sections: {index} {overlap:?} {route:?}"
+            "Routes must not share any path sections: {index} {overlap:?} {route:?}"
         );
         routed_index.insert_route(route);
         for rect in &grid.node_rects {
@@ -544,7 +614,8 @@ fn graph_routing_parallel_timing() {
     for workers in [2, 4, 8] {
         let progress = Arc::new(Mutex::new(GraphProgress::default()));
         let routes =
-            route_graph_edges_with_progress(&grid, &endpoints, &ports, workers, Some(&progress));
+            route_graph_edges_with_progress(&grid, &endpoints, &ports, workers, Some(&progress))
+                .unwrap();
         let mut snapshot = progress.lock().unwrap();
         snapshot.finish();
         let conflict_time = snapshot

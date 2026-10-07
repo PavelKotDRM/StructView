@@ -29,6 +29,7 @@ pub const GRAPH_EDGE_SHARED_SEGMENT_PENALTY_LIMIT: f32 = 5_000_000.0;
 ///
 /// Use `insert_route` after accepting a route, then pass the index to
 /// [`super::OrthogonalRouter::route_edge`] to steer later routes away from it.
+#[derive(Debug)]
 pub struct RouteIndex {
     segments: Vec<[Point; 2]>,
     buckets: HashMap<(i32, i32), Vec<usize>>,
@@ -73,6 +74,43 @@ impl RouteIndex {
         route
             .windows(2)
             .any(|segment| self.conflicts_segment(segment[0], segment[1], self.edge_clearance))
+    }
+
+    /// Whether parallel sections overlap or run closer than the lane clearance.
+    /// Non-parallel crossings and endpoint touches are allowed.
+    pub fn parallel_conflicts_route(&self, route: &[Point]) -> bool {
+        route.windows(2).any(|segment| {
+            self.parallel_conflicts_segment(segment[0], segment[1], self.edge_clearance)
+        })
+    }
+
+    /// Test lane separation without treating crossings as routing obstacles.
+    pub fn parallel_conflicts_segment(&self, start: Point, end: Point, clearance: f32) -> bool {
+        if !clearance.is_finite() || clearance < 0.0 {
+            return true;
+        }
+        self.indices_near(start, end, clearance.max(self.edge_clearance))
+            .into_iter()
+            .any(|index| {
+                let [other_start, other_end] = self.segments[index];
+                let direction = end - start;
+                let other_direction = other_end - other_start;
+                let length = direction.length();
+                let other_length = other_direction.length();
+                if length <= f32::EPSILON || other_length <= f32::EPSILON {
+                    return false;
+                }
+                if cross_product(direction, other_direction).abs() > length * other_length * 0.00001
+                {
+                    return false;
+                }
+                let unit = direction / length;
+                let distance = cross_product(unit, other_start - start).abs();
+                let first = (other_start - start).dot(unit);
+                let second = (other_end - start).dot(unit);
+                let overlap = length.min(first.max(second)) - 0.0_f32.max(first.min(second));
+                overlap > 0.01 && (distance < clearance || distance <= 0.01)
+            })
     }
 
     /// Whether the segment is within `clearance` of an indexed segment.
@@ -155,6 +193,28 @@ impl RouteIndex {
                     self.segments[index][1],
                 )
             })
+    }
+
+    /// Total collinear overlap with indexed segments other than `excluded` ones.
+    pub fn collinear_overlap_length(
+        &self,
+        start: Point,
+        end: Point,
+        excluded: &[[Point; 2]],
+    ) -> f32 {
+        self.indices_near(start, end, 0.0)
+            .into_iter()
+            .filter(|&index| !excluded.contains(&self.segments[index]))
+            .filter_map(|index| {
+                collinear_segment_overlap(
+                    start,
+                    end,
+                    self.segments[index][0],
+                    self.segments[index][1],
+                )
+            })
+            .map(|(_, length)| length)
+            .sum()
     }
 
     /// Cost of routing a segment near, across, or along existing routes.

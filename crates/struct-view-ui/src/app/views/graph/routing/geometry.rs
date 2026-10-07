@@ -39,9 +39,15 @@ impl GraphRouteSegmentIndex {
             .expect("graph route geometry must be finite");
     }
 
+    #[cfg(test)]
     pub(super) fn conflicts_route(&self, route: &[Pos2]) -> bool {
         self.inner
             .conflicts_route(&route.iter().copied().map(route_point).collect::<Vec<_>>())
+    }
+
+    pub(super) fn parallel_conflicts_route(&self, route: &[Pos2]) -> bool {
+        self.inner
+            .parallel_conflicts_route(&route.iter().copied().map(route_point).collect::<Vec<_>>())
     }
 
     #[cfg(test)]

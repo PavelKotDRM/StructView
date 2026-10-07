@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn densely_connected_graph_layout_has_room_for_all_routes() {
+    let nodes = (0..10)
+        .map(|id| serde_json::json!({"id": id.to_string()}))
+        .collect::<Vec<_>>();
+    let edges = (0..10)
+        .flat_map(|source| {
+            (0..10).map(move |target| {
+                serde_json::json!({
+                    "source": source.to_string(), "target": target.to_string()
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let graph = layout_graph(&serde_json::json!({"nodes": nodes, "edges": edges}).to_string());
+    let layout = build_graph_routing_layout(&graph);
+    assert_eq!(layout.edge_paths.len(), 100);
+    let mut rows = layout
+        .node_positions
+        .iter()
+        .map(|point| point.y)
+        .collect::<Vec<_>>();
+    rows.sort_by(f32::total_cmp);
+    assert!(
+        rows.windows(2)
+            .all(|pair| pair[1] - pair[0] >= GRAPH_STEP.y + 120.0)
+    );
+    let mut index = GraphRouteSegmentIndex::new(&[]);
+    for route in &layout.edge_paths {
+        assert!(index.first_overlapping_segment(route, 0.0).is_none());
+        index.insert_route(route);
+        for &position in &layout.node_positions {
+            let rect = egui::Rect::from_center_size(position, GRAPH_NODE_SIZE);
+            assert!(
+                route
+                    .windows(2)
+                    .all(|pair| { !segment_crosses_rect_interior(pair[0], pair[1], rect) })
+            );
+        }
+    }
+}
+
+#[test]
 fn relationship_layout_follows_direction_instead_of_document_order() {
     let graph = layout_graph(
         r#"[{"id":"end"},{"id":"middle","depends_on":"end"},{"id":"start","depends_on":"middle"}]"#,
@@ -263,7 +305,8 @@ fn headless_graph_image_reports_finished_progress_and_stage_timings() {
 fn parallel_graph_progress_counts_completed_edges_and_preserves_routes() {
     let (grid, endpoints, ports) = routing_fixture(16);
     let progress = Arc::new(Mutex::new(GraphProgress::default()));
-    let routes = route_graph_edges_with_progress(&grid, &endpoints, &ports, 4, Some(&progress));
+    let routes =
+        route_graph_edges_with_progress(&grid, &endpoints, &ports, 4, Some(&progress)).unwrap();
     assert_eq!(routes, route_graph_edges(&grid, &endpoints, &ports, 4));
     let mut snapshot = progress.lock().unwrap();
     assert_eq!(snapshot.stage, Some(GraphStage::Conflicts));

@@ -211,8 +211,17 @@ The interface provides:
   snapshot of accepted routes. Results are accepted in a fixed order; stale
   conflicting proposals are recalculated before acceptance. Small graphs
   and single-CPU systems use sequential routing.
-  Routing uses a spatial segment index and caches search-step penalties to
+  Routing uses a spatial segment index and caches obstacle and lane checks to
   avoid repeatedly checking distant links during conflict resolution.
+  Routes may cross other edges but cannot share collinear sections or pass
+  through nodes. Obstructed routes minimize length plus a fixed cost per bend
+  (including turns at port leads), do not loop back around their own port
+  entries, and among equal routes keep other ports' straight exits free.
+  Port entries are reserved so other routes cannot occupy them. Only the gaps
+  next to highly connected nodes grow. If routing still runs out of space,
+  retries widen only the gaps around the crowded edges and recompute ports and
+  routes without allowing shared sections. Up to two further passes widen the
+  gaps around routes that other edges forced into extra bends or detours.
   Nodes are arranged by relationships rather than document order: directed
   acyclic connections flow left to right, cycles share a layer, disconnected
   components have separate row bands, and partitioned graphs retain their

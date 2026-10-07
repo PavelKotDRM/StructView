@@ -1053,7 +1053,7 @@ fn detoured_parallel_graph_edges_have_separate_tracks() {
 }
 
 #[test]
-fn crossing_graph_edges_are_routed_onto_separate_tracks() {
+fn crossing_graph_edges_remain_straight_without_shared_sections() {
     let positions = [
         egui::pos2(128.0, 59.0),
         egui::pos2(468.0, 59.0),
@@ -1067,23 +1067,20 @@ fn crossing_graph_edges_are_routed_onto_separate_tracks() {
     let second = routing_grid.route_edge_with_ports(1, 2, ports[1], std::slice::from_ref(&first));
 
     assert_eq!(first.len(), 2);
-    assert!(
-        second.len() > 2,
-        "The crossing edge should take a detour: {second:?}"
+    assert_eq!(
+        second.len(),
+        2,
+        "The crossing edge should stay straight: {second:?}"
     );
-    assert!(
-        second.windows(2).all(|second_segment| {
-            first.windows(2).all(|first_segment| {
-                !super::graph::segments_within_clearance(
-                    second_segment[0],
-                    second_segment[1],
-                    first_segment[0],
-                    first_segment[1],
-                    super::graph::GRAPH_EDGE_CLEARANCE,
-                )
-            })
-        }),
-        "Routes overlap: first={first:?}, second={second:?}"
+    assert!(super::graph::segments_within_clearance(
+        first[0], first[1], second[0], second[1], 0.0
+    ));
+    let first_direction = first[1] - first[0];
+    let second_direction = second[1] - second[0];
+    assert_ne!(
+        first_direction.x * second_direction.y - first_direction.y * second_direction.x,
+        0.0,
+        "Straight routes must not share a collinear section"
     );
 }
 

@@ -41,7 +41,7 @@ fn edge_label_placement(points: &[Pos2], node_rects: &[egui::Rect]) -> (Pos2, Al
         );
     }
 
-    let segment = points
+    let Some(segment) = points
         .windows(2)
         .filter(|segment| segment[0].x == segment[1].x)
         .max_by(|left, right| {
@@ -49,7 +49,16 @@ fn edge_label_placement(points: &[Pos2], node_rects: &[egui::Rect]) -> (Pos2, Al
                 .abs()
                 .total_cmp(&(right[0].y - right[1].y).abs())
         })
-        .expect("a detoured graph route must contain a vertical segment");
+    else {
+        // Short purely horizontal (collinear) routes have no vertical segment to label.
+        let start = points.first().copied().unwrap_or(Pos2::ZERO);
+        let end = points.last().copied().unwrap_or(start);
+        return (
+            Pos2::new((start.x + end.x) / 2.0, (start.y + end.y) / 2.0 - 8.0),
+            Align2::CENTER_CENTER,
+            ((end - start).length() - 8.0).max(0.0),
+        );
+    };
     let midpoint = (segment[0].y + segment[1].y) / 2.0;
     let left_space = node_rects
         .iter()

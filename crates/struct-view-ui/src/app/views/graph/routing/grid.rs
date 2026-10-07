@@ -64,12 +64,57 @@ impl GraphRoutingGrid {
         }
     }
 
+    /// Keeps every edge's port entry free from routes of other edges.
+    pub(in crate::app::views::graph) fn reserve_port_leads(
+        &mut self,
+        endpoints: &[(usize, usize)],
+        ports: &[GraphEdgePorts],
+    ) {
+        self.inner
+            .reserve_port_leads(endpoints, ports)
+            .expect("the UI graph layout supplies matching edges and ports");
+    }
+
+    /// Edges whose routes are worse than they would be without other edges: they need extra
+    /// bends or a noticeably longer path, so more space around them would straighten them.
+    /// Call this on a grid without reserved port leads.
+    pub(in crate::app::views::graph) fn detoured_edges(
+        &self,
+        endpoints: &[(usize, usize)],
+        ports: &[GraphEdgePorts],
+        routes: &[Vec<Pos2>],
+    ) -> Vec<(usize, usize)> {
+        // Parallel lanes of edges between the same nodes may differ by a few lane offsets.
+        const LENGTH_TOLERANCE: f32 = 24.0;
+        let length = |route: &[Pos2]| {
+            route
+                .windows(2)
+                .map(|pair| pair[0].distance(pair[1]))
+                .sum::<f32>()
+        };
+        let empty = GraphRouteSegmentIndex::new(&[]);
+        endpoints
+            .iter()
+            .zip(ports)
+            .zip(routes)
+            .filter(|&((&(source, target), &edge_ports), route)| {
+                self.route_edge_with_index(source, target, edge_ports, &empty)
+                    .is_ok_and(|alone| {
+                        route.len() > alone.len()
+                            || length(route) > length(&alone) + LENGTH_TOLERANCE
+                    })
+            })
+            .map(|((&endpoints, _), _)| endpoints)
+            .collect()
+    }
+
     #[cfg(test)]
     pub(in crate::app::views) fn route_edge(&self, source: usize, target: usize) -> Vec<Pos2> {
         let ports = graph_edge_ports(&self.node_positions, &[(source, target)])[0];
         self.route_edge_with_ports(source, target, ports, &[])
     }
 
+    #[cfg(test)]
     pub(in crate::app::views) fn route_edge_with_ports(
         &self,
         source: usize,
@@ -79,6 +124,7 @@ impl GraphRoutingGrid {
     ) -> Vec<Pos2> {
         let route_index = GraphRouteSegmentIndex::new(routed_edges);
         self.route_edge_with_index(source, target, edge_ports, &route_index)
+            .expect("test graph must have a valid route")
     }
 
     pub(super) fn route_edge_with_index(
@@ -87,13 +133,15 @@ impl GraphRoutingGrid {
         target: usize,
         edge_ports: GraphEdgePorts,
         routed_edge_index: &GraphRouteSegmentIndex,
-    ) -> Vec<Pos2> {
+    ) -> struct_view_routing::RoutingResult<Vec<Pos2>> {
         self.inner
             .route_edge(source, target, edge_ports, &routed_edge_index.inner)
-            .expect("the UI graph router supplies valid endpoints and route geometry")
-            .into_iter()
-            .map(|point| Pos2::new(point.x, point.y))
-            .collect()
+            .map(|route| {
+                route
+                    .into_iter()
+                    .map(|point| Pos2::new(point.x, point.y))
+                    .collect()
+            })
     }
 
     #[cfg(test)]

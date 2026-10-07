@@ -13,9 +13,13 @@ pub const DEFAULT_ROUTE_TRACK_LIMIT: usize = 128;
 
 const ROUTING_OBSTACLE_CELL_SIZE: f32 = 256.0;
 const ROUTE_PORT_LEAD_EXTRA: f32 = 2.0;
-/// Cost added for each turn, including turns at the endpoint port leads.
+/// Legacy bend scoring weight used by geometry-scoring helpers.
 pub const GRAPH_ROUTE_TURN_PENALTY: f32 = 96.0;
-/// Cost for taking the less-preferred side around an obstacle.
+/// Search cost of one bend, in the same units as route length.
+pub const GRAPH_ROUTE_BEND_COST: f32 = 48.0;
+/// Tie-breaking cost per unit of length run along another port's straight exit.
+const PORT_EXIT_RAY_COST: f64 = 0.01;
+/// Cost for traversing the full span of an obstacle on its less-preferred side.
 pub const GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY: f32 = 240.0;
 const GRAPH_ROUTE_DIRECTIONS: usize = 2;
 const GRAPH_ROUTE_HORIZONTAL: usize = 0;
@@ -29,17 +33,22 @@ struct PortGeometry {
     outward: Vector,
 }
 
+/// Nodes whose port-lead band a detour must stay out of.
 #[derive(Clone, Copy)]
-struct RoutePreferences<'a> {
-    direct_direction: Vector,
-    detoured_obstacles: &'a [Rect],
+enum LeadZones {
+    /// Only prevents a route from looping back around its own source and target cards.
+    Endpoints(usize, usize),
+    None,
 }
 
 #[derive(Clone, Copy)]
 struct RouteSearchOptions<'a> {
     segment_index: &'a RouteIndex,
-    preferences: RoutePreferences<'a>,
-    conflict_clearance: Option<f32>,
+    reserved_port_leads: &'a RouteIndex,
+    port_exit_rays: &'a RouteIndex,
+    own_exit_rays: [[Point; 2]; 2],
+    lead_zones: LeadZones,
+    lane_clearance: f32,
     start_direction: usize,
     goal_direction: usize,
 }
@@ -54,7 +63,7 @@ pub struct OrthogonalRouterOptions {
     pub obstacle_clearance: f32,
     /// Clearance used to separate unrelated routes.
     pub edge_clearance: f32,
-    /// Layout step used to bound local searches.
+    /// Layout spacing supplied by the caller; retained for API compatibility.
     pub grid_step: Size,
     /// Maximum additional track coordinates retained on each axis.
     pub track_limit: usize,
@@ -91,9 +100,12 @@ pub struct OrthogonalRouter {
     routed_nodes: Vec<bool>,
     node_rects: Vec<Rect>,
     obstacles: Vec<Rect>,
+    lead_zones: Vec<Rect>,
     obstacle_buckets: HashMap<(i32, i32), Vec<usize>>,
     x_coordinates: Vec<f32>,
     y_coordinates: Vec<f32>,
+    reserved_port_leads: RouteIndex,
+    port_exit_rays: RouteIndex,
     options: OrthogonalRouterOptions,
 }
 
@@ -137,9 +149,14 @@ impl OrthogonalRouter {
         {
             return Err(RoutingError::InvalidGeometry);
         }
+        // Detours stay outside the port-lead band so they cannot loop back over port leads.
+        let lead_zones = obstacles
+            .iter()
+            .map(|rect| rect.expand(options.edge_clearance + ROUTE_PORT_LEAD_EXTRA))
+            .collect::<Vec<_>>();
         let mut obstacle_buckets = HashMap::<(i32, i32), Vec<usize>>::new();
         for &index in &unique_routed_nodes {
-            for cell in routing_grid_cells(obstacles[index]) {
+            for cell in routing_grid_cells(lead_zones[index]) {
                 obstacle_buckets.entry(cell).or_default().push(index);
             }
         }
@@ -147,9 +164,12 @@ impl OrthogonalRouter {
         let mut y_coordinates = Vec::with_capacity(unique_routed_nodes.len() * 3);
         for &index in &unique_routed_nodes {
             let center = node_positions[index];
-            let obstacle = obstacles[index];
-            x_coordinates.extend([obstacle.left(), center.x, obstacle.right()]);
-            y_coordinates.extend([obstacle.top(), center.y, obstacle.bottom()]);
+            for zone in [obstacles[index], lead_zones[index]] {
+                x_coordinates.extend([zone.left(), zone.right()]);
+                y_coordinates.extend([zone.top(), zone.bottom()]);
+            }
+            x_coordinates.push(center.x);
+            y_coordinates.push(center.y);
         }
         sort_unique_coordinates(&mut x_coordinates);
         sort_unique_coordinates(&mut y_coordinates);
@@ -159,11 +179,86 @@ impl OrthogonalRouter {
             routed_nodes: routed_node_mask,
             node_rects,
             obstacles,
+            lead_zones,
             obstacle_buckets,
             x_coordinates,
             y_coordinates,
+            reserved_port_leads: RouteIndex::new(&[], options.edge_clearance)?,
+            port_exit_rays: RouteIndex::new(&[], options.edge_clearance)?,
             options,
         })
+    }
+
+    /// Reserve the port leads of every edge. Routes may cross a reserved lead but never run
+    /// along it, so an edge routed later always finds its own port entry free.
+    pub fn reserve_port_leads(
+        &mut self,
+        edge_endpoints: &[(usize, usize)],
+        edge_ports: &[EdgePorts],
+    ) -> RoutingResult<()> {
+        if edge_endpoints.len() != edge_ports.len() {
+            return Err(RoutingError::InvalidGeometry);
+        }
+        let mut leads = RouteIndex::new(&[], self.options.edge_clearance)?;
+        let mut rays = RouteIndex::new(&[], self.options.edge_clearance)?;
+        for (&(source, target), ports) in edge_endpoints.iter().zip(edge_ports) {
+            for (node, side, offset) in [
+                (source, ports.source_side, ports.source_offset),
+                (target, ports.target_side, ports.target_offset),
+            ] {
+                if node >= self.node_positions.len() {
+                    return Err(RoutingError::InvalidNodeIndex);
+                }
+                if !offset.is_finite() {
+                    return Err(RoutingError::InvalidGeometry);
+                }
+                let port = self.route_port(node, side, offset, self.port_lead());
+                leads.insert_route(&[port.card, port.escape])?;
+                let ray = self.port_exit_ray(node, port);
+                if ray[0] != ray[1] {
+                    rays.insert_route(&ray)?;
+                }
+            }
+        }
+        self.reserved_port_leads = leads;
+        self.port_exit_rays = rays;
+        Ok(())
+    }
+
+    /// The straight continuation of a port lead up to the next node's lead zone. Other routes
+    /// may use it, but prefer equally good alternatives so the port keeps a straight exit.
+    fn port_exit_ray(&self, node: usize, port: PortGeometry) -> [Point; 2] {
+        let reach = 2.0
+            * self
+                .options
+                .node_size
+                .width
+                .max(self.options.node_size.height);
+        let far = port.escape + port.outward * reach;
+        let length = routing_grid_cells(Rect::from_two_points(port.escape, far))
+            .filter_map(|cell| self.obstacle_buckets.get(&cell))
+            .flatten()
+            .filter(|&&other| other != node)
+            .filter(|&&other| segment_intersects_rect(port.escape, far, self.lead_zones[other]))
+            .map(|&other| {
+                let zone = self.lead_zones[other];
+                let entry = if port.outward.x > 0.0 {
+                    zone.left() - port.escape.x
+                } else if port.outward.x < 0.0 {
+                    port.escape.x - zone.right()
+                } else if port.outward.y > 0.0 {
+                    zone.top() - port.escape.y
+                } else {
+                    port.escape.y - zone.bottom()
+                };
+                entry.max(0.0)
+            })
+            .fold(reach, f32::min);
+        [port.escape, port.escape + port.outward * length]
+    }
+
+    fn port_lead(&self) -> f32 {
+        self.options.edge_clearance + ROUTE_PORT_LEAD_EXTRA
     }
 
     /// Route an edge using an index of previously accepted routes.
@@ -184,14 +279,13 @@ impl OrthogonalRouter {
         if !edge_ports.source_offset.is_finite() || !edge_ports.target_offset.is_finite() {
             return Err(RoutingError::InvalidGeometry);
         }
-        let route = self.route_edge_with_track_limit(
+        self.route_edge_with_track_limit(
             source,
             target,
             edge_ports,
             routed_edge_index,
             self.options.track_limit,
-        )?;
-        Ok(self.detour_shared_route_segments(route, routed_edge_index))
+        )
     }
 
     /// Route an edge using a list of previously accepted routes.
@@ -206,30 +300,6 @@ impl OrthogonalRouter {
         self.route_edge(source, target, edge_ports, &index)
     }
 
-    fn detour_shared_route_segments(
-        &self,
-        mut route: Vec<Point>,
-        routed_edge_index: &RouteIndex,
-    ) -> Vec<Point> {
-        for _ in 0..GRAPH_ROUTE_SHARED_SEGMENT_DETOUR_LIMIT {
-            let Some((segment_index, shared_segment, _)) = routed_edge_index
-                .first_overlapping_segment(&route, GRAPH_ROUTE_SHARED_SEGMENT_VISIBLE_THRESHOLD)
-            else {
-                break;
-            };
-            let Some(detoured_route) = self.detour_shared_route_segment(
-                &route,
-                segment_index,
-                shared_segment,
-                routed_edge_index,
-            ) else {
-                break;
-            };
-            route = Self::simplify_graph_route(detoured_route);
-        }
-        route
-    }
-
     fn route_edge_with_track_limit(
         &self,
         source: usize,
@@ -242,13 +312,13 @@ impl OrthogonalRouter {
             source,
             edge_ports.source_side,
             edge_ports.source_offset,
-            self.options.edge_clearance + ROUTE_PORT_LEAD_EXTRA,
+            self.port_lead(),
         );
         let target_port = self.route_port(
             target,
             edge_ports.target_side,
             edge_ports.target_offset,
-            self.options.edge_clearance + ROUTE_PORT_LEAD_EXTRA,
+            self.port_lead(),
         );
         if [
             source_port.card,
@@ -265,12 +335,29 @@ impl OrthogonalRouter {
         }
         let line_start = source_port.card;
         let line_end = target_port.card;
-        let crosses_another_node =
-            self.segment_crosses_obstacle(line_start, line_end, Some((source, target)));
-        let conflicts_with_another_edge =
-            routed_edge_index.conflicts_route(&[line_start, line_end]);
+        let crosses_another_node = self.segment_crosses_obstacle(
+            line_start,
+            line_end,
+            Some((source, target)),
+            LeadZones::None,
+        );
+        // Own leads are collinear parts of a straight line, so only the span between them is
+        // checked against the leads reserved for other edges.
+        let conflicts_with_another_edge = routed_edge_index
+            .parallel_conflicts_route(&[line_start, line_end])
+            || self
+                .reserved_port_leads
+                .overlaps_segment(source_port.escape, target_port.escape);
         if source != target && !crosses_another_node && !conflicts_with_another_edge {
             return Ok(vec![line_start, line_end]);
+        }
+        for lead in [
+            [source_port.card, source_port.escape],
+            [target_port.escape, target_port.card],
+        ] {
+            if routed_edge_index.overlaps_segment(lead[0], lead[1]) {
+                return Err(RoutingError::NoOrthogonalPath);
+            }
         }
 
         let mut x_coordinates = self.x_coordinates.clone();
@@ -315,26 +402,10 @@ impl OrthogonalRouter {
         );
         x_coordinates.extend(track_x);
         y_coordinates.extend(track_y);
-        let direct_direction = line_end - line_start;
-        let detoured_obstacles = self
-            .obstacles
-            .iter()
-            .enumerate()
-            .filter(|(index, obstacle)| {
-                *index != source
-                    && *index != target
-                    && segment_intersects_rect(line_start, line_end, **obstacle)
-            })
-            .map(|(_, obstacle)| *obstacle)
-            .collect::<Vec<_>>();
         x_coordinates.retain(|coordinate| *coordinate >= 0.0);
         y_coordinates.retain(|coordinate| *coordinate >= 0.0);
         sort_unique_coordinates(&mut x_coordinates);
         sort_unique_coordinates(&mut y_coordinates);
-        let preferences = RoutePreferences {
-            direct_direction,
-            detoured_obstacles: &detoured_obstacles,
-        };
         let port_direction = |port: PortGeometry| {
             if port.outward.x != 0.0 {
                 GRAPH_ROUTE_HORIZONTAL
@@ -342,10 +413,16 @@ impl OrthogonalRouter {
                 GRAPH_ROUTE_VERTICAL
             }
         };
-        let search_options = |conflict_clearance| RouteSearchOptions {
+        let search_options = RouteSearchOptions {
             segment_index: routed_edge_index,
-            preferences,
-            conflict_clearance,
+            reserved_port_leads: &self.reserved_port_leads,
+            port_exit_rays: &self.port_exit_rays,
+            own_exit_rays: [
+                self.port_exit_ray(source, source_port),
+                self.port_exit_ray(target, target_port),
+            ],
+            lead_zones: LeadZones::Endpoints(source, target),
+            lane_clearance: self.options.edge_clearance,
             start_direction: port_direction(source_port),
             goal_direction: port_direction(target_port),
         };
@@ -360,175 +437,53 @@ impl OrthogonalRouter {
             points.push(target_port.card);
             Self::simplify_graph_route(points)
         };
-        for vertical_scale in [1.0, 2.0, 4.0, 8.0] {
-            let margin = Vector::new(
-                self.options.grid_step.width * 2.0,
-                self.options.grid_step.height * vertical_scale,
-            );
-            let local_bounds = Rect::from_min_max(
-                Point::new(
-                    source_port.escape.x.min(target_port.escape.x) - margin.x,
-                    source_port.escape.y.min(target_port.escape.y) - margin.y,
-                ),
-                Point::new(
-                    source_port.escape.x.max(target_port.escape.x) + margin.x,
-                    source_port.escape.y.max(target_port.escape.y) + margin.y,
-                ),
-            );
-            let local_x_coordinates = x_coordinates
-                .iter()
-                .copied()
-                .filter(|coordinate| {
-                    (local_bounds.left()..=local_bounds.right()).contains(coordinate)
-                })
-                .collect::<Vec<_>>();
-            let local_y_coordinates = y_coordinates
-                .iter()
-                .copied()
-                .filter(|coordinate| {
-                    (local_bounds.top()..=local_bounds.bottom()).contains(coordinate)
-                })
-                .collect::<Vec<_>>();
-            let first_path = self.find_orthogonal_path(
-                source_port.escape,
-                target_port.escape,
-                &local_x_coordinates,
-                &local_y_coordinates,
-                search_options(Some(self.options.edge_clearance)),
-            )?;
-            let path = if first_path.is_some() {
-                first_path
-            } else {
-                self.find_orthogonal_path(
-                    source_port.escape,
-                    target_port.escape,
-                    &local_x_coordinates,
-                    &local_y_coordinates,
-                    search_options(Some(0.0)),
-                )?
-            };
-            if let Some(path) = path {
-                let route = route_from_path(path);
-                if !routed_edge_index.intersects_route(&route)
-                    && routed_edge_index
-                        .first_overlapping_segment(
-                            &route,
-                            GRAPH_ROUTE_SHARED_SEGMENT_SEARCH_THRESHOLD,
-                        )
-                        .is_none()
-                {
-                    return Ok(route);
-                }
-            }
-            if vertical_scale == 8.0
-                && let Some(path) = self.find_orthogonal_path(
-                    source_port.escape,
-                    target_port.escape,
-                    &local_x_coordinates,
-                    &local_y_coordinates,
-                    search_options(None),
-                )?
-            {
-                return Ok(route_from_path(path));
-            }
-        }
-        let mut global_x_coordinates = x_coordinates.clone();
-        let mut global_y_coordinates = y_coordinates.clone();
-        global_x_coordinates.push(x_coordinates.last().copied().unwrap_or(0.0) + track_spacing);
-        global_y_coordinates.push(y_coordinates.last().copied().unwrap_or(0.0) + track_spacing);
+        x_coordinates.push(x_coordinates.last().copied().unwrap_or(0.0) + track_spacing);
+        y_coordinates.push(y_coordinates.last().copied().unwrap_or(0.0) + track_spacing);
         let mut path = self.find_orthogonal_path(
             source_port.escape,
             target_port.escape,
-            &global_x_coordinates,
-            &global_y_coordinates,
-            search_options(Some(self.options.edge_clearance)),
+            &x_coordinates,
+            &y_coordinates,
+            search_options,
         )?;
         if path.is_none() {
+            // Tight layouts may leave no corridor outside the endpoint lead bands.
             path = self.find_orthogonal_path(
                 source_port.escape,
                 target_port.escape,
-                &global_x_coordinates,
-                &global_y_coordinates,
-                search_options(Some(0.0)),
+                &x_coordinates,
+                &y_coordinates,
+                RouteSearchOptions {
+                    lead_zones: LeadZones::None,
+                    ..search_options
+                },
             )?;
         }
         if path.is_none() {
+            add_intermediate_route_tracks(&mut x_coordinates);
+            add_intermediate_route_tracks(&mut y_coordinates);
             path = self.find_orthogonal_path(
                 source_port.escape,
                 target_port.escape,
-                &global_x_coordinates,
-                &global_y_coordinates,
-                search_options(None),
+                &x_coordinates,
+                &y_coordinates,
+                RouteSearchOptions {
+                    lane_clearance: 0.0,
+                    lead_zones: LeadZones::None,
+                    ..search_options
+                },
             )?;
         }
-        path.map(route_from_path)
-            .ok_or(RoutingError::NoOrthogonalPath)
-    }
-
-    fn detour_shared_route_segment(
-        &self,
-        route: &[Point],
-        segment_index: usize,
-        shared_segment: [Point; 2],
-        routed_edge_index: &RouteIndex,
-    ) -> Option<Vec<Point>> {
-        let start = route[segment_index];
-        let end = route[segment_index + 1];
-        let direction = (end - start).normalized();
-        let normal = Vector::new(-direction.y, direction.x);
-        for distance in [
-            self.options.edge_clearance + 2.0,
-            self.options.obstacle_clearance,
-            32.0,
-            48.0,
-            64.0,
-            96.0,
-            128.0,
-            192.0,
-        ] {
-            for sign in [1.0, -1.0] {
-                let offset = normal * (distance * sign);
-                let shifted_start = shared_segment[0] + offset;
-                let shifted_end = shared_segment[1] + offset;
-                let mut replacement = Vec::with_capacity(6);
-                for point in [
-                    start,
-                    shared_segment[0],
-                    shifted_start,
-                    shifted_end,
-                    shared_segment[1],
-                    end,
-                ] {
-                    if replacement.last() != Some(&point) {
-                        replacement.push(point);
-                    }
-                }
-                if replacement
-                    .iter()
-                    .any(|point| point.x < 0.0 || point.y < 0.0)
-                {
-                    continue;
-                }
-                if replacement
-                    .windows(2)
-                    .any(|segment| self.segment_crosses_obstacle(segment[0], segment[1], None))
-                    || routed_edge_index.overlaps_segment(shifted_start, shifted_end)
-                {
-                    continue;
-                }
-
-                let mut detoured_route = Vec::with_capacity(route.len() + 4);
-                detoured_route.extend_from_slice(&route[..=segment_index]);
-                for &point in replacement.iter().skip(1) {
-                    if detoured_route.last() != Some(&point) {
-                        detoured_route.push(point);
-                    }
-                }
-                detoured_route.extend_from_slice(&route[segment_index + 2..]);
-                return Some(detoured_route);
-            }
+        let route = path
+            .map(route_from_path)
+            .ok_or(RoutingError::NoOrthogonalPath)?;
+        if routed_edge_index
+            .first_overlapping_segment(&route, 0.0)
+            .is_some()
+        {
+            return Err(RoutingError::NoOrthogonalPath);
         }
-        None
+        Ok(route)
     }
 
     pub(super) fn simplify_graph_route(points: Vec<Point>) -> Vec<Point> {
@@ -590,6 +545,18 @@ fn sort_unique_coordinates(coordinates: &mut Vec<f32>) {
     coordinates.dedup_by(|left, right| *left == *right);
 }
 
+fn add_intermediate_route_tracks(coordinates: &mut Vec<f32>) {
+    let tracks = coordinates
+        .windows(2)
+        .filter_map(|pair| {
+            let middle = pair[0] + (pair[1] - pair[0]) / 2.0;
+            (middle > pair[0] && middle < pair[1]).then_some(middle)
+        })
+        .collect::<Vec<_>>();
+    coordinates.extend(tracks);
+    sort_unique_coordinates(coordinates);
+}
+
 fn retain_nearest_route_tracks(
     coordinates: &mut Vec<f32>,
     first: f32,
@@ -622,13 +589,7 @@ fn retain_nearest_route_tracks(
     sort_unique_coordinates(coordinates);
 }
 
-fn route_heuristic(point: Point, goals: &[Point]) -> f32 {
-    goals
-        .iter()
-        .map(|goal| (point.x - goal.x).abs() + (point.y - goal.y).abs())
-        .fold(f32::INFINITY, f32::min)
-}
-
+/// Score the covered obstacle span so splitting a segment does not change its cost.
 pub fn detour_side_preference_penalty(
     start: Point,
     end: Point,
@@ -638,21 +599,24 @@ pub fn detour_side_preference_penalty(
     let mostly_horizontal = direct_direction.x.abs() >= direct_direction.y.abs();
     obstacles
         .iter()
-        .filter(|obstacle| {
-            if mostly_horizontal
-                && start.y == end.y
-                && start.y >= obstacle.bottom()
-                && start.x.max(end.x) >= obstacle.left()
-                && start.x.min(end.x) <= obstacle.right()
-            {
-                true
+        .map(|obstacle| {
+            if mostly_horizontal && start.y == end.y && start.y >= obstacle.bottom() {
+                let overlap = (start.x.max(end.x).min(obstacle.right())
+                    - start.x.min(end.x).max(obstacle.left()))
+                .max(0.0);
+                let width = obstacle.right() - obstacle.left();
+                if width > 0.0 { overlap / width } else { 0.0 }
             } else if !mostly_horizontal && start.x == end.x && start.x >= obstacle.right() {
-                start.y.max(end.y) >= obstacle.top() && start.y.min(end.y) <= obstacle.bottom()
+                let overlap = (start.y.max(end.y).min(obstacle.bottom())
+                    - start.y.min(end.y).max(obstacle.top()))
+                .max(0.0);
+                let height = obstacle.bottom() - obstacle.top();
+                if height > 0.0 { overlap / height } else { 0.0 }
             } else {
-                false
+                0.0
             }
         })
-        .count() as f32
+        .sum::<f32>()
         * GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY
 }
 

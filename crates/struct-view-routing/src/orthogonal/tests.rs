@@ -2,6 +2,487 @@ use super::*;
 use crate::RoutingError;
 
 #[test]
+fn dense_graphs_route_without_overlaps_or_worker_panics() {
+    let positions = (0..9)
+        .map(|index| {
+            Point::new(
+                128.0 + (index / 3) as f32 * 340.0,
+                59.0 + (index % 3) as f32 * 150.0,
+            )
+        })
+        .collect::<Vec<_>>();
+    let endpoints = (0..positions.len())
+        .flat_map(|source| (0..positions.len()).map(move |target| (source, target)))
+        .collect::<Vec<_>>();
+    let mut options = OrthogonalRouterOptions::new(Size::new(208.0, 70.0), Size::new(340.0, 150.0));
+    let nodes = (0..positions.len()).collect::<Vec<_>>();
+    let ports = assign_edge_ports(&positions, options.node_size, &endpoints).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &nodes, options).unwrap();
+        let mut index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+        for (&(source, target), &ports) in endpoints.iter().zip(&ports) {
+            let route = router
+                .route_edge(source, target, ports, &index)
+                .unwrap_or_else(|error| {
+                    panic!("{backend:?} {source}->{target} {ports:?}: {error:?}")
+                });
+            assert!(
+                index.first_overlapping_segment(&route, 0.0).is_none(),
+                "{backend:?} {source}->{target}: {route:?}"
+            );
+            index.insert_route(&route).unwrap();
+        }
+    }
+}
+
+#[test]
+fn reserved_port_leads_keep_later_edges_routable() {
+    // Layered columns like the large UI fixture: earlier routes used to hug node boundaries
+    // and run along the port leads of edges routed later.
+    let positions = (0..24)
+        .map(|index| {
+            Point::new(
+                128.0 + (index / 12) as f32 * 340.0,
+                59.0 + (index % 12) as f32 * 150.0,
+            )
+        })
+        .collect::<Vec<_>>();
+    let endpoints = (0..12)
+        .flat_map(|source| {
+            [1, 3, 5, 8]
+                .into_iter()
+                .map(move |shift| (source, 12 + (source + shift) % 12))
+                .chain([(source, (source + 2) % 12)])
+        })
+        .collect::<Vec<_>>();
+    let mut options = OrthogonalRouterOptions::new(Size::new(208.0, 70.0), Size::new(340.0, 150.0));
+    options.obstacle_clearance = 18.0;
+    let nodes = (0..positions.len()).collect::<Vec<_>>();
+    let ports = assign_edge_ports(&positions, options.node_size, &endpoints).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+    ] {
+        options.search_backend = backend;
+        let mut router = OrthogonalRouter::new(&positions, &nodes, options).unwrap();
+        router.reserve_port_leads(&endpoints, &ports).unwrap();
+        let mut index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+        for (&(source, target), &ports) in endpoints.iter().zip(&ports) {
+            let route = router
+                .route_edge(source, target, ports, &index)
+                .unwrap_or_else(|error| panic!("{backend:?} {source}->{target}: {error:?}"));
+            assert!(index.first_overlapping_segment(&route, 0.0).is_none());
+            index.insert_route(&route).unwrap();
+        }
+    }
+    let mut router = OrthogonalRouter::new(&positions, &nodes, options).unwrap();
+    assert_eq!(
+        router.reserve_port_leads(&endpoints[1..], &ports),
+        Err(RoutingError::InvalidGeometry)
+    );
+}
+
+#[test]
+fn routes_keep_other_ports_straight_exits_free() {
+    // Any vertical track between the Z-route bends is equally short; prefer one that is not
+    // the straight exit of another node's top port.
+    let positions = [
+        Point::new(100.0, 100.0),
+        Point::new(700.0, 300.0),
+        Point::new(158.0, 420.0),
+        Point::new(400.0, 420.0),
+        Point::new(642.0, 420.0),
+        Point::new(400.0, 200.0),
+    ];
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(100.0, 100.0));
+    let side_ports = EdgePorts {
+        source_side: NodeSide::Right,
+        target_side: NodeSide::Left,
+        source_offset: 0.0,
+        target_offset: 0.0,
+    };
+    let top_ports = EdgePorts {
+        source_side: NodeSide::Top,
+        target_side: NodeSide::Top,
+        source_offset: 0.0,
+        target_offset: 0.0,
+    };
+    let endpoints = [(0, 1), (2, 3), (3, 4), (4, 2)];
+    let ports = [side_ports, top_ports, top_ports, top_ports];
+    let index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let mut router = OrthogonalRouter::new(&positions, &[0, 1, 2, 3, 4, 5], options).unwrap();
+        router.reserve_port_leads(&endpoints, &ports).unwrap();
+        let route = router.route_edge(0, 1, side_ports, &index).unwrap();
+        assert_eq!(route.len(), 4, "{backend:?}: {route:?}");
+        assert!(
+            ![158.0, 642.0].contains(&route[1].x),
+            "{backend:?}: {route:?}"
+        );
+    }
+}
+
+#[test]
+fn shortest_length_takes_priority_over_fewer_bends() {
+    let positions = [
+        Point::new(100.0, 300.0),
+        Point::new(700.0, 300.0),
+        Point::new(300.0, 270.0),
+        Point::new(500.0, 330.0),
+    ];
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(100.0, 100.0));
+    let ports = assign_edge_ports(&positions, options.node_size, &[(0, 1)]).unwrap()[0];
+    let index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &[0, 1, 2, 3], options).unwrap();
+        let route = router.route_edge(0, 1, ports, &index).unwrap();
+        let length: f32 = route.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+        assert_eq!(length, 572.0, "{backend:?}: {route:?}");
+        assert_eq!(route.len(), 8, "{backend:?}: {route:?}");
+        for position in &positions[2..] {
+            let obstacle = Rect::from_center_size(*position, options.node_size)
+                .expand(options.obstacle_clearance);
+            assert!(
+                route
+                    .windows(2)
+                    .all(|pair| { !segment_intersects_rect(pair[0], pair[1], obstacle) }),
+                "{backend:?}: {route:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn routed_tracks_never_share_even_short_sections() {
+    let positions = [
+        Point::new(100.0, 300.0),
+        Point::new(700.0, 300.0),
+        Point::new(400.0, 300.0),
+    ];
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(100.0, 100.0));
+    let endpoints = vec![(0, 1); 8];
+    let ports = assign_edge_ports(&positions, options.node_size, &endpoints).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &[0, 1, 2], options).unwrap();
+        let mut index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+        for &ports in &ports {
+            let route = router.route_edge(0, 1, ports, &index).unwrap();
+            assert!(
+                index.first_overlapping_segment(&route, 0.0).is_none(),
+                "{backend:?}: {route:?}"
+            );
+            index.insert_route(&route).unwrap();
+        }
+    }
+}
+
+#[test]
+fn conflicting_fixed_ports_report_no_path_instead_of_returning_overlap() {
+    let positions = [Point::new(100.0, 100.0), Point::new(700.0, 100.0)];
+    let options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(100.0, 100.0));
+    let ports = assign_edge_ports(&positions, options.node_size, &[(0, 1)]).unwrap()[0];
+    let router = OrthogonalRouter::new(&positions, &[0, 1], options).unwrap();
+    let index = RouteIndex::new(
+        &[vec![Point::new(130.0, 100.0), Point::new(131.0, 100.0)]],
+        options.edge_clearance,
+    )
+    .unwrap();
+    assert_eq!(
+        router.route_edge(0, 1, ports, &index),
+        Err(RoutingError::NoOrthogonalPath)
+    );
+}
+
+#[test]
+fn lane_conflicts_allow_crossings_but_reject_parallel_overlap() {
+    let index = RouteIndex::new(
+        &[vec![Point::new(100.0, 100.0), Point::new(200.0, 100.0)]],
+        DEFAULT_EDGE_CLEARANCE,
+    )
+    .unwrap();
+    for reverse in [false, true] {
+        for (start, end, clearance, expected) in [
+            (Point::new(150.0, 0.0), Point::new(150.0, 200.0), 8.0, false),
+            (
+                Point::new(200.0, 100.0),
+                Point::new(250.0, 100.0),
+                8.0,
+                false,
+            ),
+            (
+                Point::new(150.0, 100.0),
+                Point::new(151.0, 100.0),
+                0.0,
+                true,
+            ),
+            (
+                Point::new(150.0, 106.0),
+                Point::new(190.0, 106.0),
+                8.0,
+                true,
+            ),
+            (
+                Point::new(150.0, 110.0),
+                Point::new(190.0, 110.0),
+                8.0,
+                false,
+            ),
+        ] {
+            let (start, end) = if reverse { (end, start) } else { (start, end) };
+            assert_eq!(
+                index.parallel_conflicts_segment(start, end, clearance),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn crossings_do_not_bend_or_lengthen_direct_routes() {
+    let positions = [Point::new(100.0, 100.0), Point::new(700.0, 100.0)];
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(200.0, 200.0));
+    let ports = assign_edge_ports(&positions, options.node_size, &[(0, 1)]).unwrap()[0];
+    let index = RouteIndex::new(
+        &[vec![Point::new(400.0, 0.0), Point::new(400.0, 1_000.0)]],
+        options.edge_clearance,
+    )
+    .unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &[0, 1], options).unwrap();
+        let route = router.route_edge(0, 1, ports, &index).unwrap();
+        assert_eq!(
+            route,
+            [Point::new(130.0, 100.0), Point::new(670.0, 100.0)],
+            "{backend:?}"
+        );
+        assert!(index.intersects_route(&route));
+    }
+}
+
+#[test]
+fn crossings_are_allowed_regardless_of_the_other_route_length() {
+    let positions = [Point::new(100.0, 100.0), Point::new(700.0, 100.0)];
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(200.0, 200.0));
+    let ports = assign_edge_ports(&positions, options.node_size, &[(0, 1)]).unwrap()[0];
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &[0, 1], options).unwrap();
+        for wall_end in [110.0, 552.0, 553.0, 10_000.0] {
+            let index = RouteIndex::new(
+                &[vec![Point::new(400.0, 0.0), Point::new(400.0, wall_end)]],
+                options.edge_clearance,
+            )
+            .unwrap();
+            let route = router.route_edge(0, 1, ports, &index).unwrap();
+            assert!(index.intersects_route(&route), "{backend:?}: {route:?}");
+            assert_eq!(route.len(), 2, "{backend:?}: {route:?}");
+        }
+    }
+}
+
+#[test]
+fn shorter_routes_never_relax_node_obstacles() {
+    let mut positions = vec![Point::new(100.0, 100.0), Point::new(700.0, 100.0)];
+    positions.extend((0..17).map(|index| Point::new(400.0, 10.0 + index as f32 * 60.0)));
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(200.0, 200.0));
+    let nodes = (0..positions.len()).collect::<Vec<_>>();
+    let ports = assign_edge_ports(&positions, options.node_size, &[(0, 1)]).unwrap()[0];
+    let index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &nodes, options).unwrap();
+        let route = router.route_edge(0, 1, ports, &index).unwrap();
+        assert_eq!(route.len(), 6, "{backend:?}: {route:?}");
+        let length: f32 = route.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+        assert!((length - 2356.0).abs() < 0.001, "{backend:?}: {route:?}");
+        for position in positions.iter().skip(2) {
+            let obstacle = Rect::from_center_size(*position, options.node_size)
+                .expand(options.obstacle_clearance);
+            assert!(
+                route
+                    .windows(2)
+                    .all(|pair| { !segment_intersects_rect(pair[0], pair[1], obstacle) }),
+                "{backend:?}: {route:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn detour_side_cost_is_independent_of_grid_subdivision() {
+    let obstacle = Rect::from_min_max(Point::new(100.0, 100.0), Point::new(200.0, 200.0));
+    for (start, end, direction) in [
+        (Point::new(80.0, 220.0), Point::new(220.0, 220.0), Vector::X),
+        (Point::new(220.0, 80.0), Point::new(220.0, 220.0), Vector::Y),
+    ] {
+        let expected = detour_side_preference_penalty(start, end, direction, &[obstacle]);
+        assert_eq!(expected, GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY);
+        for subdivisions in [2, 7, 28] {
+            let points = (0..=subdivisions)
+                .map(|step| start + (end - start) * (step as f32 / subdivisions as f32))
+                .collect::<Vec<_>>();
+            for reverse in [false, true] {
+                let cost: f32 = points
+                    .windows(2)
+                    .map(|segment| {
+                        let [start, end] = if reverse {
+                            [segment[1], segment[0]]
+                        } else {
+                            [segment[0], segment[1]]
+                        };
+                        detour_side_preference_penalty(start, end, direction, &[obstacle])
+                    })
+                    .sum();
+                assert!((cost - expected).abs() < 0.001, "{cost} != {expected}");
+            }
+        }
+        assert_eq!(
+            detour_side_preference_penalty(start, start, direction, &[obstacle]),
+            0.0
+        );
+    }
+}
+
+#[test]
+fn dense_tracks_do_not_force_a_longer_or_more_bent_detour() {
+    for transpose in [false, true] {
+        let transform = |point: Point| {
+            if transpose {
+                Point::new(point.y, point.x)
+            } else {
+                point
+            }
+        };
+        let mut positions = vec![
+            Point::new(100.0, 300.0),
+            Point::new(700.0, 300.0),
+            Point::new(400.0, 300.0),
+            Point::new(400.0, 250.0),
+            Point::new(400.0, 190.0),
+            Point::new(400.0, 130.0),
+        ];
+        // Distant nodes add tracks but do not obstruct either detour.
+        positions.extend((0..20).map(|index| Point::new(360.0 + index as f32 * 4.0, 900.0)));
+        let positions = positions.into_iter().map(transform).collect::<Vec<_>>();
+        let node_size = if transpose {
+            Size::new(40.0, 60.0)
+        } else {
+            Size::new(60.0, 40.0)
+        };
+        let mut options = OrthogonalRouterOptions::new(node_size, Size::new(250.0, 250.0));
+        let nodes = (0..positions.len()).collect::<Vec<_>>();
+        let ports = assign_edge_ports(&positions, node_size, &[(0, 1)]).unwrap()[0];
+        let index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+        for backend in [
+            RoutingSearchBackend::Builtin,
+            RoutingSearchBackend::Pathfinding,
+            RoutingSearchBackend::Petgraph,
+        ] {
+            options.search_backend = backend;
+            let router = OrthogonalRouter::new(&positions, &nodes, options).unwrap();
+            let route = router.route_edge(0, 1, ports, &index).unwrap();
+            assert_eq!(route.len(), 6, "{backend:?}: {route:?}");
+            let length: f32 = route.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+            assert!(
+                (length - 616.0).abs() < 0.001,
+                "{backend:?}: {length}, {route:?}"
+            );
+            assert!(
+                route.iter().any(|&point| {
+                    let point = transform(point);
+                    point.y == 338.0
+                }),
+                "{backend:?}: {route:?}"
+            );
+            for obstacle in positions.iter().skip(2) {
+                let obstacle =
+                    Rect::from_center_size(*obstacle, node_size).expand(options.obstacle_clearance);
+                assert!(
+                    route
+                        .windows(2)
+                        .all(|pair| { !segment_intersects_rect(pair[0], pair[1], obstacle) }),
+                    "{backend:?}: {route:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dense_tracks_do_not_add_bends_between_obstacles() {
+    let mut positions = vec![
+        Point::new(100.0, 300.0),
+        Point::new(700.0, 300.0),
+        Point::new(300.0, 300.0),
+        Point::new(500.0, 300.0),
+    ];
+    positions.extend([250.0, 190.0, 130.0, 70.0, 10.0].map(|y| Point::new(300.0, y)));
+    positions.extend((0..20).map(|index| Point::new(460.0 + index as f32 * 4.0, 900.0)));
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(250.0, 250.0));
+    let nodes = (0..positions.len()).collect::<Vec<_>>();
+    let ports = assign_edge_ports(&positions, options.node_size, &[(0, 1)]).unwrap()[0];
+    let index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &nodes, options).unwrap();
+        let route = router.route_edge(0, 1, ports, &index).unwrap();
+        assert_eq!(route.len(), 6, "{backend:?}: {route:?}");
+        let length: f32 = route.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
+        assert!(
+            (length - 616.0).abs() < 0.001,
+            "{backend:?}: {length}, {route:?}"
+        );
+        for position in positions.iter().skip(2) {
+            let obstacle = Rect::from_center_size(*position, options.node_size)
+                .expand(options.obstacle_clearance);
+            assert!(
+                route
+                    .windows(2)
+                    .all(|pair| { !segment_intersects_rect(pair[0], pair[1], obstacle) }),
+                "{backend:?}: {route:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn orthogonal_router_routes_around_obstacles_with_port_endpoints() {
     let node_positions = [
         Point::new(40.0, 80.0),
@@ -141,7 +622,7 @@ fn all_search_backends_avoid_previously_routed_segments() {
             "{search_backend:?} should detour: {route:?}"
         );
         assert!(
-            !route_index.conflicts_route(&route),
+            !route_index.parallel_conflicts_route(&route),
             "{search_backend:?} route overlaps an accepted route: {route:?}"
         );
         assert!(
