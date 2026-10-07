@@ -36,14 +36,15 @@ pub(super) use routing::{
     GRAPH_EDGE_CLEARANCE, GRAPH_ROUTE_CLEARANCE, box_border_offset, segment_crosses_rect_interior,
     segments_within_clearance,
 };
+use routing::{
+    GRAPH_EDGE_OUTLINE_WIDTH, arrow_head_wings, closest_point_on_segment, draw_arrow_head,
+    edge_arrowheads, point_to_segment_distance, relationship_graph_fingerprint,
+    route_graph_edges_with_progress, segment_intersects_rect, segments_intersect,
+};
 pub(super) use routing::{GraphRoutingGrid, graph_edge_color, graph_edge_ports};
 pub(in crate::app) use routing::{
-    GraphRoutingWorkerSetting, available_graph_routing_workers, graph_routing_worker_count,
-};
-use routing::{
-    arrow_head_wings, closest_point_on_segment, draw_arrow_head, edge_arrowheads,
-    point_to_segment_distance, relationship_graph_fingerprint, route_graph_edges_with_progress,
-    segment_intersects_rect, segments_intersect,
+    GraphRoutingWorkerSetting, RoutingSearchBackend, available_graph_routing_workers,
+    graph_routing_worker_count,
 };
 
 pub(super) const GRAPH_DIM_FACTOR: f32 = 0.18;

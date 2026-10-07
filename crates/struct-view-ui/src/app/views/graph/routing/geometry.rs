@@ -151,14 +151,22 @@ pub(in crate::app::views) fn box_border_offset(direction: Vec2) -> f32 {
     (GRAPH_NODE_SIZE.x / 2.0 / direction.x.abs()).min(GRAPH_NODE_SIZE.y / 2.0 / direction.y.abs())
 }
 
+pub(in crate::app::views::graph) const GRAPH_EDGE_OUTLINE_WIDTH: f32 = 1.0;
+
 pub(in crate::app::views::graph) fn draw_arrow_head(
     painter: &egui::Painter,
     tip: Pos2,
     direction: Vec2,
     stroke: Stroke,
+    outline_color: Color32,
     zoom: f32,
 ) {
-    for wing in arrow_head_wings(tip, direction, zoom) {
+    let wings = arrow_head_wings(tip, direction, zoom);
+    let outline = Stroke::new(stroke.width + 2.0 * GRAPH_EDGE_OUTLINE_WIDTH, outline_color);
+    for wing in wings {
+        painter.line_segment([tip, wing], outline);
+    }
+    for wing in wings {
         painter.line_segment([tip, wing], stroke);
     }
 }

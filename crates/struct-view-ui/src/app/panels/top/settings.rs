@@ -43,6 +43,31 @@ impl StructViewApp {
                 if self.graph_routing_workers != previous_setting {
                     self.graph_calculation = crate::app::views::GraphCalculationState::default();
                 }
+                let previous_backend = self.graph_routing_backend;
+                ui.label(locale.text(TextKey::GraphRoutingAlgorithm));
+                for (backend, text_key) in [
+                    (
+                        struct_view_routing::orthogonal::RoutingSearchBackend::Builtin,
+                        TextKey::GraphRoutingBuiltin,
+                    ),
+                    (
+                        struct_view_routing::orthogonal::RoutingSearchBackend::Pathfinding,
+                        TextKey::GraphRoutingPathfinding,
+                    ),
+                    (
+                        struct_view_routing::orthogonal::RoutingSearchBackend::Petgraph,
+                        TextKey::GraphRoutingPetgraph,
+                    ),
+                ] {
+                    ui.selectable_value(
+                        &mut self.graph_routing_backend,
+                        backend,
+                        locale.text(text_key),
+                    );
+                }
+                if self.graph_routing_backend != previous_backend {
+                    self.graph_calculation = crate::app::views::GraphCalculationState::default();
+                }
                 ui.separator();
             }
             if self.visualization == VisualizationMode::Structure {

@@ -59,6 +59,7 @@ impl StructViewApp {
                         self.graph_calculation.ensure_started(
                             root,
                             self.graph_routing_workers,
+                            self.graph_routing_backend,
                             ui.ctx(),
                         );
                     }

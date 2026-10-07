@@ -1,5 +1,18 @@
 use super::super::*;
 
+fn route_pointer(output: &egui::FullOutput) -> Option<Pos2> {
+    output.shapes.iter().find_map(|shape| match &shape.shape {
+        egui::Shape::Path(path) => path.points.windows(2).find_map(|points| {
+            (points[0].distance(points[1]) > 80.0)
+                .then(|| points[0] + (points[1] - points[0]) * 0.25)
+        }),
+        egui::Shape::LineSegment { points, .. } if points[0].distance(points[1]) > 80.0 => {
+            Some(points[0] + (points[1] - points[0]) * 0.25)
+        }
+        _ => None,
+    })
+}
+
 #[test]
 fn hovering_graph_connection_line_shows_endpoint_information() {
     let graph = layout_graph(
@@ -30,16 +43,7 @@ fn hovering_graph_connection_line_shows_endpoint_information() {
         )
     };
     let output = render(0.0, Vec::new());
-    let pointer = output
-        .shapes
-        .iter()
-        .find_map(|shape| match &shape.shape {
-            egui::Shape::LineSegment { points, .. } if points[0].distance(points[1]) > 80.0 => {
-                Some(points[0] + (points[1] - points[0]) * 0.25)
-            }
-            _ => None,
-        })
-        .expect("Graph must draw a connection");
+    let pointer = route_pointer(&output).expect("Graph must draw a connection");
     output.drop_without_applying_deltas();
     let mut visible = false;
     let mut last_texts = Vec::new();
@@ -216,18 +220,7 @@ fn long_graph_tooltips_allow_scrolling_to_the_last_field() {
         let hover_pointer = if node_tooltip {
             text_position(&output, "Alpha").unwrap()
         } else {
-            output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::LineSegment { points, .. }
-                        if points[0].distance(points[1]) > 80.0 =>
-                    {
-                        Some(points[0] + (points[1] - points[0]) * 0.25)
-                    }
-                    _ => None,
-                })
-                .expect("Graph must draw a connection")
+            route_pointer(&output).expect("Graph must draw a connection")
         };
         output.drop_without_applying_deltas();
         let mut tooltip_pointer = None;

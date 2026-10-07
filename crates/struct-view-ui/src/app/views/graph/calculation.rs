@@ -54,6 +54,7 @@ pub(in crate::app) fn headless_graph_image_with_progress(
     let result = build_graph_calculation(
         root.clone(),
         GraphRoutingWorkerSetting::Automatic,
+        RoutingSearchBackend::Builtin,
         &progress,
     );
     let calculation = match result {
@@ -108,6 +109,7 @@ impl GraphCalculationState {
         &mut self,
         root: &JsonNode,
         worker_setting: GraphRoutingWorkerSetting,
+        search_backend: RoutingSearchBackend,
         ctx: &egui::Context,
     ) {
         if self.receiver.is_some() || self.result.is_some() || self.error.is_some() {
@@ -121,7 +123,8 @@ impl GraphCalculationState {
         match thread::Builder::new()
             .name("struct-view-graph-layout".to_string())
             .spawn(move || {
-                let result = build_graph_calculation(root, worker_setting, &progress);
+                let result =
+                    build_graph_calculation(root, worker_setting, search_backend, &progress);
                 let _ = sender.send(result);
             }) {
             Ok(_) => {
@@ -256,6 +259,7 @@ pub(in crate::app) struct GraphRoutingLayout {
 pub(super) fn build_graph_calculation(
     root: JsonNode,
     worker_setting: GraphRoutingWorkerSetting,
+    search_backend: RoutingSearchBackend,
     progress: &GraphProgressTracker,
 ) -> Result<GraphCalculationResult, String> {
     begin_graph_stage(Some(progress), GraphStage::Entities, 0, 1);
@@ -269,7 +273,12 @@ pub(super) fn build_graph_calculation(
             return Err(error);
         }
     };
-    let routing = build_graph_routing_layout_with_progress(&graph, worker_setting, Some(progress));
+    let routing = build_graph_routing_layout_with_progress(
+        &graph,
+        worker_setting,
+        search_backend,
+        Some(progress),
+    );
     progress
         .lock()
         .expect("graph progress lock poisoned")

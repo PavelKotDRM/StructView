@@ -1,9 +1,23 @@
 use crate::{Path, RoutingError, RoutingGraph, RoutingResult};
+use ordered_float::OrderedFloat;
 use std::{
+    cell::Cell,
     cmp::Ordering,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     hash::Hash,
 };
+
+/// Search implementation used by the orthogonal router.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RoutingSearchBackend {
+    /// Use StructView's indexed A* implementation.
+    #[default]
+    Builtin,
+    /// Use `pathfinding`'s A* over generated successors.
+    Pathfinding,
+    /// Materialize a `petgraph` directed graph and run its A*.
+    Petgraph,
+}
 
 /// Return a minimum-hop path, ignoring edge weights.
 pub fn breadth_first_search<G: RoutingGraph>(
@@ -184,6 +198,169 @@ where
     }
     path.reverse();
     Ok(Some(IndexedPath { nodes: path, cost }))
+}
+
+pub(crate) fn a_star_indexed_with_backend<G, N, H>(
+    node_count: usize,
+    start: usize,
+    backend: RoutingSearchBackend,
+    is_goal: G,
+    neighbors: N,
+    heuristic: H,
+) -> RoutingResult<Option<IndexedPath>>
+where
+    G: FnMut(usize) -> bool,
+    N: FnMut(usize, &mut Vec<IndexedNeighbor>),
+    H: FnMut(usize) -> f64,
+{
+    match backend {
+        RoutingSearchBackend::Builtin => {
+            a_star_indexed(node_count, start, is_goal, neighbors, heuristic)
+        }
+        RoutingSearchBackend::Pathfinding => {
+            a_star_indexed_pathfinding(node_count, start, is_goal, neighbors, heuristic)
+        }
+        RoutingSearchBackend::Petgraph => {
+            a_star_indexed_petgraph(node_count, start, is_goal, neighbors, heuristic)
+        }
+    }
+}
+
+fn a_star_indexed_pathfinding<G, N, H>(
+    node_count: usize,
+    start: usize,
+    mut is_goal: G,
+    mut neighbors: N,
+    mut heuristic: H,
+) -> RoutingResult<Option<IndexedPath>>
+where
+    G: FnMut(usize) -> bool,
+    N: FnMut(usize, &mut Vec<IndexedNeighbor>),
+    H: FnMut(usize) -> f64,
+{
+    if start >= node_count {
+        return Err(RoutingError::InvalidNodeIndex);
+    }
+    valid_heuristic(heuristic(start))?;
+    let search_error = Cell::new(None);
+    let mut successors = |state: &usize| {
+        let mut outgoing = Vec::with_capacity(8);
+        neighbors(*state, &mut outgoing);
+        let mut successors = Vec::with_capacity(outgoing.len());
+        for edge in outgoing {
+            if edge.node >= node_count {
+                record_search_error(&search_error, RoutingError::InvalidNodeIndex);
+                return Vec::new();
+            }
+            let weight = match valid_nonnegative_weight(edge.cost) {
+                Ok(weight) => weight,
+                Err(error) => {
+                    record_search_error(&search_error, error);
+                    return Vec::new();
+                }
+            };
+            successors.push((edge.node, OrderedFloat(weight)));
+        }
+        successors
+    };
+    let mut estimate = |state: &usize| match valid_heuristic(heuristic(*state)) {
+        Ok(estimate) => OrderedFloat(estimate),
+        Err(error) => {
+            record_search_error(&search_error, error);
+            OrderedFloat(0.0)
+        }
+    };
+    let result = pathfinding::prelude::astar(&start, &mut successors, &mut estimate, |state| {
+        is_goal(*state)
+    });
+    if let Some(error) = search_error.get() {
+        return Err(error);
+    }
+    let Some((nodes, cost)) = result else {
+        return Ok(None);
+    };
+    if !cost.0.is_finite() {
+        return Err(RoutingError::NonFiniteWeight);
+    }
+    Ok(Some(IndexedPath {
+        nodes,
+        cost: cost.0,
+    }))
+}
+
+fn a_star_indexed_petgraph<G, N, H>(
+    node_count: usize,
+    start: usize,
+    mut is_goal: G,
+    mut neighbors: N,
+    mut heuristic: H,
+) -> RoutingResult<Option<IndexedPath>>
+where
+    G: FnMut(usize) -> bool,
+    N: FnMut(usize, &mut Vec<IndexedNeighbor>),
+    H: FnMut(usize) -> f64,
+{
+    use petgraph::{
+        algo::astar,
+        graph::{DiGraph, NodeIndex},
+    };
+
+    if start >= node_count {
+        return Err(RoutingError::InvalidNodeIndex);
+    }
+    valid_heuristic(heuristic(start))?;
+    let mut graph =
+        DiGraph::<(), f64, usize>::with_capacity(node_count, node_count.saturating_mul(4));
+    for _ in 0..node_count {
+        graph.add_node(());
+    }
+
+    let mut outgoing = Vec::with_capacity(8);
+    for state in 0..node_count {
+        outgoing.clear();
+        neighbors(state, &mut outgoing);
+        for edge in outgoing.iter().copied() {
+            if edge.node >= node_count {
+                return Err(RoutingError::InvalidNodeIndex);
+            }
+            let weight = valid_nonnegative_weight(edge.cost)?;
+            graph.add_edge(NodeIndex::new(state), NodeIndex::new(edge.node), weight);
+        }
+    }
+
+    let heuristic_error = Cell::new(None);
+    let result = astar(
+        &graph,
+        NodeIndex::<usize>::new(start),
+        |node| is_goal(node.index()),
+        |edge| *edge.weight(),
+        |node| match valid_heuristic(heuristic(node.index())) {
+            Ok(estimate) => estimate,
+            Err(error) => {
+                record_search_error(&heuristic_error, error);
+                0.0
+            }
+        },
+    );
+    if let Some(error) = heuristic_error.get() {
+        return Err(error);
+    }
+    let Some((cost, nodes)) = result else {
+        return Ok(None);
+    };
+    if !cost.is_finite() {
+        return Err(RoutingError::NonFiniteWeight);
+    }
+    Ok(Some(IndexedPath {
+        nodes: nodes.into_iter().map(|node| node.index()).collect(),
+        cost,
+    }))
+}
+
+fn record_search_error(error: &Cell<Option<RoutingError>>, new_error: RoutingError) {
+    if error.get().is_none() {
+        error.set(Some(new_error));
+    }
 }
 
 pub(crate) fn validate_graph<G: RoutingGraph>(

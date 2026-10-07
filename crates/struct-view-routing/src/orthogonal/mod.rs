@@ -1,8 +1,10 @@
-//! Dependency-free, obstacle-aware orthogonal routing.
+//! Obstacle-aware orthogonal routing with selectable A* backends.
 //!
 //! The router accepts node positions and edge endpoints in its own `Point`,
 //! `Size`, and `Rect` types. UI crates can adapt native geometry without
 //! introducing a GUI dependency into this library.
+//! [`OrthogonalRouterOptions::search_backend`] selects the built-in,
+//! `pathfinding`, or `petgraph` implementation.
 //!
 //! ```rust
 //! use struct_view_routing::orthogonal::{
@@ -28,6 +30,8 @@ mod geometry;
 mod index;
 mod ports;
 mod router;
+
+pub use crate::RoutingSearchBackend;
 
 #[cfg(test)]
 mod tests;

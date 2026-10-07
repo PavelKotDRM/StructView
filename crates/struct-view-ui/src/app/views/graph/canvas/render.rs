@@ -346,12 +346,24 @@ pub(in crate::app) fn show_graph(
                 1.0
             };
             let stroke = Stroke::new(edge_width * zoom, edge_color);
-            for segment in edge_path.windows(2) {
-                let points = [transform(segment[0]), transform(segment[1])];
-                painter.line_segment(points, stroke);
-            }
+            let points = edge_path.iter().copied().map(transform).collect::<Vec<_>>();
+            painter.add(egui::Shape::line(
+                points.clone(),
+                Stroke::new(
+                    stroke.width + 2.0 * GRAPH_EDGE_OUTLINE_WIDTH,
+                    ui.visuals().panel_fill,
+                ),
+            ));
+            painter.add(egui::Shape::line(points, stroke));
             for (tip, direction) in edge_arrowheads(edge_path, edge.direction) {
-                draw_arrow_head(&painter, transform(tip), direction, stroke, zoom);
+                draw_arrow_head(
+                    &painter,
+                    transform(tip),
+                    direction,
+                    stroke,
+                    ui.visuals().panel_fill,
+                    zoom,
+                );
             }
         }
         for (edge_index, label) in routing.edge_labels.iter().enumerate() {

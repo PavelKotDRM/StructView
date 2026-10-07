@@ -13,20 +13,20 @@ pub const DEFAULT_ROUTE_TRACK_LIMIT: usize = 128;
 
 const ROUTING_OBSTACLE_CELL_SIZE: f32 = 256.0;
 const ROUTE_PORT_LEAD_EXTRA: f32 = 2.0;
-/// Cost added for each turn in an orthogonal route.
-pub const GRAPH_ROUTE_TURN_PENALTY: f32 = 48.0;
+/// Cost added for each turn, including turns at the endpoint port leads.
+pub const GRAPH_ROUTE_TURN_PENALTY: f32 = 96.0;
 /// Cost for taking the less-preferred side around an obstacle.
 pub const GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY: f32 = 240.0;
-const GRAPH_ROUTE_DIRECTIONS: usize = 3;
+const GRAPH_ROUTE_DIRECTIONS: usize = 2;
 const GRAPH_ROUTE_HORIZONTAL: usize = 0;
 const GRAPH_ROUTE_VERTICAL: usize = 1;
-const GRAPH_ROUTE_NO_DIRECTION: usize = 2;
 
 #[derive(Clone, Copy)]
 struct PortGeometry {
     card: Point,
     route: Point,
     escape: Point,
+    outward: Vector,
 }
 
 #[derive(Clone, Copy)]
@@ -40,10 +40,14 @@ struct RouteSearchOptions<'a> {
     segment_index: &'a RouteIndex,
     preferences: RoutePreferences<'a>,
     conflict_clearance: Option<f32>,
+    start_direction: usize,
+    goal_direction: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrthogonalRouterOptions {
+    /// A* implementation used to search the routing grid.
+    pub search_backend: RoutingSearchBackend,
     /// Node card size used for obstacle bounds and edge ports.
     pub node_size: Size,
     /// Clearance around node rectangles.
@@ -60,6 +64,7 @@ impl OrthogonalRouterOptions {
     /// Create options with default clearances and track count.
     pub fn new(node_size: Size, grid_step: Size) -> Self {
         Self {
+            search_backend: RoutingSearchBackend::Builtin,
             node_size,
             obstacle_clearance: DEFAULT_ROUTE_CLEARANCE,
             edge_clearance: DEFAULT_EDGE_CLEARANCE,
@@ -220,7 +225,7 @@ impl OrthogonalRouter {
             ) else {
                 break;
             };
-            route = detoured_route;
+            route = Self::simplify_graph_route(detoured_route);
         }
         route
     }
@@ -330,10 +335,19 @@ impl OrthogonalRouter {
             direct_direction,
             detoured_obstacles: &detoured_obstacles,
         };
+        let port_direction = |port: PortGeometry| {
+            if port.outward.x != 0.0 {
+                GRAPH_ROUTE_HORIZONTAL
+            } else {
+                GRAPH_ROUTE_VERTICAL
+            }
+        };
         let search_options = |conflict_clearance| RouteSearchOptions {
             segment_index: routed_edge_index,
             preferences,
             conflict_clearance,
+            start_direction: port_direction(source_port),
+            goal_direction: port_direction(target_port),
         };
         let route_from_path = |path: Vec<Point>| {
             let mut points = Vec::with_capacity(path.len() + 6);
@@ -552,6 +566,7 @@ impl OrthogonalRouter {
             card,
             route,
             escape: Point::new(escape.x.max(0.0), escape.y.max(0.0)),
+            outward,
         }
     }
 }
@@ -647,12 +662,14 @@ pub fn simplify_route(points: Vec<Point>) -> Vec<Point> {
             let middle = simplified[simplified.len() - 1];
             let first = middle - start;
             let second = point - middle;
-            if cross_product(first, second) != 0.0 || first.dot(second) <= 0.0 {
+            if cross_product(first, second) != 0.0 {
                 break;
             }
             simplified.pop();
         }
-        simplified.push(point);
+        if simplified.last() != Some(&point) {
+            simplified.push(point);
+        }
     }
     simplified
 }

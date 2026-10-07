@@ -22,11 +22,11 @@ pub(in crate::app) use edges::{
 };
 #[cfg(test)]
 use edges::{graph_route_conflicts, route_graph_edges};
-pub(in crate::app::views) use geometry::{GraphRouteSegmentIndex, segments_within_clearance};
 pub(super) use geometry::{
-    arrow_head_wings, closest_point_on_segment, draw_arrow_head, edge_arrowheads,
-    point_to_segment_distance, segment_intersects_rect, segments_intersect,
+    GRAPH_EDGE_OUTLINE_WIDTH, arrow_head_wings, closest_point_on_segment, draw_arrow_head,
+    edge_arrowheads, point_to_segment_distance, segment_intersects_rect, segments_intersect,
 };
+pub(in crate::app::views) use geometry::{GraphRouteSegmentIndex, segments_within_clearance};
 #[cfg(test)]
 pub(in crate::app::views) use geometry::{box_border_offset, segment_crosses_rect_interior};
 #[cfg(test)]
@@ -35,6 +35,7 @@ pub(in crate::app::views) use grid::GraphRoutingGrid;
 pub(in crate::app::views) use model::graph_edge_color;
 pub(super) use model::relationship_graph_fingerprint;
 pub(in crate::app::views) use ports::{GraphEdgePorts, graph_edge_ports};
+pub(in crate::app) use struct_view_routing::orthogonal::RoutingSearchBackend;
 
 pub(in crate::app::views) const GRAPH_ROUTE_CLEARANCE: f32 =
     struct_view_routing::orthogonal::DEFAULT_ROUTE_CLEARANCE;

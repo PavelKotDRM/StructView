@@ -1,7 +1,9 @@
 use super::*;
 #[cfg(test)]
 use struct_view_routing::orthogonal::simplify_route;
-use struct_view_routing::orthogonal::{OrthogonalRouter, OrthogonalRouterOptions, Point, Size};
+use struct_view_routing::orthogonal::{
+    OrthogonalRouter, OrthogonalRouterOptions, Point, RoutingSearchBackend, Size,
+};
 
 pub(in crate::app::views) struct GraphRoutingGrid {
     inner: OrthogonalRouter,
@@ -17,12 +19,13 @@ impl GraphRoutingGrid {
     #[cfg(test)]
     pub(in crate::app::views) fn new(node_positions: &[Pos2]) -> Self {
         let routed_nodes = (0..node_positions.len()).collect::<Vec<_>>();
-        Self::new_for_graph(node_positions, &routed_nodes)
+        Self::new_for_graph(node_positions, &routed_nodes, RoutingSearchBackend::Builtin)
     }
 
     pub(in crate::app::views::graph) fn new_for_graph(
         node_positions: &[Pos2],
         routed_nodes: &[usize],
+        search_backend: RoutingSearchBackend,
     ) -> Self {
         #[cfg(test)]
         let node_rects = node_positions
@@ -44,6 +47,7 @@ impl GraphRoutingGrid {
             Size::new(GRAPH_NODE_SIZE.x, GRAPH_NODE_SIZE.y),
             Size::new(GRAPH_STEP.x, GRAPH_STEP.y),
         );
+        options.search_backend = search_backend;
         options.obstacle_clearance = GRAPH_ROUTE_CLEARANCE;
         options.edge_clearance = GRAPH_EDGE_CLEARANCE;
         let inner = OrthogonalRouter::new(&positions, routed_nodes, options)

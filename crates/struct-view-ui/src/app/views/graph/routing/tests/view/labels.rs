@@ -184,10 +184,12 @@ fn dense_graph_keeps_every_nonempty_relationship_label_inside_canvas() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    let last_line = output
-        .shapes
-        .iter()
-        .rposition(|shape| matches!(shape.shape, egui::Shape::LineSegment { .. }));
+    let last_line = output.shapes.iter().rposition(|shape| {
+        matches!(
+            &shape.shape,
+            egui::Shape::LineSegment { .. } | egui::Shape::Path(_)
+        )
+    });
     let first_relationship = output.shapes.iter().position(|shape| {
         matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.starts_with("relationship_"))
     });

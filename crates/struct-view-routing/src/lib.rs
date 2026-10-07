@@ -32,7 +32,8 @@ mod yen;
 pub use all_pairs::{AllPairsPaths, SingleSourcePaths, bellman_ford, floyd_warshall};
 pub use graph::{AdjacencyListGraph, GraphBuildError};
 pub use search::{
-    IndexedNeighbor, IndexedPath, a_star, a_star_indexed, breadth_first_search, dijkstra,
+    IndexedNeighbor, IndexedPath, RoutingSearchBackend, a_star, a_star_indexed,
+    breadth_first_search, dijkstra,
 };
 pub use yen::yen_k_shortest_paths;
 

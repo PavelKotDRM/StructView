@@ -8,31 +8,48 @@ fn orthogonal_router_routes_around_obstacles_with_port_endpoints() {
         Point::new(260.0, 80.0),
         Point::new(480.0, 80.0),
     ];
-    let options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(100.0, 50.0));
-    let router = OrthogonalRouter::new(&node_positions, &[0, 1, 2], options).unwrap();
+    let mut options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(100.0, 50.0));
+    assert_eq!(options.search_backend, RoutingSearchBackend::Builtin);
     let edge_ports = assign_edge_ports(&node_positions, options.node_size, &[(0, 2)])
         .unwrap()
         .remove(0);
-    let routes = RouteIndex::new(&[], options.edge_clearance).unwrap();
-    let route = router.route_edge(0, 2, edge_ports, &routes).unwrap();
     let obstacle = Rect::from_center_size(node_positions[1], options.node_size)
         .expand(options.obstacle_clearance);
 
-    assert_eq!(route.first(), Some(&Point::new(70.0, 80.0)));
-    assert_eq!(route.last(), Some(&Point::new(450.0, 80.0)));
-    assert!(route.len() > 2);
-    assert!(
-        route
-            .windows(2)
-            .all(|segment| { segment[0].x == segment[1].x || segment[0].y == segment[1].y }),
-        "Orthogonal routes must contain only horizontal and vertical segments: {route:?}"
-    );
-    assert!(
-        route
-            .windows(2)
-            .all(|segment| !segment_intersects_rect(segment[0], segment[1], obstacle)),
-        "The path must clear the middle node: {route:?}"
-    );
+    for search_backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = search_backend;
+        let router = OrthogonalRouter::new(&node_positions, &[0, 1, 2], options).unwrap();
+        let routes = RouteIndex::new(&[], options.edge_clearance).unwrap();
+        let route = router.route_edge(0, 2, edge_ports, &routes).unwrap();
+
+        assert_eq!(route.first(), Some(&Point::new(70.0, 80.0)));
+        assert_eq!(route.last(), Some(&Point::new(450.0, 80.0)));
+        assert!(route.len() > 2);
+        assert!(
+            route
+                .windows(2)
+                .all(|segment| { segment[0].x == segment[1].x || segment[0].y == segment[1].y }),
+            "{search_backend:?} route must remain orthogonal: {route:?}"
+        );
+        let bends = route
+            .windows(3)
+            .filter(|points| (points[0].x == points[1].x) != (points[1].x == points[2].x))
+            .count();
+        assert_eq!(
+            bends, 4,
+            "{search_backend:?} route should use the minimum four bends around this obstacle: {route:?}"
+        );
+        assert!(
+            route
+                .windows(2)
+                .all(|segment| !segment_intersects_rect(segment[0], segment[1], obstacle)),
+            "{search_backend:?} route must clear the middle node: {route:?}"
+        );
+    }
 }
 
 #[test]
@@ -75,6 +92,71 @@ fn route_index_detects_overlap_and_scales_the_penalty() {
         index.penalty(Point::ZERO, Point::new(1_000.0, 0.0),),
         GRAPH_EDGE_SHARED_SEGMENT_PENALTY_LIMIT
     );
+}
+
+#[test]
+fn simplify_route_removes_collinear_backtracking() {
+    let backtracking = [
+        Point::ZERO,
+        Point::new(20.0, 0.0),
+        Point::new(10.0, 0.0),
+        Point::new(10.0, 20.0),
+    ];
+    assert_eq!(
+        simplify_route(backtracking.to_vec()),
+        [Point::ZERO, Point::new(10.0, 0.0), Point::new(10.0, 20.0)]
+    );
+
+    let looped = [
+        Point::ZERO,
+        Point::new(0.0, 10.0),
+        Point::ZERO,
+        Point::new(10.0, 0.0),
+    ];
+    assert_eq!(
+        simplify_route(looped.to_vec()),
+        [Point::ZERO, Point::new(10.0, 0.0)]
+    );
+}
+
+#[test]
+fn all_search_backends_avoid_previously_routed_segments() {
+    let node_positions = [Point::new(100.0, 100.0), Point::new(700.0, 100.0)];
+    let mut options = OrthogonalRouterOptions::new(Size::new(120.0, 80.0), Size::new(100.0, 80.0));
+    let ports = assign_edge_ports(&node_positions, options.node_size, &[(0, 1)]).unwrap()[0];
+    let existing = vec![vec![Point::new(260.0, 106.0), Point::new(540.0, 106.0)]];
+    let route_index = RouteIndex::new(&existing, options.edge_clearance).unwrap();
+
+    for search_backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = search_backend;
+        let router = OrthogonalRouter::new(&node_positions, &[0, 1], options).unwrap();
+        let route = router.route_edge(0, 1, ports, &route_index).unwrap();
+
+        assert!(
+            route.len() > 2,
+            "{search_backend:?} should detour: {route:?}"
+        );
+        assert!(
+            !route_index.conflicts_route(&route),
+            "{search_backend:?} route overlaps an accepted route: {route:?}"
+        );
+        assert!(
+            route
+                .windows(2)
+                .all(|segment| { segment[0].x == segment[1].x || segment[0].y == segment[1].y }),
+            "{search_backend:?} route must remain orthogonal: {route:?}"
+        );
+        assert!(
+            route.windows(3).all(|points| {
+                cross_product(points[1] - points[0], points[2] - points[1]) != 0.0
+            }),
+            "{search_backend:?} route contains a redundant collinear bump: {route:?}"
+        );
+    }
 }
 
 #[test]

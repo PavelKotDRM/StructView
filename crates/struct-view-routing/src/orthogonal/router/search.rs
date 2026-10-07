@@ -1,5 +1,5 @@
 use super::*;
-use crate::{IndexedNeighbor, a_star_indexed};
+use crate::{IndexedNeighbor, search::a_star_indexed_with_backend};
 
 impl OrthogonalRouter {
     pub(super) fn segment_crosses_obstacle(
@@ -31,21 +31,41 @@ impl OrthogonalRouter {
             segment_index,
             preferences,
             conflict_clearance: route_conflict_clearance,
+            start_direction,
+            goal_direction,
         } = options;
         let width = x_coordinates.len();
         let vertex_count = width * y_coordinates.len();
-        let state_count = vertex_count * GRAPH_ROUTE_DIRECTIONS;
+        // A virtual sink charges for the final turn into the target port.
+        let goal_state = vertex_count * GRAPH_ROUTE_DIRECTIONS;
+        let state_count = goal_state + 1;
         let mut segment_costs = HashMap::new();
         let goal_vertex = Self::vertex_index(target, x_coordinates, y_coordinates);
         let start_vertex = Self::vertex_index(source, x_coordinates, y_coordinates);
-        let start_state = start_vertex * GRAPH_ROUTE_DIRECTIONS + GRAPH_ROUTE_NO_DIRECTION;
-        let path = a_star_indexed(
+        // Port lead directions make endpoint bends part of the search cost.
+        let start_state = start_vertex * GRAPH_ROUTE_DIRECTIONS + start_direction;
+        let path = a_star_indexed_with_backend(
             state_count,
             start_state,
-            |state| state / GRAPH_ROUTE_DIRECTIONS == goal_vertex,
+            self.options.search_backend,
+            |state| state == goal_state,
             |state, outgoing| {
+                if state == goal_state {
+                    return;
+                }
                 let current_vertex = state / GRAPH_ROUTE_DIRECTIONS;
                 let direction_before = state % GRAPH_ROUTE_DIRECTIONS;
+                if current_vertex == goal_vertex {
+                    outgoing.push(IndexedNeighbor {
+                        node: goal_state,
+                        cost: f64::from(if direction_before != goal_direction {
+                            GRAPH_ROUTE_TURN_PENALTY
+                        } else {
+                            0.0
+                        }),
+                    });
+                    return;
+                }
                 let column = current_vertex % width;
                 let row = current_vertex / width;
                 let current_point = Self::point_at(current_vertex, x_coordinates, y_coordinates);
@@ -106,9 +126,7 @@ impl OrthogonalRouter {
                         .entry(edge_key)
                         .or_insert_with(|| segment_index.penalty(current_point, next_point));
 
-                    let turn_penalty = if direction_before != GRAPH_ROUTE_NO_DIRECTION
-                        && direction_before != direction
-                    {
+                    let turn_penalty = if direction_before != direction {
                         GRAPH_ROUTE_TURN_PENALTY
                     } else {
                         0.0
@@ -130,6 +148,9 @@ impl OrthogonalRouter {
                 }
             },
             |state| {
+                if state == goal_state {
+                    return 0.0;
+                }
                 let vertex = state / GRAPH_ROUTE_DIRECTIONS;
                 f64::from(route_heuristic(
                     Self::point_at(vertex, x_coordinates, y_coordinates),
@@ -144,6 +165,7 @@ impl OrthogonalRouter {
         Ok(Some(
             path.nodes
                 .into_iter()
+                .filter(|&state| state != goal_state)
                 .map(|state| {
                     Self::point_at(state / GRAPH_ROUTE_DIRECTIONS, x_coordinates, y_coordinates)
                 })

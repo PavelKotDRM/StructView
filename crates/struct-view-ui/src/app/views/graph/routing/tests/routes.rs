@@ -158,7 +158,7 @@ fn shared_segment_penalty_scales_with_overlap_and_is_bounded() {
 }
 
 #[test]
-fn route_simplification_preserves_collinear_backtracking() {
+fn route_simplification_removes_collinear_backtracking() {
     let points = [
         Pos2::new(0.0, 0.0),
         Pos2::new(20.0, 0.0),
@@ -167,7 +167,7 @@ fn route_simplification_preserves_collinear_backtracking() {
     ];
     assert_eq!(
         GraphRoutingGrid::simplify_graph_route(points.to_vec()),
-        points
+        [Pos2::ZERO, Pos2::new(10.0, 0.0), Pos2::new(10.0, 20.0)]
     );
 
     let looped_points = [
@@ -178,7 +178,7 @@ fn route_simplification_preserves_collinear_backtracking() {
     ];
     assert_eq!(
         GraphRoutingGrid::simplify_graph_route(looped_points.to_vec()),
-        looped_points
+        [Pos2::ZERO, Pos2::new(10.0, 0.0)]
     );
 
     let straight_points = [

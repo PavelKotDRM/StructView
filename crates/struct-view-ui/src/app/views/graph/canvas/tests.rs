@@ -9,7 +9,7 @@ fn graph() -> (RelationshipGraph, GraphRoutingLayout) {
 }
 
 #[test]
-fn graph_paths_are_drawn_without_panel_fill_casing() {
+fn graph_paths_and_arrowheads_are_drawn_with_panel_fill_casing() {
     let (graph, routing) = graph();
     let ctx = egui::Context::default();
     let mut panel_fill = egui::Color32::TRANSPARENT;
@@ -34,15 +34,33 @@ fn graph_paths_are_drawn_without_panel_fill_casing() {
             });
         },
     );
-    assert!(
-        !output.shapes.iter().any(|clipped| {
+    let arrow_outline_count = output
+        .shapes
+        .iter()
+        .filter(|clipped| {
             matches!(
                 &clipped.shape,
                 egui::Shape::LineSegment { stroke, .. }
                     if stroke.color == panel_fill && stroke.width > 2.0
             )
-        }),
-        "Relationship paths must not be rendered with a wide panel-colored stroke"
+        })
+        .count();
+    assert_eq!(arrow_outline_count, 2, "Both arrowhead wings need a casing");
+    let path_outline_count = output
+        .shapes
+        .iter()
+        .filter(|clipped| {
+            matches!(
+                &clipped.shape,
+                egui::Shape::Path(path)
+                    if path.stroke.color == egui::epaint::ColorMode::Solid(panel_fill)
+                        && path.stroke.width > 2.0
+            )
+        })
+        .count();
+    assert_eq!(
+        path_outline_count, 1,
+        "The route needs a panel-colored casing"
     );
     output.drop_without_applying_deltas();
 }

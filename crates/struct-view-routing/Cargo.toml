@@ -6,3 +6,6 @@ license.workspace = true
 description = "Reusable graph pathfinding algorithms"
 
 [dependencies]
+ordered-float = "5"
+pathfinding = "4"
+petgraph = "0.8.3"

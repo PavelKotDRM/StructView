@@ -202,8 +202,13 @@ fn graph_progress_records_all_stages_and_completion() {
     let root = struct_view_core::parser::parse_json(r#"[{"id":"a","depends_on":"b"},{"id":"b"}]"#)
         .unwrap();
     let progress = Arc::new(Mutex::new(GraphProgress::default()));
-    let result =
-        build_graph_calculation(root, GraphRoutingWorkerSetting::Automatic, &progress).unwrap();
+    let result = build_graph_calculation(
+        root,
+        GraphRoutingWorkerSetting::Automatic,
+        RoutingSearchBackend::Builtin,
+        &progress,
+    )
+    .unwrap();
     let snapshot = progress.lock().unwrap();
     assert_eq!(
         snapshot

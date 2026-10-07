@@ -9,6 +9,8 @@ use png::graph_png;
 #[cfg(test)]
 use png::graph_png_dimensions;
 
+const GRAPH_EXPORT_EDGE_STROKE_WIDTH: f32 = 1.5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum GraphExportFormat {
     Svg,
@@ -216,10 +218,21 @@ fn graph_svg(
             let target = &graph.nodes[edge.target];
             let tooltip = format!("{}\nsource: {} ({})\ntarget: {} ({})",
                 edge.hover_text(), source.label, source.id, target.label, target.id);
-            writeln!(svg, r#"<polyline points="{coordinates}" fill="none" stroke="{}" stroke-width="1.5"><title>{}</title></polyline>"#, color(fill), xml_text(&tooltip)).unwrap();
+            writeln!(svg, r#"<polyline points="{coordinates}" fill="none" stroke="{}" stroke-width="{}"/>"#,
+                color(visuals.panel_fill),
+                GRAPH_EXPORT_EDGE_STROKE_WIDTH + 2.0 * GRAPH_EDGE_OUTLINE_WIDTH,
+            ).unwrap();
+            writeln!(svg, r#"<polyline points="{coordinates}" fill="none" stroke="{}" stroke-width="{GRAPH_EXPORT_EDGE_STROKE_WIDTH}"><title>{}</title></polyline>"#,
+                color(fill), xml_text(&tooltip),
+            ).unwrap();
             for (tip, direction) in edge_arrowheads(points, edge.direction) {
                 for wing in arrow_head_wings(tip, direction, 1.0) {
-                    writeln!(svg, r#"<path d="M {} {} L {} {}" fill="none" stroke="{}" stroke-width="1.5"/>"#,
+                    let outline_color = color(visuals.panel_fill);
+                    let outline_width =
+                        GRAPH_EXPORT_EDGE_STROKE_WIDTH + 2.0 * GRAPH_EDGE_OUTLINE_WIDTH;
+                    writeln!(svg, r#"<path d="M {} {} L {} {}" fill="none" stroke="{}" stroke-width="{outline_width}"/>"#,
+                        tip.x, tip.y, wing.x, wing.y, outline_color).unwrap();
+                    writeln!(svg, r#"<path d="M {} {} L {} {}" fill="none" stroke="{}" stroke-width="{GRAPH_EXPORT_EDGE_STROKE_WIDTH}"/>"#,
                         tip.x, tip.y, wing.x, wing.y, color(fill)).unwrap();
                 }
             }
@@ -311,10 +324,14 @@ mod tests {
                 }
             }
             let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
-            assert_eq!(svg.matches("<polyline").count(), 2);
+            assert_eq!(svg.matches("<polyline").count(), 2 * graph.edges.len());
             assert_eq!(
                 svg.matches("<path d=").count(),
-                2 * arrows_per_edge * graph.edges.len()
+                4 * arrows_per_edge * graph.edges.len()
+            );
+            assert_eq!(
+                svg.matches("stroke-width=\"3.5\"").count(),
+                (1 + 2 * arrows_per_edge) * graph.edges.len()
             );
             assert_eq!(&graph_png(&svg).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
         }
@@ -470,7 +487,7 @@ mod tests {
             svg.contains("role: &quot;Gateway &lt;core&gt; &amp; \\&quot;router\\&quot;&quot;")
         );
         assert!(svg.contains("config.ports[1]: 443"));
-        assert_eq!(svg.matches("<polyline").count(), graph.edges.len());
+        assert_eq!(svg.matches("<polyline").count(), 2 * graph.edges.len());
         assert_eq!(svg.matches("<g>").count(), graph.nodes.len());
         assert!(svg.contains("depends_on"));
         let png = graph_png(&svg).unwrap();
@@ -495,7 +512,7 @@ mod tests {
         let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
         let edge_title = svg
             .split("<polyline")
-            .nth(1)
+            .nth(2)
             .unwrap()
             .split("</polyline>")
             .next()

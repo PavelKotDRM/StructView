@@ -788,6 +788,7 @@ fn both_diagrams_use_identical_menu_controls_and_shared_search_window() {
             app.graph_calculation.ensure_started(
                 app.root.as_ref().unwrap(),
                 app.graph_routing_workers,
+                app.graph_routing_backend,
                 &context,
             );
             let deadline = std::time::Instant::now() + Duration::from_secs(5);

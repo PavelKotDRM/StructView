@@ -129,6 +129,7 @@ pub struct StructViewApp {
     /// Асинхронное построение модели и маршрутов графа связей.
     pub(super) graph_calculation: GraphCalculationState,
     pub(super) graph_routing_workers: GraphRoutingWorkerSetting,
+    pub(super) graph_routing_backend: struct_view_routing::orthogonal::RoutingSearchBackend,
     pub(super) structure_view: super::views::structure::StructureView,
     /// Открытый конструктор добавления или редактирования поля.
     pub(super) field_dialog: Option<FieldDialog>,
@@ -187,6 +188,7 @@ impl Default for StructViewApp {
             visualization_cache: VisualizationCache::default(),
             graph_calculation: GraphCalculationState::default(),
             graph_routing_workers: GraphRoutingWorkerSetting::default(),
+            graph_routing_backend: struct_view_routing::orthogonal::RoutingSearchBackend::default(),
             structure_view: super::views::structure::StructureView::default(),
             field_dialog: None,
             field_dialog_docking: DockingState::default(),
