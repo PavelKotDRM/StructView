@@ -45,9 +45,9 @@ mod save;
 
 pub(super) use dialog_helpers::{default_field_value, field_value_types};
 pub(super) use models::{
-    AppMode, ComparisonDocument, ComparisonState, FieldDialog, FieldDialogTarget, FileState,
-    LoadedDocument, PairDifferenceCache, PendingInlineEdit, PreviousDocumentState, Toast,
-    ToastKind,
+    AppMode, ComparisonDocument, ComparisonState, DocumentReplacement, FieldDialog,
+    FieldDialogTarget, FileState, LoadedDocument, PairDifferenceCache, PendingInlineEdit,
+    PreviousDocumentState, Toast, ToastKind,
 };
 
 const HISTORY_LIMIT: usize = 100;
@@ -62,7 +62,7 @@ pub(super) fn document_content_fingerprint(root: &JsonNode, format: DataFormat) 
     Some(content_fingerprint(&serialized))
 }
 
-fn content_fingerprint(content: &str) -> u64 {
+pub(in crate::app) fn content_fingerprint(content: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
     hasher.finish()
@@ -108,10 +108,12 @@ pub struct StructViewApp {
     pub(super) close_file_confirmation_open: bool,
     /// Закрывать ли приложение после подтверждения выхода.
     pub(super) exit_after_close_confirmation: bool,
+    pub(super) pending_document_replacement: Option<DocumentReplacement>,
     /// Мета-информация о загруженном файле.
     pub(super) file_state: FileState,
     /// Результат фонового чтения и разбора файла.
     pub(super) file_load_receiver: Option<Receiver<Result<LoadedDocument, ParseError>>>,
+    file_load_fingerprint: u64,
     /// Состояние сравнения нескольких файлов.
     pub(super) comparison: Option<ComparisonState>,
     /// Временное уведомление (например, «Скопировано») и момент его показа.
@@ -177,8 +179,10 @@ impl Default for StructViewApp {
             save_requested: false,
             close_file_confirmation_open: false,
             exit_after_close_confirmation: false,
+            pending_document_replacement: None,
             file_state: FileState::default(),
             file_load_receiver: None,
+            file_load_fingerprint: 0,
             comparison: None,
             toast: None,
             dark_mode: true,
@@ -271,6 +275,7 @@ impl eframe::App for StructViewApp {
         self.show_bottom_panel(ui);
         self.show_central_panel(ui);
         self.show_field_dialog(ui.ctx());
+        self.handle_native_close_request(ui.ctx());
         self.show_unsaved_changes_confirmation(ui.ctx());
         if let Some(toast) = &self.toast {
             if Some(toast.shown_at) != previous_toast {

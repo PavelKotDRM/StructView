@@ -2,7 +2,7 @@ use std::io::{IsTerminal, Write};
 use std::sync::Arc;
 use std::time::Instant;
 
-use struct_view_core::files::write_bytes_atomic;
+use struct_view_core::files::{create_bytes_atomic, write_bytes_atomic};
 use struct_view_core::parser::{DataFormat, JsonValueType, parse_data, serialize_node};
 use struct_view_core::search::SearchState;
 use struct_view_ui::app::headless;
@@ -231,8 +231,12 @@ pub(in crate::cli) fn run(options: &OperationOptions) -> Result<bool, String> {
         options.output.as_ref()
     };
     if let Some(path) = destination {
-        write_bytes_atomic(path, &bytes)
-            .map_err(|error| format!("Write error for {}: {error}", path.display()))?;
+        let write_result = if operation == Operation::New {
+            create_bytes_atomic(path, &bytes)
+        } else {
+            write_bytes_atomic(path, &bytes)
+        };
+        write_result.map_err(|error| format!("Write error for {}: {error}", path.display()))?;
     } else {
         let mut stdout = std::io::stdout().lock();
         stdout

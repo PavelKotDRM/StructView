@@ -1,6 +1,16 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
+fn svg_element_count(svg: &str, name: &str, stroke_width: &str) -> usize {
+    roxmltree::Document::parse(svg)
+        .expect("export must be valid XML")
+        .descendants()
+        .filter(|node| {
+            node.has_tag_name(name) && node.attribute("stroke-width") == Some(stroke_width)
+        })
+        .count()
+}
+
 fn run_cli(args: &[&str], input: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_struct_view"))
         .args(args)
@@ -83,6 +93,21 @@ fn failed_formatting_preserves_an_existing_output_file() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(std::fs::read_to_string(&destination).unwrap(), "original");
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+}
+
+#[test]
+fn new_refuses_to_replace_existing_documents() {
+    let directory = tempfile::tempdir().unwrap();
+    let destination = directory.path().join("existing.json");
+    std::fs::write(&destination, r#"{"value":1}"#).unwrap();
+    let output = run_cli(&["new", "--output", destination.to_str().unwrap()], "");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!output.stderr.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(destination).unwrap(),
+        r#"{"value":1}"#
+    );
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 }
 
 #[test]
@@ -643,8 +668,8 @@ fn graph_cli_preserves_mixed_directions_loops_and_conversion_to_all_data_formats
                 _ => 1,
             })
             .sum::<usize>();
-        assert_eq!(svg.matches("<polyline").count(), expected.len());
-        assert_eq!(svg.matches("<path d=").count(), 2 * arrows);
+        assert_eq!(svg_element_count(&svg, "polyline", "1.5"), expected.len());
+        assert_eq!(svg_element_count(&svg, "path", "1.5"), 2 * arrows);
     }
 }
 
@@ -711,11 +736,8 @@ fn graph_structure_adapters_roundtrip_and_export_from_all_formats() {
             );
             let svg = std::fs::read_to_string(svg).unwrap();
             assert!(svg.contains("Alpha") && svg.contains("Beta"));
-            assert_eq!(svg.matches("<polyline").count(), 2);
-            let arrow_wings = svg
-                .lines()
-                .filter(|line| line.contains("<path d=") && line.contains(r#"stroke-width="1.5""#))
-                .count();
+            assert_eq!(svg_element_count(&svg, "polyline", "1.5"), 2);
+            let arrow_wings = svg_element_count(&svg, "path", "1.5");
             assert_eq!(arrow_wings, 6);
         }
     }
@@ -762,6 +784,6 @@ fn svg_exports_keep_custom_node_and_edge_tooltips_in_every_format() {
         assert!(svg.contains("role: &quot;Gateway&quot;"));
         assert!(svg.contains("status: &quot;online&quot;"));
         assert!(svg.contains("config.ports[1]: 443"));
-        assert_eq!(svg.matches("<polyline").count(), 1);
+        assert_eq!(svg_element_count(&svg, "polyline", "1.5"), 1);
     }
 }

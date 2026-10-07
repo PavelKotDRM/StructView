@@ -1498,3 +1498,100 @@ fn closing_modified_structure_source_requires_confirmation_and_saves_it() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"value":2}"#);
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn replacing_modified_structure_source_can_be_cancelled_or_saved() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = directory.path().join("original.json");
+    let next = directory.path().join("next.yaml");
+    std::fs::write(&original, r#"{"value":1}"#).unwrap();
+    std::fs::write(&next, "value: 3\n").unwrap();
+    let mut app = crate::app::StructViewApp::default();
+    app.visualization = crate::app::visualization::VisualizationMode::Structure;
+    app.structure_view = view(r#"{"value":2}"#);
+    app.structure_view.origin = Some(original.clone());
+    app.structure_view.unsaved = true;
+
+    app.request_document_replacement(crate::app::state::DocumentReplacement::OpenStructure(
+        next.clone(),
+    ));
+    assert!(app.close_file_confirmation_open);
+    assert!(app.structure_view.pending.is_none());
+    app.cancel_close_file_confirmation();
+    assert!(app.structure_view.unsaved);
+    assert_eq!(app.structure_view.origin, Some(original.clone()));
+
+    app.request_document_replacement(crate::app::state::DocumentReplacement::OpenStructure(
+        next.clone(),
+    ));
+    assert!(app.save_changes_and_close_file());
+    assert_eq!(
+        std::fs::read_to_string(&original).unwrap(),
+        r#"{"value":2}"#
+    );
+    let context = egui::Context::default();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while app.structure_view.pending.is_some() && std::time::Instant::now() < deadline {
+        frame(&mut app.structure_view, &context, Vec::new()).drop_without_applying_deltas();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(app.structure_view.pending.is_none());
+    assert_eq!(app.structure_view.source, "value: 3\n");
+    assert_eq!(app.structure_view.origin, Some(next));
+    assert_eq!(app.structure_view.format, Some(DataFormat::Yaml));
+    assert!(!app.structure_view.unsaved);
+}
+
+#[test]
+fn failed_structure_file_load_preserves_source_format_and_unsaved_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut view = view(r#"{"value":2}"#);
+    view.unsaved = true;
+    view.origin = Some(directory.path().join("original.json"));
+    let origin = view.origin.clone();
+    view.open(directory.path().join("missing.toml"));
+    let context = egui::Context::default();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while view.pending.is_some() && std::time::Instant::now() < deadline {
+        frame(&mut view, &context, Vec::new()).drop_without_applying_deltas();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(view.pending.is_none());
+    assert!(view.error.is_some());
+    assert!(view.unsaved);
+    assert_eq!(view.source, r#"{"value":2}"#);
+    assert_eq!(view.origin, origin);
+    assert_eq!(view.format, Some(DataFormat::Json));
+    assert!(view.document.is_some());
+}
+
+#[test]
+fn dropped_structure_file_waits_for_unsaved_changes_confirmation() {
+    let mut view = view(r#"{"value":2}"#);
+    view.unsaved = true;
+    let path = PathBuf::from("next.json");
+    view.request_open(path.clone());
+    assert_eq!(view.requested_open, Some(path));
+    assert!(view.pending.is_none());
+    assert!(view.unsaved);
+    assert_eq!(view.source, r#"{"value":2}"#);
+}
+
+#[test]
+fn exit_confirmation_cancels_pending_structure_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let next = directory.path().join("next.json");
+    std::fs::write(&next, r#"{"value":3}"#).unwrap();
+    let mut app = crate::app::StructViewApp::default();
+    app.structure_view = view(r#"{"value":2}"#);
+    app.structure_view.unsaved = true;
+    app.structure_view.open(next);
+    assert!(app.structure_view.pending.is_some());
+    app.request_exit(&egui::Context::default());
+    assert!(app.close_file_confirmation_open);
+    assert!(app.exit_after_close_confirmation);
+    assert!(app.structure_view.pending.is_none());
+    assert!(app.structure_view.pending_origin.is_none());
+    assert!(app.structure_view.unsaved);
+    assert_eq!(app.structure_view.source, r#"{"value":2}"#);
+}

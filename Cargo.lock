@@ -3530,12 +3530,14 @@ dependencies = [
  "struct-view-build-info",
  "struct-view-core",
  "struct-view-routing",
+ "tempfile",
 ]
 
 [[package]]
 name = "struct_view"
 version = "0.1.10"
 dependencies = [
+ "roxmltree 0.21.1",
  "serde_json",
  "struct-view-build-info",
  "struct-view-cli",

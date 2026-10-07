@@ -353,6 +353,15 @@ be empty. The float constructor rejects text that the selected format would
 interpret as a string. CSV exports use the same atomic file replacement as
 document saves, so a failed write does not truncate an existing file.
 
+Opening or creating another file prompts you to save, discard, or cancel when
+there are unsaved changes, including a document hidden by comparison mode.
+The same confirmation protects a modified structure-diagram source and closing
+the native application window. If both the regular document and its independent
+structure snapshot have edits, save each view separately before replacing the
+document. A failed save or file read preserves the current data.
+Graph imports cannot be overwritten by conversion or Save As, including when
+the destination is a symbolic-link alias of the input.
+
 ### Copying structures between files
 
 1. Open the source file and select one or more tree nodes. Hold `Ctrl`
@@ -535,7 +544,8 @@ string, native date/time, or comment without JSON quotes. A root has no key.
 Extracted TOML values other than objects default to JSON because TOML cannot
 serialize a standalone scalar or array document; `--to` explicitly overrides this.
 
-`new` creates an empty object and refuses to replace an existing file.
+`new` creates an empty object and refuses to replace an existing file, even if
+another process creates the destination while the command is running.
 `convert`, `new`, `get`, and edits support `--to json|yaml|toml|json5` and
 `--minify`. Without `--to`, an output filename's extension selects the format,
 otherwise the input format is retained. Conflicting `--to` and output

@@ -72,6 +72,7 @@ pub(in crate::app) struct StructureView {
     origin: Option<PathBuf>,
     pending_origin: Option<PathBuf>,
     pending: Option<Receiver<ParseResult>>,
+    pub(in crate::app) requested_open: Option<PathBuf>,
     export_pending: Option<Receiver<Result<(), String>>>,
     document: Option<Document>,
     error: Option<String>,
@@ -135,6 +136,7 @@ impl Default for StructureView {
             origin: None,
             pending_origin: None,
             pending: None,
+            requested_open: None,
             export_pending: None,
             document: None,
             error: None,
@@ -178,7 +180,7 @@ impl StructureView {
         if self.imported_path.as_deref() != current_path {
             self.imported_path = current_path.map(Path::to_path_buf);
             if let Some(path) = current_path {
-                self.open(path.to_path_buf());
+                self.request_open(path.to_path_buf());
             }
         }
         let dropped = ui.input(|i| {
@@ -190,7 +192,7 @@ impl StructureView {
         });
         match dropped.as_slice() {
             [] => {}
-            [path] => self.open(path.clone()),
+            [path] => self.request_open(path.clone()),
             _ => self.error = Some(locale.text(TextKey::StructureSingleFile).into()),
         }
         self.poll(ui, locale);
@@ -210,6 +212,14 @@ impl StructureView {
             ui.label(locale.text(TextKey::StructureStale));
         }
         self.canvas(ui, locale);
+    }
+
+    fn request_open(&mut self, path: PathBuf) {
+        if self.has_unsaved_changes() {
+            self.requested_open = Some(path);
+        } else {
+            self.open(path);
+        }
     }
 }
 

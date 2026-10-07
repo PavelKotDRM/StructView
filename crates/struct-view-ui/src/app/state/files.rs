@@ -23,7 +23,12 @@ impl StructViewApp {
     }
 
     pub(in crate::app) fn request_file_load(&mut self, path: PathBuf) {
+        self.request_document_replacement(DocumentReplacement::Open(path));
+    }
+
+    pub(super) fn start_file_load(&mut self, path: PathBuf) {
         self.file_load_receiver = None;
+        self.file_load_fingerprint = self.replacement_fingerprint();
         self.parse_error = None;
         let locale = self.locale;
         let (sender, receiver) = mpsc::channel();
@@ -50,7 +55,16 @@ impl StructViewApp {
         match result {
             Ok(loaded) => {
                 self.file_load_receiver = None;
-                self.apply_loaded_document(loaded);
+                match loaded {
+                    Ok(document)
+                        if self.file_load_fingerprint != self.replacement_fingerprint() =>
+                    {
+                        self.request_document_replacement(DocumentReplacement::Loaded(Box::new(
+                            document,
+                        )));
+                    }
+                    loaded => self.apply_loaded_document(loaded),
+                }
             }
             Err(TryRecvError::Empty) => {
                 ctx.request_repaint_after(Duration::from_millis(50));
@@ -69,7 +83,7 @@ impl StructViewApp {
         }
     }
 
-    fn apply_loaded_document(&mut self, loaded: Result<LoadedDocument, ParseError>) {
+    pub(super) fn apply_loaded_document(&mut self, loaded: Result<LoadedDocument, ParseError>) {
         match loaded {
             Ok(document) => {
                 let mode = if document.format.is_serializable() {
@@ -78,6 +92,7 @@ impl StructViewApp {
                     AppMode::View
                 };
                 self.clear_document_state();
+                self.structure_view = super::super::views::structure::StructureView::default();
                 self.mode = mode;
                 self.root = Some(document.root);
                 self.visible_rows = document.visible_rows;
@@ -92,6 +107,38 @@ impl StructViewApp {
             }
             Err(error) => self.report_document_load_error(error),
         }
+    }
+
+    fn replacement_fingerprint(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        let previous = self
+            .comparison
+            .as_ref()
+            .and_then(|comparison| comparison.previous_document.as_ref());
+        self.file_state.path.hash(&mut hasher);
+        previous
+            .map(|document| &document.file_state.path)
+            .hash(&mut hasher);
+        // Expansion and selection are presentation state, not document edits.
+        for root in self
+            .root
+            .iter()
+            .chain(previous.map(|document| &document.root))
+        {
+            let mut nodes = vec![root];
+            while let Some(node) = nodes.pop() {
+                node.key.hash(&mut hasher);
+                std::mem::discriminant(&node.value_type).hash(&mut hasher);
+                node.display_value.hash(&mut hasher);
+                if let Some(key) = &node.yaml_key {
+                    format!("{key:?}").hash(&mut hasher);
+                }
+                node.children.len().hash(&mut hasher);
+                nodes.extend(&node.children);
+            }
+        }
+        self.structure_view.source_fingerprint().hash(&mut hasher);
+        hasher.finish()
     }
 
     fn report_document_load_error(&mut self, error: ParseError) {
@@ -142,7 +189,7 @@ impl StructViewApp {
                 self.show_error(self.locale.text(TextKey::UnsupportedFileExtension));
                 return;
             };
-            self.create_new_file(path, format);
+            self.request_document_replacement(DocumentReplacement::Create(path, format));
         }
     }
 
@@ -164,6 +211,7 @@ impl StructViewApp {
         match self.write_node_to_path(&root, &path, format) {
             Ok((size_bytes, saved_content_fingerprint)) => {
                 self.clear_document_state();
+                self.structure_view = super::super::views::structure::StructureView::default();
                 self.root = Some(root);
                 self.mode = AppMode::Edit;
                 self.file_state = FileState {

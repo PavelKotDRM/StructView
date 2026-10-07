@@ -46,6 +46,13 @@ pub(in crate::app) struct LoadedDocument {
     pub(in crate::app) visible_rows: VisibleRows,
 }
 
+pub(in crate::app) enum DocumentReplacement {
+    Open(PathBuf),
+    Loaded(Box<LoadedDocument>),
+    Create(PathBuf, DataFormat),
+    OpenStructure(PathBuf),
+}
+
 /// Документ, загруженный в режим сравнения.
 #[derive(Debug)]
 pub(in crate::app) struct ComparisonDocument {

@@ -125,6 +125,8 @@ impl StructViewApp {
     }
 
     pub(in crate::app) fn request_close_file(&mut self) {
+        self.cancel_pending_document_loads();
+        self.pending_document_replacement = None;
         self.exit_after_close_confirmation = false;
         if self.has_unsaved_changes_before_close() {
             self.close_file_confirmation_open = true;
@@ -134,6 +136,8 @@ impl StructViewApp {
     }
 
     pub(in crate::app) fn request_exit(&mut self, ctx: &egui::Context) {
+        self.cancel_pending_document_loads();
+        self.pending_document_replacement = None;
         if self.has_unsaved_changes_before_exit() {
             self.close_file_confirmation_open = true;
             self.exit_after_close_confirmation = true;
@@ -144,7 +148,19 @@ impl StructViewApp {
         }
     }
 
+    pub(super) fn handle_native_close_request(&mut self, ctx: &egui::Context) {
+        if ctx.input(|input| input.viewport().close_requested())
+            && self.has_unsaved_changes_before_exit()
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if !self.exit_after_close_confirmation {
+                self.request_exit(ctx);
+            }
+        }
+    }
+
     pub(in crate::app) fn cancel_close_file_confirmation(&mut self) {
+        self.pending_document_replacement = None;
         self.close_file_confirmation_open = false;
         self.exit_after_close_confirmation = false;
     }
@@ -154,7 +170,10 @@ impl StructViewApp {
     }
 
     pub(in crate::app) fn continue_without_saving(&mut self, ctx: &egui::Context) {
-        if self.exit_after_close_confirmation {
+        if let Some(replacement) = self.pending_document_replacement.take() {
+            self.cancel_close_file_confirmation();
+            self.perform_document_replacement(replacement);
+        } else if self.exit_after_close_confirmation {
             self.close_file_confirmation_open = false;
             self.exit_after_close_confirmation = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -165,10 +184,19 @@ impl StructViewApp {
 
     pub(in crate::app) fn save_changes_and_close_file(&mut self) -> bool {
         let exiting = self.exit_after_close_confirmation;
-        let previous_document_changed = exiting && self.has_unsaved_previous_document_changes();
-        let document_changed = self.has_unsaved_document_changes() || previous_document_changed;
-        let structure_changed = (exiting || self.visualization == VisualizationMode::Structure)
-            && self.structure_view.has_unsaved_changes();
+        let replacing = self.pending_document_replacement.is_some();
+        let structure_only = matches!(
+            self.pending_document_replacement,
+            Some(DocumentReplacement::OpenStructure(_))
+        );
+        let previous_document_changed = !structure_only
+            && (exiting || replacing)
+            && self.has_unsaved_previous_document_changes();
+        let document_changed =
+            !structure_only && (self.has_unsaved_document_changes() || previous_document_changed);
+        let structure_changed =
+            (exiting || replacing || self.visualization == VisualizationMode::Structure)
+                && self.structure_view.has_unsaved_changes();
         if document_changed && structure_changed {
             self.show_error(self.locale.text(TextKey::SaveViewsSeparately));
             return false;
@@ -178,9 +206,10 @@ impl StructViewApp {
             self.restore_previous_document_for_exit();
         }
 
-        let document_changed = self.has_unsaved_document_changes();
-        let structure_changed = (exiting || self.visualization == VisualizationMode::Structure)
-            && self.structure_view.has_unsaved_changes();
+        let document_changed = !structure_only && self.has_unsaved_document_changes();
+        let structure_changed =
+            (exiting || replacing || self.visualization == VisualizationMode::Structure)
+                && self.structure_view.has_unsaved_changes();
         let saved = if document_changed {
             self.save_current()
         } else if structure_changed {
@@ -190,9 +219,48 @@ impl StructViewApp {
         };
 
         if saved {
-            self.close_file_after_confirmation();
+            if let Some(replacement) = self.pending_document_replacement.take() {
+                self.cancel_close_file_confirmation();
+                self.perform_document_replacement(replacement);
+            } else {
+                self.close_file_after_confirmation();
+            }
         }
         saved
+    }
+
+    pub(in crate::app) fn request_document_replacement(
+        &mut self,
+        replacement: DocumentReplacement,
+    ) {
+        self.cancel_pending_document_loads();
+        let changed = if matches!(replacement, DocumentReplacement::OpenStructure(_)) {
+            self.structure_view.has_unsaved_changes()
+        } else {
+            self.has_unsaved_changes_before_exit()
+        };
+        self.exit_after_close_confirmation = false;
+        if changed {
+            self.pending_document_replacement = Some(replacement);
+            self.close_file_confirmation_open = true;
+        } else {
+            self.cancel_close_file_confirmation();
+            self.perform_document_replacement(replacement);
+        }
+    }
+
+    fn cancel_pending_document_loads(&mut self) {
+        self.file_load_receiver = None;
+        self.structure_view.cancel_pending_open();
+    }
+
+    fn perform_document_replacement(&mut self, replacement: DocumentReplacement) {
+        match replacement {
+            DocumentReplacement::Open(path) => self.start_file_load(path),
+            DocumentReplacement::Loaded(document) => self.apply_loaded_document(Ok(*document)),
+            DocumentReplacement::Create(path, format) => self.create_new_file(path, format),
+            DocumentReplacement::OpenStructure(path) => self.structure_view.open(path),
+        }
     }
 
     fn has_unsaved_changes_before_close(&self) -> bool {
@@ -269,6 +337,7 @@ impl StructViewApp {
     /// Если сравнение было открыто из документа, вместо очистки восстанавливает
     /// этот документ.
     pub(in crate::app) fn close_file(&mut self) {
+        self.pending_document_replacement = None;
         self.close_file_confirmation_open = false;
         self.exit_after_close_confirmation = false;
         if let Some(previous_document) = self
@@ -284,6 +353,7 @@ impl StructViewApp {
     }
 
     pub(super) fn clear_document_state(&mut self) {
+        self.pending_document_replacement = None;
         self.clear_history();
         self.file_load_receiver = None;
         self.root = None;
@@ -372,6 +442,15 @@ impl StructViewApp {
         path: &Path,
         format: DataFormat,
     ) -> Result<(u64, u64), String> {
+        if self
+            .file_state
+            .format
+            .is_some_and(|format| !format.is_serializable())
+            && let Some(input) = &self.file_state.path
+        {
+            struct_view_core::files::ensure_distinct_paths(input, path)
+                .map_err(|error| self.locale.save_error(&error.to_string()))?;
+        }
         let formatted = serialize_node(root, format, false)?;
         let fingerprint = super::content_fingerprint(&formatted);
         let size_bytes = formatted.len() as u64;

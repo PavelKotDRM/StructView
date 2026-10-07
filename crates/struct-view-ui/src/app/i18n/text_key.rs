@@ -12,6 +12,7 @@ pub(in crate::app) enum TextKey {
     CloseFile,
     CloseFileUnsavedTitle,
     CloseFileUnsavedMessage,
+    ReplaceFileUnsavedMessage,
     ContinueWithoutSaving,
     ExitUnsavedMessage,
     ExitWithoutSaving,

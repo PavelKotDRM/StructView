@@ -19,6 +19,8 @@ impl StructViewApp {
         let exiting = self.exit_after_close_confirmation;
         let message = if exiting {
             TextKey::ExitUnsavedMessage
+        } else if self.pending_document_replacement.is_some() {
+            TextKey::ReplaceFileUnsavedMessage
         } else {
             TextKey::CloseFileUnsavedMessage
         };

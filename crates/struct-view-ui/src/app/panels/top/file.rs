@@ -12,6 +12,11 @@ impl StructViewApp {
                 ui.close();
                 if self.visualization == VisualizationMode::Structure {
                     self.structure_view.open_file_dialog();
+                    if let Some(path) = self.structure_view.requested_open.take() {
+                        self.request_document_replacement(
+                            crate::app::state::DocumentReplacement::OpenStructure(path),
+                        );
+                    }
                 } else {
                     self.open_file_dialog();
                 }

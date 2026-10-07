@@ -12,6 +12,9 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::ConvertTo => "🔄  Convert to",
         TextKey::CloseFile => "✖  Close file",
         TextKey::CloseFileUnsavedTitle => "Unsaved changes",
+        TextKey::ReplaceFileUnsavedMessage => {
+            "Save your changes before opening or creating another file?"
+        }
         TextKey::CloseFileUnsavedMessage => {
             "This file has unsaved changes. If you continue without saving, they will be lost."
         }

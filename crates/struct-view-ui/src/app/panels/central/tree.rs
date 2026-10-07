@@ -9,6 +9,11 @@ impl StructViewApp {
                 self.finalize_pending_inline_edit();
                 self.structure_view
                     .show(ui, self.locale, self.file_state.path.as_deref());
+                if let Some(path) = self.structure_view.requested_open.take() {
+                    self.request_document_replacement(
+                        crate::app::state::DocumentReplacement::OpenStructure(path),
+                    );
+                }
                 self.structure_view
                     .sync_search(&mut self.search, &self.search_query_buf);
                 return;

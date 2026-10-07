@@ -762,6 +762,264 @@ fn creating_new_file_initializes_editable_document_for_all_formats() {
     }
 }
 
+fn poll_file_until_ready(app: &mut StructViewApp) {
+    let context = egui::Context::default();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.file_load_receiver.is_some() && Instant::now() < deadline {
+        app.poll_file_load(&context);
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        app.file_load_receiver.is_none(),
+        "The file loader should finish"
+    );
+}
+
+#[test]
+fn replacing_a_modified_document_can_be_cancelled_discarded_or_saved() {
+    for save in [None, Some(false), Some(true)] {
+        let directory = tempfile::tempdir().unwrap();
+        let original = directory.path().join("original.json");
+        let next = directory.path().join("next.json");
+        std::fs::write(&original, r#"{"value":1}"#).unwrap();
+        std::fs::write(&next, r#"{"value":3}"#).unwrap();
+        let mut app = StructViewApp::default();
+        app.load_file(original.clone());
+        app.apply_document_change(|root, _| {
+            root.children[0].display_value = "2".into();
+            Ok(())
+        })
+        .unwrap();
+
+        app.request_file_load(next.clone());
+        assert!(app.close_file_confirmation_open);
+        assert!(app.pending_document_replacement.is_some());
+        assert!(app.file_load_receiver.is_none());
+        assert_eq!(app.file_state.path.as_ref(), Some(&original));
+
+        match save {
+            None => app.cancel_close_file_confirmation(),
+            Some(false) => app.continue_without_saving(&egui::Context::default()),
+            Some(true) => assert!(app.save_changes_and_close_file()),
+        }
+        poll_file_until_ready(&mut app);
+        assert!(!app.close_file_confirmation_open);
+        assert!(app.pending_document_replacement.is_none());
+        let expected = if save.is_none() { 2 } else { 3 };
+        assert_eq!(
+            node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+            expected
+        );
+        assert_eq!(
+            app.file_state.path,
+            Some(if save.is_none() {
+                original.clone()
+            } else {
+                next
+            })
+        );
+        let saved = std::fs::read_to_string(&original).unwrap();
+        let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(saved["value"], if save == Some(true) { 2 } else { 1 });
+    }
+}
+
+#[test]
+fn creating_a_replacement_waits_for_confirmation_and_preserves_state_on_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = directory.path().join("original.json");
+    let next = directory.path().join("next.json");
+    std::fs::write(&original, r#"{"value":1}"#).unwrap();
+    let mut app = StructViewApp::default();
+    app.load_file(original.clone());
+    app.apply_document_change(|root, _| {
+        root.children[0].display_value = "2".into();
+        Ok(())
+    })
+    .unwrap();
+
+    app.request_document_replacement(super::DocumentReplacement::Create(
+        next.clone(),
+        DataFormat::Json,
+    ));
+    assert!(!next.exists());
+    app.cancel_close_file_confirmation();
+    assert!(!next.exists());
+    assert!(!app.undo_history.is_empty());
+
+    app.request_document_replacement(super::DocumentReplacement::Create(
+        directory.path().to_path_buf(),
+        DataFormat::Json,
+    ));
+    app.continue_without_saving(&egui::Context::default());
+    assert_eq!(app.file_state.path, Some(original));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        2
+    );
+    app.request_close_file();
+    assert!(app.close_file_confirmation_open);
+    app.cancel_close_file_confirmation();
+
+    app.request_document_replacement(super::DocumentReplacement::Create(
+        next.clone(),
+        DataFormat::Json,
+    ));
+    assert!(app.save_changes_and_close_file());
+    assert_eq!(app.file_state.path, Some(next));
+    assert_eq!(app.mode, AppMode::Edit);
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap(),
+        serde_json::json!({})
+    );
+}
+
+#[test]
+fn failed_save_does_not_continue_document_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = directory.path().join("original.json");
+    let next = directory.path().join("next.json");
+    std::fs::write(&original, r#"{"value":1}"#).unwrap();
+    std::fs::write(&next, r#"{"value":3}"#).unwrap();
+    let mut app = StructViewApp::default();
+    app.load_file(original.clone());
+    app.apply_document_change(|root, _| {
+        root.children[0].display_value = "2".into();
+        Ok(())
+    })
+    .unwrap();
+    let permissions = std::fs::metadata(&original).unwrap().permissions();
+    let mut readonly = permissions.clone();
+    readonly.set_readonly(true);
+    std::fs::set_permissions(&original, readonly).unwrap();
+    app.request_file_load(next);
+    let saved = app.save_changes_and_close_file();
+    std::fs::set_permissions(&original, permissions).unwrap();
+    assert!(!saved);
+    assert!(app.close_file_confirmation_open);
+    assert!(app.pending_document_replacement.is_some());
+    assert!(app.file_load_receiver.is_none());
+    assert_eq!(app.file_state.path, Some(original));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        2
+    );
+    assert!(app.toast.is_some());
+}
+
+#[test]
+fn replacing_a_comparison_saves_its_hidden_modified_document() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = directory.path().join("original.json");
+    let next = directory.path().join("next.json");
+    std::fs::write(&original, r#"{"value":1}"#).unwrap();
+    std::fs::write(&next, r#"{"value":3}"#).unwrap();
+    let mut app = StructViewApp::default();
+    app.load_file(original.clone());
+    app.apply_document_change(|root, _| {
+        root.children[0].display_value = "2".into();
+        Ok(())
+    })
+    .unwrap();
+    app.load_comparison(vec![next.clone()]);
+    app.request_file_load(next.clone());
+    assert!(app.close_file_confirmation_open);
+    assert!(app.save_changes_and_close_file());
+    poll_file_until_ready(&mut app);
+    assert_eq!(app.file_state.path, Some(next));
+    assert!(app.comparison.is_none());
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(original).unwrap()).unwrap();
+    assert_eq!(saved["value"], 2);
+}
+
+#[test]
+fn gui_cannot_overwrite_imported_graph_even_with_a_writable_output_format() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("graph.xml");
+    let output = directory.path().join("graph.json");
+    let source = r#"<graphml><graph edgedefault="directed"><node id="a"/></graph></graphml>"#;
+    std::fs::write(&input, source).unwrap();
+    let mut app = StructViewApp::default();
+    app.load_file(input.clone());
+    assert_eq!(app.file_state.format, Some(DataFormat::GraphMl));
+    assert!(app.write_root_to_path(&input, DataFormat::Json).is_err());
+    assert_eq!(std::fs::read_to_string(&input).unwrap(), source);
+    assert!(app.write_root_to_path(&output, DataFormat::Json).is_ok());
+    assert_eq!(app.file_state.path, Some(input));
+    assert!(output.exists());
+}
+
+#[test]
+fn edits_during_background_loading_require_a_new_confirmation() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = directory.path().join("original.json");
+    let next = directory.path().join("next.json");
+    std::fs::write(&original, r#"{"value":1}"#).unwrap();
+    std::fs::write(&next, r#"{"value":3}"#).unwrap();
+    let mut app = StructViewApp::default();
+    app.load_file(original.clone());
+    app.request_file_load(next.clone());
+    assert!(app.file_load_receiver.is_some());
+    app.apply_document_change(|root, _| {
+        root.children[0].display_value = "2".into();
+        Ok(())
+    })
+    .unwrap();
+    poll_file_until_ready(&mut app);
+    assert!(app.close_file_confirmation_open);
+    assert_eq!(app.file_state.path, Some(original));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        2
+    );
+    app.continue_without_saving(&egui::Context::default());
+    assert_eq!(app.file_state.path, Some(next));
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        3
+    );
+}
+
+#[test]
+fn native_window_close_requires_confirmation_for_unsaved_changes() {
+    let mut app = editable_document();
+    let context = egui::Context::default();
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .events
+        .push(egui::ViewportEvent::Close);
+    let output = context.run_ui(input, |ui| app.handle_native_close_request(ui.ctx()));
+    assert!(app.close_file_confirmation_open);
+    assert!(app.exit_after_close_confirmation);
+    assert!(
+        output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::CancelClose))
+    );
+    output.drop_without_applying_deltas();
+}
+
+#[test]
+fn exit_confirmation_cancels_pending_file_replacement() {
+    let mut app = editable_document();
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    app.file_load_receiver = Some(receiver);
+    app.request_exit(&egui::Context::default());
+    assert!(app.file_load_receiver.is_none());
+    assert!(app.close_file_confirmation_open);
+    assert!(app.exit_after_close_confirmation);
+    app.cancel_close_file_confirmation();
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap()["value"],
+        1
+    );
+}
+
 fn editable_document() -> StructViewApp {
     let root = parse_data(r#"{"value":1}"#, Some(DataFormat::Json))
         .unwrap()

@@ -12,6 +12,9 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::ConvertTo => "🔄  Преобразовать в",
         TextKey::CloseFile => "✖  Закрыть файл",
         TextKey::CloseFileUnsavedTitle => "Несохранённые изменения",
+        TextKey::ReplaceFileUnsavedMessage => {
+            "Сохранить изменения перед открытием или созданием другого файла?"
+        }
         TextKey::CloseFileUnsavedMessage => {
             "В файле есть несохранённые изменения. Если продолжить без сохранения, они будут потеряны."
         }

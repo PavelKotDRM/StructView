@@ -176,7 +176,7 @@ impl StructureView {
             )
             .pick_file()
         {
-            self.open(path);
+            self.requested_open = Some(path);
         }
     }
 
@@ -309,6 +309,10 @@ impl StructureView {
         self.unsaved
     }
 
+    pub(in crate::app) fn source_fingerprint(&self) -> u64 {
+        crate::app::state::content_fingerprint(&self.source)
+    }
+
     pub(in crate::app) fn save_changes(&mut self, locale: Locale) -> bool {
         self.save_source(locale)
     }
@@ -370,17 +374,20 @@ impl StructureView {
         }
     }
 
-    pub(super) fn open(&mut self, path: PathBuf) {
-        self.source_changed = true;
-        self.unsaved = false;
+    pub(in crate::app) fn open(&mut self, path: PathBuf) {
         self.pending_origin = Some(path.clone());
-        self.format = DataFormat::from_path(&path);
-        let format = self.format;
+        let format = DataFormat::from_path(&path);
         self.start(move || {
             let source =
                 std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             parse_text(source, format)
         });
+    }
+
+    pub(in crate::app) fn cancel_pending_open(&mut self) {
+        if self.pending_origin.take().is_some() {
+            self.pending = None;
+        }
     }
 
     pub(super) fn poll(&mut self, ui: &Ui, locale: Locale) {
@@ -392,10 +399,13 @@ impl StructureView {
                         Ok((source, result)) => {
                             self.source = source;
                             if let Some(path) = self.pending_origin.take() {
+                                self.format = DataFormat::from_path(&path);
                                 self.origin = Some(path);
+                                self.unsaved = false;
                             }
                             match result {
                                 Ok(document) => {
+                                    self.format = Some(document.format);
                                     self.reset(&document);
                                     self.document = Some(document);
                                     self.source_open = false;

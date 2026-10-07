@@ -24,18 +24,9 @@ impl Source {
         if format.is_serializable() {
             return Ok(());
         }
-        if let (Self::File(input), Some(output)) = (self, output)
-            && output.exists()
-        {
-            let resolve = |path: &std::path::Path| {
-                path.canonicalize()
-                    .map_err(|error| format!("Cannot resolve {}: {error}", path.display()))
-            };
-            if resolve(input)? == resolve(output)? {
-                return Err(
-                    "Imported graph files are read-only and cannot be overwritten".to_string(),
-                );
-            }
+        if let (Self::File(input), Some(output)) = (self, output) {
+            struct_view_core::files::ensure_distinct_paths(input, output)
+                .map_err(|error| format!("Cannot write {}: {error}", output.display()))?;
         }
         Ok(())
     }
