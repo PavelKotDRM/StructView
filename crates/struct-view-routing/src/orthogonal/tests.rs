@@ -186,3 +186,64 @@ fn orthogonal_router_rejects_invalid_geometry_and_indices() {
         RoutingError::InvalidNodeIndex
     );
 }
+
+#[test]
+fn router_handles_negative_zero_route_coordinates_near_ports() {
+    // The source escape lands exactly on x = 0.0 while the route uses x = -0.0.
+    let node_positions = [
+        Point::new(58.0, 100.0),
+        Point::new(258.0, 100.0),
+        Point::new(458.0, 100.0),
+    ];
+    let options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(100.0, 50.0));
+    let router = OrthogonalRouter::new(&node_positions, &[0, 1, 2], options).unwrap();
+    let ports = EdgePorts {
+        source_side: NodeSide::Left,
+        target_side: NodeSide::Left,
+        source_offset: 0.0,
+        target_offset: 0.0,
+    };
+    let existing = vec![vec![Point::new(-0.0, 0.0), Point::new(-0.0, 300.0)]];
+    let index = RouteIndex::new(&existing, options.edge_clearance).unwrap();
+
+    let route = router.route_edge(0, 2, ports, &index).unwrap();
+
+    assert_eq!(route.first(), Some(&Point::new(28.0, 100.0)));
+    assert_eq!(route.last(), Some(&Point::new(428.0, 100.0)));
+}
+#[test]
+fn edge_ports_stay_on_small_node_sides_in_neighbor_order() {
+    let node_size = Size::new(20.0, 4.0);
+    let positions = [
+        Point::new(0.0, 0.0),
+        Point::new(300.0, -10.0),
+        Point::new(300.0, 10.0),
+    ];
+    let ports = assign_edge_ports(&positions, node_size, &[(0, 1), (0, 2)]).unwrap();
+
+    assert!(ports.iter().all(|port| port.source_side == NodeSide::Right));
+    assert!(
+        ports
+            .iter()
+            .all(|port| port.source_offset.abs() <= node_size.height / 2.0),
+        "ports must stay on the node side: {ports:?}"
+    );
+    assert!(
+        ports[0].source_offset <= ports[1].source_offset,
+        "ports must follow neighbor order: {ports:?}"
+    );
+}
+
+#[test]
+fn route_index_penalizes_near_crossings_across_cells_with_zero_clearance() {
+    let index = RouteIndex::new(
+        &[vec![Point::new(128.5, 0.0), Point::new(128.5, 100.0)]],
+        0.0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        index.penalty(Point::new(127.8, 0.0), Point::new(127.8, 100.0)),
+        GRAPH_EDGE_CROSSING_PENALTY
+    );
+}

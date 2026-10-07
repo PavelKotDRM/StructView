@@ -1315,9 +1315,8 @@ fn source_window_preview_tracks_selected_values_and_includes_descendants() {
         .unwrap();
     view.select(resource, false);
 
-    let preview = view
-        .selected_source_preview(resource, DataFormat::Json)
-        .unwrap();
+    let previews = view.selected_source_previews(&[resource], DataFormat::Json);
+    let preview = previews[0].as_ref().unwrap();
     assert!(preview.contains("\"id\": 7"));
     assert!(preview.contains("\"items\""));
     assert!(preview.contains("\"name\": \"one\""));
@@ -1334,8 +1333,8 @@ fn source_window_preview_tracks_selected_values_and_includes_descendants() {
         .unwrap();
     view.select(id, false);
     assert_eq!(
-        view.selected_source_preview(id, DataFormat::Json).unwrap(),
-        "{\n  \"id\": 7\n}"
+        view.selected_source_previews(&[id], DataFormat::Json),
+        vec![Ok("{\n  \"id\": 7\n}".to_string())]
     );
 }
 

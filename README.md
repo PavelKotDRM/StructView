@@ -141,11 +141,16 @@ The interface provides:
   edges; it never infers relationships or uses the relationship graph model.
   The current file is read as a separate disk snapshot on first entry. Use
   **File -> Open**, drop one data file onto its canvas, or open
-  **View -> Source text** and paste JSON/YAML/TOML into the source window.
-  Choose **Settings -> Data format -> Auto / JSON / YAML / TOML** and
+  **View -> Source text** and paste JSON/JSON5/YAML/TOML into the source window.
+  Choose **Settings -> Data format -> Auto / JSON / JSON5 / YAML / TOML** and
   **File -> Build diagram**. Unsaved edits in other views are not imported.
   Parsing happens in the background; errors show their line and leave the
   last valid diagram intact, with an explicit stale-source notice.
+  A parse error opens the full source for correction; selected-node previews
+  are unavailable until the changed text has been rebuilt successfully.
+  Loading another file dismisses the previous field-edit dialog.
+  Source text can be saved verbatim, including an empty file, but saving is
+  disabled while a load or rebuild is pending.
   Choose top-to-bottom, left-to-right, or compact layout under
   **View -> Structure layout**. Zoom, 100%, fit, select-all, clear-selection, selected-node toggle,
   and **Show next 100 children** also live in **View**. Click a container
@@ -334,6 +339,9 @@ as strings. TOML `nan` and infinity values can be saved as TOML, but cannot be c
 JSON, YAML, or JSON5 through the shared JSON-compatible data model. TOML does
 not support `null`.
 
+JSON5 `NaN`, `Infinity`, and numeric literals that overflow to infinity are
+rejected explicitly, rather than silently converted to `null`.
+
 YAML streams with multiple documents are shown as an array of documents.
 Non-string YAML mapping keys are displayed using their compact JSON spelling;
 if two keys would become the same string, parsing fails instead of silently
@@ -397,6 +405,9 @@ Russian catalogs are maintained separately.
 
 The release binary can be run directly. During development, use the same
 commands through `cargo run --`.
+
+On Windows, release builds retain redirected stdin, stdout, and stderr;
+attaching to a console does not replace pipes or file redirection.
 
 CLI commands, options, help text, and command diagnostics use English.
 Details from the shared parsers and editing validators may be localized.

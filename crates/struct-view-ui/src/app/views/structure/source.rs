@@ -1,15 +1,14 @@
 use super::*;
-use egui::text::{LayoutJob, TextFormat};
+
+mod loading;
+mod syntax;
+#[cfg(test)]
+mod tests;
 
 impl StructureView {
     pub(super) fn show_source_window(&mut self, ctx: &egui::Context, locale: Locale) {
         let mut open = self.source_open;
-        let format = self
-            .document
-            .as_ref()
-            .map(|document| document.format)
-            .or(self.format)
-            .unwrap_or(DataFormat::Json);
+        let format = self.source_format();
         egui::Window::new(locale.text(TextKey::StructureSource))
             .id(egui::Id::new("structure-source-window"))
             .open(&mut open)
@@ -57,11 +56,11 @@ impl StructureView {
                                     )
                                     .changed()
                                 {
-                                    self.source_changed = true;
-                                    self.source_preview = None;
+                                    self.mark_source_changed();
                                     self.unsaved = true;
-                                    self.set_editing(false);
                                 }
+                            } else if self.source_changed {
+                                ui.label(locale.text(TextKey::StructureStale));
                             } else {
                                 let mut selected =
                                     self.selected_nodes.iter().copied().collect::<Vec<_>>();
@@ -72,33 +71,26 @@ impl StructureView {
                                     if self.source_preview.as_ref().is_none_or(
                                         |(cached_selection, _)| *cached_selection != selected,
                                     ) {
-                                        let previews = selected
-                                            .iter()
-                                            .map(|&id| self.selected_source_preview(id, format))
-                                            .collect();
+                                        let previews =
+                                            self.selected_source_previews(&selected, format);
                                         self.source_preview = Some((selected.clone(), previews));
                                     }
                                     if let Some((_, previews)) = &self.source_preview {
-                                        let paths = self
-                                            .document
-                                            .as_ref()
-                                            .map(|document| {
-                                                selected
-                                                    .iter()
-                                                    .filter_map(|&id| document.nodes.get(id))
-                                                    .map(|node| node.path.clone())
-                                                    .collect::<Vec<_>>()
-                                            })
-                                            .unwrap_or_default();
                                         for (index, preview) in previews.iter().enumerate() {
-                                            if let Some(path) = paths.get(index) {
+                                            if let Some(node) =
+                                                self.document.as_ref().and_then(|document| {
+                                                    document.nodes.get(selected[index])
+                                                })
+                                            {
                                                 ui.label(
-                                                    egui::RichText::new(path).weak().monospace(),
+                                                    egui::RichText::new(&node.path)
+                                                        .weak()
+                                                        .monospace(),
                                                 );
                                             }
                                             match preview {
                                                 Ok(preview) => {
-                                                    let mut preview = preview.clone();
+                                                    let mut preview = preview.as_str();
                                                     let mut layouter =
                                                         Self::source_layouter(format);
                                                     ui.add(
@@ -130,42 +122,51 @@ impl StructureView {
         self.source_open = open;
     }
 
-    fn source_layouter(
-        format: DataFormat,
-    ) -> impl FnMut(&egui::Ui, &dyn egui::TextBuffer, f32) -> std::sync::Arc<egui::Galley> {
-        move |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-            let colors = super::super::super::theme::SyntaxColors::new(ui.visuals());
-            let mut job = Self::source_syntax_job(
-                text.as_str(),
-                format,
-                colors,
-                ui.style().text_styles[&egui::TextStyle::Monospace].size,
-            );
-            job.wrap.max_width = wrap_width;
-            ui.fonts_mut(|fonts| fonts.layout_job(job))
-        }
+    fn source_format(&self) -> DataFormat {
+        self.format
+            .or_else(|| self.document.as_ref().map(|document| document.format))
+            .unwrap_or(DataFormat::Json)
     }
 
-    pub(super) fn selected_source_preview(
+    fn mark_source_changed(&mut self) {
+        self.source_changed = true;
+        self.source_preview = None;
+        self.set_editing(false);
+    }
+
+    fn can_save_source(&self) -> bool {
+        self.pending.is_none() && (self.origin.is_some() || self.unsaved || !self.source.is_empty())
+    }
+
+    pub(super) fn selected_source_previews(
         &self,
-        selected: usize,
+        selected: &[usize],
         format: DataFormat,
-    ) -> Result<String, String> {
-        let (path, node) = self.selected_source_node_at(selected)?;
-        let preview_node = if path.is_empty() {
-            node
-        } else {
-            struct_view_core::parser::JsonNode {
-                key: None,
-                yaml_key: None,
-                value_type: struct_view_core::parser::JsonValueType::Object,
-                display_value: "{1}".to_string(),
-                children: vec![node],
-                expanded: true,
-                path: String::new(),
-            }
+    ) -> Vec<Result<String, String>> {
+        let root = match self.source_root() {
+            Ok(root) => root,
+            Err(error) => return vec![Err(error); selected.len()],
         };
-        struct_view_core::parser::serialize_node(&preview_node, format, false)
+        selected
+            .iter()
+            .map(|&id| {
+                let node = self.selected_source_node_in(id, &root)?;
+                if node.path.is_empty() {
+                    struct_view_core::parser::serialize_node(node, format, false)
+                } else {
+                    let preview_node = struct_view_core::parser::JsonNode {
+                        key: None,
+                        yaml_key: None,
+                        value_type: JsonValueType::Object,
+                        display_value: "{1}".to_string(),
+                        children: vec![node.clone()],
+                        expanded: true,
+                        path: String::new(),
+                    };
+                    struct_view_core::parser::serialize_node(&preview_node, format, false)
+                }
+            })
+            .collect()
     }
 
     pub(in crate::app) fn open_file_dialog(&mut self) {
@@ -178,131 +179,6 @@ impl StructureView {
         {
             self.requested_open = Some(path);
         }
-    }
-
-    pub(super) fn source_syntax_job(
-        text: &str,
-        format: DataFormat,
-        colors: super::super::super::theme::SyntaxColors,
-        font_size: f32,
-    ) -> LayoutJob {
-        let mut job = LayoutJob::default();
-        let font_id = egui::FontId::monospace(font_size);
-        let mut index = 0;
-
-        while index < text.len() {
-            let character = text[index..].chars().next().unwrap_or_default();
-            let start = index;
-            let color = if Self::is_comment_start(text, index, format) {
-                index = Self::comment_end(text, index, format);
-                colors.comment
-            } else if matches!(character, '"' | '\'') {
-                index = Self::quoted_end(text, index, character);
-                let next = text[index..].trim_start();
-                if next.starts_with(':') || (format == DataFormat::Toml && next.starts_with('=')) {
-                    colors.key
-                } else {
-                    colors.string
-                }
-            } else if character.is_ascii_digit()
-                || (character == '-'
-                    && text[index + character.len_utf8()..]
-                        .chars()
-                        .next()
-                        .is_some_and(|next| next.is_ascii_digit()))
-            {
-                index = Self::consume_while(text, index, |character| {
-                    character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '+' | '-')
-                });
-                colors.number
-            } else if Self::is_word_start(character) {
-                index = Self::consume_while(text, index, Self::is_word_continue);
-                let word = &text[start..index];
-                let next = text[index..].trim_start();
-                if next.starts_with(':') || (format == DataFormat::Toml && next.starts_with('=')) {
-                    colors.key
-                } else {
-                    match word {
-                        "true" | "false" | "yes" | "no" | "on" | "off" => colors.boolean,
-                        "null" | "Null" | "NULL" | "~" => colors.null,
-                        _ => colors.string,
-                    }
-                }
-            } else {
-                index += character.len_utf8();
-                colors.key
-            };
-
-            job.append(
-                &text[start..index],
-                0.0,
-                TextFormat {
-                    font_id: font_id.clone(),
-                    color,
-                    ..Default::default()
-                },
-            );
-        }
-
-        job
-    }
-
-    fn is_comment_start(text: &str, index: usize, format: DataFormat) -> bool {
-        let remaining = &text[index..];
-        match format {
-            DataFormat::Yaml | DataFormat::Toml => remaining.starts_with('#'),
-            DataFormat::Json5 => {
-                remaining.starts_with('#')
-                    || remaining.starts_with("//")
-                    || remaining.starts_with("/*")
-            }
-            _ => false,
-        }
-    }
-
-    fn comment_end(text: &str, start: usize, format: DataFormat) -> usize {
-        let remaining = &text[start..];
-        if format == DataFormat::Json5 && remaining.starts_with("/*") {
-            return remaining
-                .find("*/")
-                .map_or(text.len(), |offset| start + offset + 2);
-        }
-        remaining
-            .find('\n')
-            .map_or(text.len(), |offset| start + offset)
-    }
-
-    fn quoted_end(text: &str, start: usize, quote: char) -> usize {
-        let mut escaped = false;
-        for (offset, character) in text[start + quote.len_utf8()..].char_indices() {
-            let index = start + quote.len_utf8() + offset;
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == quote {
-                return index + character.len_utf8();
-            }
-        }
-        text.len()
-    }
-
-    fn consume_while(text: &str, start: usize, predicate: impl Fn(char) -> bool) -> usize {
-        text[start..]
-            .char_indices()
-            .take_while(|(_, character)| predicate(*character))
-            .last()
-            .map_or(start, |(offset, character)| {
-                start + offset + character.len_utf8()
-            })
-    }
-
-    fn is_word_start(character: char) -> bool {
-        character.is_alphabetic() || matches!(character, '_' | '$' | '~')
-    }
-
-    fn is_word_continue(character: char) -> bool {
-        character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '$' | '~')
     }
 
     pub(in crate::app) fn has_unsaved_changes(&self) -> bool {
@@ -355,106 +231,6 @@ impl StructureView {
         }
     }
 
-    pub(super) fn start(&mut self, work: impl FnOnce() -> ParseResult + Send + 'static) {
-        let (sender, receiver) = mpsc::channel();
-        match std::thread::Builder::new()
-            .name("struct-view-data-structure".into())
-            .spawn(move || {
-                let _ = sender.send(work());
-            }) {
-            Ok(_) => {
-                self.pending = Some(receiver);
-                self.error = None;
-                self.notice = None;
-            }
-            Err(error) => {
-                self.pending_origin = None;
-                self.error = Some(error.to_string());
-            }
-        }
-    }
-
-    pub(in crate::app) fn open(&mut self, path: PathBuf) {
-        self.pending_origin = Some(path.clone());
-        let format = DataFormat::from_path(&path);
-        self.start(move || {
-            let source =
-                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            parse_text(source, format)
-        });
-    }
-
-    pub(in crate::app) fn cancel_pending_open(&mut self) {
-        if self.pending_origin.take().is_some() {
-            self.pending = None;
-        }
-    }
-
-    pub(super) fn poll(&mut self, ui: &Ui, locale: Locale) {
-        if let Some(receiver) = &self.pending {
-            match receiver.try_recv() {
-                Ok(result) => {
-                    self.pending = None;
-                    match result {
-                        Ok((source, result)) => {
-                            self.source = source;
-                            if let Some(path) = self.pending_origin.take() {
-                                self.format = DataFormat::from_path(&path);
-                                self.origin = Some(path);
-                                self.unsaved = false;
-                            }
-                            match result {
-                                Ok(document) => {
-                                    self.format = Some(document.format);
-                                    self.reset(&document);
-                                    self.document = Some(document);
-                                    self.source_open = false;
-                                    self.source_changed = false;
-                                }
-                                Err(error) => {
-                                    self.source_changed = true;
-                                    self.error = Some(error.to_string());
-                                    self.source_open = true;
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            self.pending_origin = None;
-                            self.error = Some(error);
-                            self.source_open = true;
-                        }
-                    }
-                }
-                Err(TryRecvError::Disconnected) => {
-                    self.pending = None;
-                    self.pending_origin = None;
-                    self.error = Some(locale.text(TextKey::BackgroundOperationFailed).into());
-                }
-                Err(TryRecvError::Empty) => {
-                    ui.ctx().request_repaint_after(Duration::from_millis(40))
-                }
-            }
-        }
-        if let Some(receiver) = &self.export_pending {
-            match receiver.try_recv() {
-                Ok(result) => {
-                    self.export_pending = None;
-                    match result {
-                        Ok(()) => self.notice = Some(locale.text(TextKey::GraphExported).into()),
-                        Err(error) => self.error = Some(error),
-                    }
-                }
-                Err(TryRecvError::Disconnected) => {
-                    self.export_pending = None;
-                    self.error = Some(locale.text(TextKey::BackgroundOperationFailed).into());
-                }
-                Err(TryRecvError::Empty) => {
-                    ui.ctx().request_repaint_after(Duration::from_millis(40))
-                }
-            }
-        }
-    }
-
     pub(super) fn reset(&mut self, doc: &Document) {
         self.collapsed.clear();
         self.limits.clear();
@@ -487,7 +263,7 @@ impl StructureView {
     pub(in crate::app) fn file_menu(&mut self, ui: &mut Ui, locale: Locale) {
         if ui
             .add_enabled(
-                !self.source.is_empty()
+                self.can_save_source()
                     && (self.origin.is_some() || self.unsaved || self.source_changed),
                 egui::Button::new(locale.text(TextKey::Save)),
             )
@@ -498,7 +274,7 @@ impl StructureView {
         }
         if ui
             .add_enabled(
-                !self.source.is_empty(),
+                self.can_save_source(),
                 egui::Button::new(locale.text(TextKey::SaveAs)),
             )
             .clicked()
@@ -547,9 +323,8 @@ impl StructureView {
                         .selectable_value(&mut self.format, Some(format), format.to_string())
                         .changed();
                 }
-                self.source_changed |= changed;
                 if changed {
-                    self.set_editing(false);
+                    self.mark_source_changed();
                 }
             });
         });

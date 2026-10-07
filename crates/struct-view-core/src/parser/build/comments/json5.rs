@@ -25,7 +25,11 @@ pub(super) fn extract(input: &str) -> Vec<String> {
             b'/' if bytes.get(index + 1) == Some(&b'/') => {
                 let start = index;
                 index += 2;
-                while index < bytes.len() && bytes[index] != b'\n' {
+                while index < bytes.len()
+                    && !matches!(bytes[index], b'\n' | b'\r')
+                    && !bytes[index..].starts_with("\u{2028}".as_bytes())
+                    && !bytes[index..].starts_with("\u{2029}".as_bytes())
+                {
                     index += 1;
                 }
                 comments.push(input[start..index].trim_end().to_string());

@@ -2,6 +2,7 @@
 
 mod comments;
 mod format;
+mod json5;
 mod parse;
 mod paths;
 mod serialize;

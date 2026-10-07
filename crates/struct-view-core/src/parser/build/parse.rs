@@ -10,6 +10,7 @@ use super::tree::{build_node, build_toml_node, build_yaml_node};
 /// Разобрать данные указанного формата или определить формат автоматически.
 ///
 /// При успешном автодетекте возвращает фактически использованный формат.
+/// Нечисловые и бесконечные числа JSON5 отклоняются, а не заменяются на `null`.
 ///
 /// # Errors
 ///
@@ -107,7 +108,7 @@ fn parse_document(input: &str, format: DataFormat) -> Result<ParsedDocument, Par
                 line: None,
                 column: None,
             }),
-        DataFormat::Json5 => json5::from_str(input)
+        DataFormat::Json5 => super::json5::parse(input)
             .map(ParsedDocument::Json)
             .map_err(|error| ParseError {
                 message: error.to_string(),

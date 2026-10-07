@@ -350,4 +350,38 @@ mod tests {
                 .contains("headless")
         );
     }
+
+    #[test]
+    fn format_rejects_non_finite_json5_without_replacing_output() {
+        let stem = format!(".struct_view-cli-json5-non-finite-{}", std::process::id());
+        let input = PathBuf::from(format!("{stem}.json5"));
+        let output = PathBuf::from(format!("{stem}.json"));
+        std::fs::write(&output, "original").unwrap();
+
+        for literal in ["NaN", "Infinity", "-Infinity"] {
+            std::fs::write(&input, format!("{{value: {literal}}}")).unwrap();
+            assert!(!run_format(&Source::File(input.clone()), Some(&output), false).unwrap());
+            assert_eq!(std::fs::read_to_string(&output).unwrap(), "original");
+        }
+        std::fs::remove_file(input).unwrap();
+        std::fs::remove_file(output).unwrap();
+    }
+
+    #[test]
+    fn format_preserves_json5_values_after_carriage_return_comments() {
+        let stem = format!(".struct_view-cli-json5-comments-{}", std::process::id());
+        let input = PathBuf::from(format!("{stem}-input.json5"));
+        let output = PathBuf::from(format!("{stem}-output.json5"));
+        std::fs::write(&input, "{a: 1, // comment\rb: 2}").unwrap();
+        assert!(run_format(&Source::File(input.clone()), Some(&output), false).unwrap());
+        let root = parse_data(
+            &std::fs::read_to_string(&output).unwrap(),
+            Some(DataFormat::Json5),
+        )
+        .unwrap()
+        .0;
+        assert_eq!(node_to_value(&root).unwrap(), json!({"a": 1, "b": 2}));
+        std::fs::remove_file(input).unwrap();
+        std::fs::remove_file(output).unwrap();
+    }
 }

@@ -51,7 +51,7 @@ pub(in crate::app) fn headless_graph_image_with_progress(
     } else {
         None
     };
-    let result = build_graph_calculation(
+    let result = calculate_graph(
         root.clone(),
         GraphRoutingWorkerSetting::Automatic,
         RoutingSearchBackend::Builtin,
@@ -60,6 +60,10 @@ pub(in crate::app) fn headless_graph_image_with_progress(
     let calculation = match result {
         Ok(calculation) => calculation,
         Err(error) => {
+            progress
+                .lock()
+                .expect("graph progress lock poisoned")
+                .finish();
             if let Some(reporter) = reporter {
                 reporter
                     .join()
@@ -262,26 +266,58 @@ pub(super) fn build_graph_calculation(
     search_backend: RoutingSearchBackend,
     progress: &GraphProgressTracker,
 ) -> Result<GraphCalculationResult, String> {
+    let result = calculate_graph(root, worker_setting, search_backend, progress);
+    progress
+        .lock()
+        .expect("graph progress lock poisoned")
+        .finish();
+    result
+}
+
+fn calculate_graph(
+    root: JsonNode,
+    worker_setting: GraphRoutingWorkerSetting,
+    search_backend: RoutingSearchBackend,
+    progress: &GraphProgressTracker,
+) -> Result<GraphCalculationResult, String> {
     begin_graph_stage(Some(progress), GraphStage::Entities, 0, 1);
-    let graph = match try_build_relationship_graph(&root) {
-        Ok(graph) => graph,
-        Err(error) => {
-            progress
-                .lock()
-                .expect("graph progress lock poisoned")
-                .finish();
-            return Err(error);
-        }
-    };
+    let graph = try_build_relationship_graph(&root)?;
     let routing = build_graph_routing_layout_with_progress(
         &graph,
         worker_setting,
         search_backend,
         Some(progress),
     );
-    progress
-        .lock()
-        .expect("graph progress lock poisoned")
-        .finish();
     Ok(GraphCalculationResult { graph, routing })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_progress_remains_active_between_calculation_and_rendering() {
+        let root = struct_view_core::parser::parse_json(r#"[{"id":"a"}]"#).unwrap();
+        let progress = Arc::new(Mutex::new(GraphProgress::default()));
+        calculate_graph(
+            root,
+            GraphRoutingWorkerSetting::Automatic,
+            RoutingSearchBackend::Builtin,
+            &progress,
+        )
+        .unwrap();
+
+        assert!(!GraphProgressSnapshot::from(&progress.lock().unwrap()).finished);
+        begin_graph_stage(Some(&progress), GraphStage::Rendering, 0, 1);
+        assert!(!GraphProgressSnapshot::from(&progress.lock().unwrap()).finished);
+        progress.lock().unwrap().finish();
+        let snapshot = GraphProgressSnapshot::from(&progress.lock().unwrap());
+        assert!(snapshot.finished);
+        assert!(
+            snapshot
+                .timings
+                .iter()
+                .any(|(stage, _)| *stage == "Rendering graph image")
+        );
+    }
 }

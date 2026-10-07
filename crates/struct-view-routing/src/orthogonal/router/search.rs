@@ -40,8 +40,12 @@ impl OrthogonalRouter {
         let goal_state = vertex_count * GRAPH_ROUTE_DIRECTIONS;
         let state_count = goal_state + 1;
         let mut segment_costs = HashMap::new();
-        let goal_vertex = Self::vertex_index(target, x_coordinates, y_coordinates);
-        let start_vertex = Self::vertex_index(source, x_coordinates, y_coordinates);
+        let (Some(goal_vertex), Some(start_vertex)) = (
+            Self::vertex_index(target, x_coordinates, y_coordinates),
+            Self::vertex_index(source, x_coordinates, y_coordinates),
+        ) else {
+            return Err(RoutingError::InvalidGeometry);
+        };
         // Port lead directions make endpoint bends part of the search cost.
         let start_state = start_vertex * GRAPH_ROUTE_DIRECTIONS + start_direction;
         let path = a_star_indexed_with_backend(
@@ -173,14 +177,19 @@ impl OrthogonalRouter {
         ))
     }
 
-    fn vertex_index(point: Point, x_coordinates: &[f32], y_coordinates: &[f32]) -> usize {
-        let column = x_coordinates
-            .binary_search_by(|coordinate| coordinate.total_cmp(&point.x))
-            .expect("graph route x coordinates must include every port");
-        let row = y_coordinates
-            .binary_search_by(|coordinate| coordinate.total_cmp(&point.y))
-            .expect("graph route y coordinates must include every port");
-        row * x_coordinates.len() + column
+    fn vertex_index(point: Point, x_coordinates: &[f32], y_coordinates: &[f32]) -> Option<usize> {
+        let find = |coordinates: &[f32], value: f32| {
+            coordinates
+                .binary_search_by(|coordinate| {
+                    coordinate
+                        .partial_cmp(&value)
+                        .unwrap_or(std::cmp::Ordering::Less)
+                })
+                .ok()
+        };
+        let column = find(x_coordinates, point.x)?;
+        let row = find(y_coordinates, point.y)?;
+        Some(row * x_coordinates.len() + column)
     }
 
     fn point_at(vertex: usize, x_coordinates: &[f32], y_coordinates: &[f32]) -> Point {

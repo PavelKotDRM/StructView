@@ -43,10 +43,13 @@ impl NodeSide {
     }
 
     fn max_lane_offset(self, node_size: Size) -> f32 {
+        // Small nodes cannot fit the corner margin; a negative offset would
+        // reverse lane order and place ports beyond the node side.
         match self {
             Self::Left | Self::Right => node_size.height / 2.0 - 10.0,
             Self::Top | Self::Bottom => node_size.width / 2.0 - 16.0,
         }
+        .max(0.0)
     }
 }
 

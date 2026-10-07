@@ -44,6 +44,65 @@ fn parses_json5_comments_and_trailing_comma() {
 }
 
 #[test]
+fn json5_non_finite_numbers_are_not_silently_converted_to_null() {
+    for literal in ["NaN", "Infinity", "-Infinity"] {
+        for input in [format!("{{value: {literal}}}"), format!("[[{literal}]]")] {
+            let error = parse_data(&input, Some(DataFormat::Json5)).unwrap_err();
+            assert!(error.message.contains("Non-finite"), "{literal}: {error}");
+        }
+    }
+}
+
+#[test]
+fn json5_finite_values_keep_their_json_types() {
+    let input = r#"{positive: 0x10, negative: -12, float: 1.5,
+        values: [true, false, null, 'NaN', "Infinity", +2]}"#;
+    let root = parse_data(input, Some(DataFormat::Json5)).unwrap().0;
+    assert_eq!(
+        node_to_value(&root).unwrap(),
+        serde_json::json!({
+            "positive": 16,
+            "negative": -12,
+            "float": 1.5,
+            "values": [true, false, null, "NaN", "Infinity", 2],
+        })
+    );
+}
+
+#[test]
+fn json5_line_comments_end_at_all_json5_line_terminators() {
+    for terminator in ["\n", "\r", "\r\n", "\u{2028}", "\u{2029}"] {
+        let input = format!("{{a: 1, // comment{terminator}b: 2}}");
+        let root = parse_data(&input, Some(DataFormat::Json5)).unwrap().0;
+        assert_eq!(collect_comments(&root), ["// comment"], "{terminator:?}");
+        let output = serialize_node(&root, DataFormat::Json5, false).unwrap();
+        let reparsed = parse_data(&output, Some(DataFormat::Json5)).unwrap().0;
+        assert_eq!(
+            node_to_value(&root).unwrap(),
+            node_to_value(&reparsed).unwrap()
+        );
+    }
+}
+
+#[test]
+fn json5_block_comments_with_all_line_terminators_roundtrip() {
+    for terminator in ["\n", "\r", "\r\n", "\u{2028}", "\u{2029}"] {
+        let input = format!("/* first{terminator}second */ {{value: 1}}");
+        let root = parse_data(&input, Some(DataFormat::Json5)).unwrap().0;
+        let output = serialize_node(&root, DataFormat::Json5, false).unwrap();
+        assert!(
+            output.starts_with("// first\n// second\n"),
+            "{terminator:?}"
+        );
+        let reparsed = parse_data(&output, Some(DataFormat::Json5)).unwrap().0;
+        assert_eq!(
+            node_to_value(&root).unwrap(),
+            node_to_value(&reparsed).unwrap()
+        );
+    }
+}
+
+#[test]
 fn comments_roundtrip_in_json5_yaml_and_toml_without_becoming_data() {
     let cases = [
         (

@@ -92,7 +92,9 @@ pub fn format_comment_for_format(comment: &str, format: DataFormat) -> Result<St
 }
 
 pub(super) fn format_comment(comment: &str, marker: &str) -> String {
-    let body = comment_input(comment);
+    let body = comment_input(comment)
+        .replace("\r\n", "\n")
+        .replace(['\r', '\u{2028}', '\u{2029}'], "\n");
     if body.is_empty() {
         return marker.to_string();
     }

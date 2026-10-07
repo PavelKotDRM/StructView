@@ -6,6 +6,7 @@ use crate::{RoutingError, RoutingResult, orthogonal::geometry::validate_point};
 use std::collections::HashMap;
 
 const ROUTE_INDEX_CELL_SIZE: f32 = 128.0;
+const ROUTE_CROSSING_PROXIMITY: f32 = 1.0;
 
 /// Minimum search threshold used to reject short shared sections.
 pub const GRAPH_ROUTE_SHARED_SEGMENT_SEARCH_THRESHOLD: f32 = 8.0;
@@ -158,17 +159,21 @@ impl RouteIndex {
 
     /// Cost of routing a segment near, across, or along existing routes.
     pub fn penalty(&self, start: Point, end: Point) -> f32 {
-        self.indices_near(start, end, self.edge_clearance)
-            .into_iter()
-            .map(|index| {
-                segment_pair_penalty_with_clearance(
-                    start,
-                    end,
-                    self.segments[index],
-                    self.edge_clearance,
-                )
-            })
-            .sum()
+        self.indices_near(
+            start,
+            end,
+            self.edge_clearance.max(ROUTE_CROSSING_PROXIMITY),
+        )
+        .into_iter()
+        .map(|index| {
+            segment_pair_penalty_with_clearance(
+                start,
+                end,
+                self.segments[index],
+                self.edge_clearance,
+            )
+        })
+        .sum()
     }
 
     /// Return indexed segments near the supplied rectangle.
@@ -232,7 +237,7 @@ fn segment_pair_penalty_with_clearance(
             + visible_overlap * GRAPH_EDGE_SHARED_SEGMENT_PENALTY_SCALE)
             .min(GRAPH_EDGE_SHARED_SEGMENT_PENALTY_LIMIT)
     } else if segments_intersect(start, end, segment[0], segment[1])
-        || segments_within_clearance(start, end, segment[0], segment[1], 1.0)
+        || segments_within_clearance(start, end, segment[0], segment[1], ROUTE_CROSSING_PROXIMITY)
     {
         GRAPH_EDGE_CROSSING_PENALTY
     } else if segments_within_clearance(start, end, segment[0], segment[1], edge_clearance) {

@@ -54,11 +54,18 @@ impl StructureView {
         if !self.can_copy_selected() {
             return;
         }
+        let root = match self.source_root() {
+            Ok(root) => root,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
         let mut selected_paths = std::collections::BTreeSet::new();
         for &id in &self.selected_nodes {
-            match self.selected_source_node_at(id) {
-                Ok((path, _)) => {
-                    selected_paths.insert(path);
+            match self.selected_source_node_in(id, &root) {
+                Ok(node) => {
+                    selected_paths.insert(node.path.clone());
                 }
                 Err(error) => {
                     self.error = Some(error);
@@ -66,17 +73,6 @@ impl StructureView {
                 }
             }
         }
-        let Some(document) = &self.document else {
-            return;
-        };
-        let format = document.format;
-        let (root, _) = match struct_view_core::parser::parse_data(&self.source, Some(format)) {
-            Ok(result) => result,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                return;
-            }
-        };
         let entries = match selected_structures(&root, &selected_paths) {
             Ok(entries) => entries,
             Err(error) => {
@@ -256,11 +252,22 @@ impl StructureView {
         if !self.can_edit() {
             return;
         }
+        let Some(document) = &self.document else {
+            return;
+        };
+        let format = document.format;
+        let mut root = match self.source_root() {
+            Ok(root) => root,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
         let mut selected_paths = std::collections::BTreeSet::new();
         for &id in &self.selected_nodes {
-            match self.selected_source_node_at(id) {
-                Ok((path, _)) if !path.is_empty() => {
-                    selected_paths.insert(path);
+            match self.selected_source_node_in(id, &root) {
+                Ok(node) if !node.path.is_empty() => {
+                    selected_paths.insert(node.path.clone());
                 }
                 Ok(_) => {
                     self.error = Some(locale.text(TextKey::CannotDeleteRoot).to_string());
@@ -272,17 +279,6 @@ impl StructureView {
                 }
             }
         }
-        let Some(document) = &self.document else {
-            return;
-        };
-        let format = document.format;
-        let (mut root, _) = match struct_view_core::parser::parse_data(&self.source, Some(format)) {
-            Ok(document) => document,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                return;
-            }
-        };
         let count = match delete_selected_structures(&mut root, &selected_paths) {
             Ok(count) => count,
             Err(error) => {
@@ -329,13 +325,30 @@ impl StructureView {
         &self,
         selected: usize,
     ) -> Result<(String, struct_view_core::parser::JsonNode), String> {
+        let root = self.source_root()?;
+        let node = self.selected_source_node_in(selected, &root)?;
+        Ok((node.path.clone(), node.clone()))
+    }
+
+    pub(super) fn source_root(&self) -> Result<struct_view_core::parser::JsonNode, String> {
         let document = self
             .document
             .as_ref()
             .ok_or_else(|| "Нет построенной схемы".to_string())?;
-        let (mut root, _) =
-            struct_view_core::parser::parse_data(&self.source, Some(document.format))
-                .map_err(|error| error.to_string())?;
+        struct_view_core::parser::parse_data(&self.source, Some(document.format))
+            .map(|(root, _)| root)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn selected_source_node_in<'a>(
+        &self,
+        selected: usize,
+        root: &'a struct_view_core::parser::JsonNode,
+    ) -> Result<&'a struct_view_core::parser::JsonNode, String> {
+        let document = self
+            .document
+            .as_ref()
+            .ok_or_else(|| "Нет построенной схемы".to_string())?;
         let selected_node = document
             .nodes
             .get(selected)
@@ -348,7 +361,7 @@ impl StructureView {
                     child.value_type == JsonValueType::Comment && child.path == selected_node.path
                 })
                 .ok_or_else(|| "Не найден комментарий в исходном тексте".to_string())?;
-            return Ok((source_node.path.clone(), source_node.clone()));
+            return Ok(source_node);
         }
 
         let mut ancestors = Vec::new();
@@ -359,10 +372,10 @@ impl StructureView {
         }
         ancestors.reverse();
 
-        let mut source_node = &mut root;
+        let mut source_node = root;
         for &id in ancestors.iter().skip(1) {
             let key = &document.nodes[id].key;
-            let mut matching_children = source_node.children.iter_mut().filter(|child| {
+            let mut matching_children = source_node.children.iter().filter(|child| {
                 child.value_type != JsonValueType::Comment
                     && child.key.as_deref() == Some(key.as_str())
             });
@@ -383,9 +396,7 @@ impl StructureView {
                 ));
             }
         }
-        let path = source_node.path.clone();
-        let source_node = source_node.clone();
-        Ok((path, source_node))
+        Ok(source_node)
     }
 
     pub(super) fn show_edit_dialog(&mut self, ctx: &egui::Context, locale: Locale) {

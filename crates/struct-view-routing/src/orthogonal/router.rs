@@ -580,6 +580,12 @@ fn routing_grid_cells(rect: Rect) -> impl Iterator<Item = (i32, i32)> {
 }
 
 fn sort_unique_coordinates(coordinates: &mut Vec<f32>) {
+    for coordinate in coordinates.iter_mut() {
+        // `total_cmp` orders -0.0 before 0.0, which would let dedup drop a port coordinate.
+        if *coordinate == 0.0 {
+            *coordinate = 0.0;
+        }
+    }
     coordinates.sort_by(f32::total_cmp);
     coordinates.dedup_by(|left, right| *left == *right);
 }
