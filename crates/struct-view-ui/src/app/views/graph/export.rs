@@ -53,6 +53,7 @@ pub(in crate::app) fn export_graph_image(
     routing: &GraphRoutingLayout,
     format: GraphExportFormat,
     style: GraphExportStyle,
+    locale: Locale,
 ) -> io::Result<bool> {
     let extension = format.extension();
     let Some(mut path) = rfd::FileDialog::new()
@@ -69,7 +70,7 @@ pub(in crate::app) fn export_graph_image(
     {
         path.set_extension(extension);
     }
-    let content = render_graph_image(graph, routing, format, style)?;
+    let content = render_graph_image(graph, routing, format, style, locale)?;
     struct_view_core::files::write_bytes_atomic(&path, &content)?;
     Ok(true)
 }
@@ -79,12 +80,13 @@ pub(in crate::app) fn render_graph_image(
     routing: &GraphRoutingLayout,
     format: GraphExportFormat,
     style: GraphExportStyle,
+    locale: Locale,
 ) -> io::Result<Vec<u8>> {
     let visuals = match style {
         GraphExportStyle::LightTransparent => egui::Visuals::light(),
         GraphExportStyle::DarkOpaque => egui::Visuals::dark(),
     };
-    let svg = graph_svg(graph, routing, &visuals);
+    let svg = graph_svg_localized(graph, routing, &visuals, locale);
     match format {
         GraphExportFormat::Svg => Ok(svg.into_bytes()),
         GraphExportFormat::Png => graph_png(&svg),
@@ -152,21 +154,32 @@ fn shortened_label(
     size: f32,
     family: egui::FontFamily,
     fill: Color32,
+    card_width: f32,
 ) -> String {
     shorten_to_width(
         painter,
         value,
         max_chars,
         &FontId::new(size, family),
-        GRAPH_NODE_SIZE.x - 16.0,
+        card_width - 16.0,
         fill,
     )
 }
 
+#[cfg(test)]
 fn graph_svg(
     graph: &RelationshipGraph,
     routing: &GraphRoutingLayout,
     visuals: &egui::Visuals,
+) -> String {
+    graph_svg_localized(graph, routing, visuals, Locale::English)
+}
+
+fn graph_svg_localized(
+    graph: &RelationshipGraph,
+    routing: &GraphRoutingLayout,
+    visuals: &egui::Visuals,
+    locale: Locale,
 ) -> String {
     let colors = SyntaxColors::new(visuals);
     let context = egui::Context::default();
@@ -175,7 +188,8 @@ fn graph_svg(
         let painter = ui.painter();
         let canvas = egui::Rect::from_min_size(Pos2::ZERO, routing.content_size);
         let node_rects = routing.node_positions.iter()
-            .map(|&position| egui::Rect::from_center_size(position, GRAPH_NODE_SIZE)).collect::<Vec<_>>();
+            .zip(&routing.node_sizes)
+            .map(|(&position, &size)| egui::Rect::from_center_size(position, size)).collect::<Vec<_>>();
         let mut occupied = Vec::new();
         let mut content_size = routing.content_size;
         let mut labels = graph.edges.iter().enumerate().map(|(index, edge)| {
@@ -206,7 +220,7 @@ fn graph_svg(
         }
         if let Some(names) = &routing.partition_labels {
             for (index, name) in names.iter().enumerate() {
-                text(&mut svg, Pos2::new(24.0 + index as f32 * GRAPH_STEP.x + GRAPH_NODE_SIZE.x / 2.0, 10.0),
+                text(&mut svg, Pos2::new(partition_column_center(graph, &routing.node_positions, index), 10.0),
                     name, 13.0, colors.key, "middle", "sans-serif");
             }
         }
@@ -263,18 +277,30 @@ fn graph_svg(
                 }
             }
         }
-        for (node, &center) in graph.nodes.iter().zip(&routing.node_positions) {
-            let rect = egui::Rect::from_center_size(center, GRAPH_NODE_SIZE);
+        for (index, (node, &center)) in graph.nodes.iter().zip(&routing.node_positions).enumerate() {
+            let size = routing.node_sizes[index];
+            let rect = egui::Rect::from_center_size(center, size);
             writeln!(svg, r#"<g><title>{}</title><rect x="{}" y="{}" width="{}" height="{}" rx="6" fill="{}" stroke="{}" stroke-width="{}"/>"#,
                 xml_text(&node.hover_text()),
                 rect.left(), rect.top(), rect.width(), rect.height(),
                 opaque_color(visuals.faint_bg_color, visuals.panel_fill),
                 opaque_color(visuals.widgets.noninteractive.bg_stroke.color, visuals.panel_fill),
                 visuals.widgets.noninteractive.bg_stroke.width).unwrap();
-            let label = shortened_label(painter, &node.label, 24, 15.0, egui::FontFamily::Proportional, colors.key);
-            text(&mut svg, center - Vec2::new(0.0, 9.0), &label, 15.0, colors.key, "middle", "sans-serif");
-            let id = shortened_label(painter, &node.id, 26, 11.0, egui::FontFamily::Monospace, visuals.weak_text_color());
-            text(&mut svg, center + Vec2::new(0.0, 13.0), &id, 11.0, visuals.weak_text_color(), "middle", "monospace");
+            let label = shortened_label(painter, &node.label, 24, 15.0, egui::FontFamily::Proportional, colors.key, size.x);
+            text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_LABEL_OFFSET), &label, 15.0, colors.key, "middle", "sans-serif");
+            let id = shortened_label(painter, &node.id, 26, 11.0, egui::FontFamily::Monospace, visuals.weak_text_color(), size.x);
+            text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_ID_OFFSET), &id, 11.0, visuals.weak_text_color(), "middle", "monospace");
+            if size.y > GRAPH_NODE_SIZE.y {
+                let (incoming, outgoing) = routing.link_counts[index];
+                let counts = format!(
+                    "{} {incoming} · {} {outgoing}",
+                    locale.text(TextKey::GraphIncomingLinks),
+                    locale.text(TextKey::GraphOutgoingLinks),
+                );
+                let path = shortened_label(painter, &node.path, 60, 11.0, egui::FontFamily::Proportional, visuals.weak_text_color(), size.x);
+                text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_COUNTS_OFFSET), &counts, 11.0, visuals.weak_text_color(), "middle", "sans-serif");
+                text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_PATH_OFFSET), &path, 11.0, visuals.weak_text_color(), "middle", "sans-serif");
+            }
             svg.push_str("</g>\n");
         }
         svg.push_str("</svg>\n");
@@ -288,6 +314,26 @@ const GRAPH_PNG_MAX_PIXELS: u64 = 16_000_000;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn big_card_exports_its_link_counts_and_path() {
+        let sources = (0..30)
+            .map(|id| format!(r#"{{"id":"s{id}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let links = (0..30)
+            .map(|id| format!(r#"{{"source":"s{id}","target":"hub"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let root = struct_view_core::parser::parse_json(&format!(
+            r#"{{"graph":{{"type":"directed_multigraph"}},"nodes":[{{"id":"hub"}},{sources}],"edges":[{links}]}}"#
+        ))
+        .unwrap();
+        let graph = build_relationship_graph(&root);
+        let routing = build_graph_routing_layout(&graph);
+        let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
+        assert!(svg.contains("incoming 30 · outgoing 0"), "{svg}");
+    }
 
     #[test]
     fn graph_exports_arrowheads_at_correct_ends_and_preserves_self_loops() {

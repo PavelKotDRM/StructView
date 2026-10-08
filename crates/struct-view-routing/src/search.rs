@@ -110,12 +110,60 @@ pub struct IndexedPath {
     pub cost: f64,
 }
 
-/// A* for implicit dense graphs whose states are `0..node_count`.
-///
+thread_local! {
+    static INDEXED_SEARCH_BUFFERS: std::cell::RefCell<IndexedSearchBuffers> =
+        std::cell::RefCell::new(IndexedSearchBuffers::default());
+}
+
+/// Per-thread storage reused by [`a_star_indexed`], so repeated searches do not reallocate.
+#[derive(Default)]
+struct IndexedSearchBuffers {
+    distances: Vec<f64>,
+    previous: Vec<usize>,
+    stamps: Vec<u32>,
+    epoch: u32,
+    queue: BinaryHeap<IndexedQueueEntry>,
+    outgoing: Vec<IndexedNeighbor>,
+}
+
+/// A* for implicit dense graphs whose states are ``0..node_count``.///
 /// `neighbors` fills the supplied scratch vector for the current state.
 /// `is_goal` may match multiple states, which is useful when the goal has
 /// directional variants.
 pub fn a_star_indexed<G, N, H>(
+    node_count: usize,
+    start: usize,
+    is_goal: G,
+    neighbors: N,
+    heuristic: H,
+) -> RoutingResult<Option<IndexedPath>>
+where
+    G: FnMut(usize) -> bool,
+    N: FnMut(usize, &mut Vec<IndexedNeighbor>),
+    H: FnMut(usize) -> f64,
+{
+    INDEXED_SEARCH_BUFFERS.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut buffers) => a_star_indexed_in(
+            &mut buffers,
+            node_count,
+            start,
+            is_goal,
+            neighbors,
+            heuristic,
+        ),
+        Err(_) => a_star_indexed_in(
+            &mut IndexedSearchBuffers::default(),
+            node_count,
+            start,
+            is_goal,
+            neighbors,
+            heuristic,
+        ),
+    })
+}
+
+fn a_star_indexed_in<G, N, H>(
+    buffers: &mut IndexedSearchBuffers,
     node_count: usize,
     start: usize,
     mut is_goal: G,
@@ -127,26 +175,44 @@ where
     N: FnMut(usize, &mut Vec<IndexedNeighbor>),
     H: FnMut(usize) -> f64,
 {
+    let IndexedSearchBuffers {
+        distances,
+        previous,
+        stamps,
+        epoch,
+        queue,
+        outgoing,
+    } = buffers;
     if start >= node_count {
         return Err(RoutingError::InvalidNodeIndex);
     }
     let start_heuristic = valid_heuristic(heuristic(start))?;
-    let mut distances = vec![f64::INFINITY; node_count];
-    let mut previous = vec![usize::MAX; node_count];
-    let mut queue = BinaryHeap::new();
+    if stamps.len() < node_count {
+        stamps.resize(node_count, 0);
+        distances.resize(node_count, f64::INFINITY);
+        previous.resize(node_count, usize::MAX);
+    }
+    *epoch = epoch.wrapping_add(1);
+    if *epoch == 0 {
+        stamps.fill(0);
+        *epoch = 1;
+    }
+    let search = *epoch;
+    queue.clear();
     let mut sequence = 0;
+    stamps[start] = search;
     distances[start] = 0.0;
+    previous[start] = usize::MAX;
     queue.push(IndexedQueueEntry {
         priority: start_heuristic,
         cost: 0.0,
         sequence,
         node: start,
     });
-    let mut outgoing = Vec::with_capacity(8);
     let mut goal = None;
 
     while let Some(entry) = queue.pop() {
-        if entry.cost > distances[entry.node] {
+        if entry.cost > distance_in_search(stamps, distances, search, entry.node) {
             continue;
         }
         if is_goal(entry.node) {
@@ -155,7 +221,7 @@ where
         }
 
         outgoing.clear();
-        neighbors(entry.node, &mut outgoing);
+        neighbors(entry.node, outgoing);
         for edge in outgoing.iter().copied() {
             if edge.node >= node_count {
                 return Err(RoutingError::InvalidNodeIndex);
@@ -165,13 +231,14 @@ where
             if !next_cost.is_finite() {
                 return Err(RoutingError::NonFiniteWeight);
             }
-            if next_cost >= distances[edge.node] {
+            if next_cost >= distance_in_search(stamps, distances, search, edge.node) {
                 continue;
             }
             let estimated_total = next_cost + valid_heuristic(heuristic(edge.node))?;
             if !estimated_total.is_finite() {
                 return Err(RoutingError::InvalidHeuristic);
             }
+            stamps[edge.node] = search;
             distances[edge.node] = next_cost;
             previous[edge.node] = entry.node;
             sequence = sequence.wrapping_add(1);
@@ -198,6 +265,15 @@ where
     }
     path.reverse();
     Ok(Some(IndexedPath { nodes: path, cost }))
+}
+
+/// Distance of `node` in the search stamped `search`; nodes that search has not reached are infinite.
+fn distance_in_search(stamps: &[u32], distances: &[f64], search: u32, node: usize) -> f64 {
+    if stamps[node] == search {
+        distances[node]
+    } else {
+        f64::INFINITY
+    }
 }
 
 pub(crate) fn a_star_indexed_with_backend<G, N, H>(

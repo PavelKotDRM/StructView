@@ -15,6 +15,26 @@ pub enum NodeSide {
     Bottom,
 }
 
+/// Preferred side orientation for one end of an edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PortAxis {
+    /// Use the side that faces the other node along the geometric direction between them.
+    #[default]
+    Geometric,
+    /// Use the left or right side facing the other node when the nodes differ horizontally;
+    /// otherwise behave like [`Self::Geometric`].
+    Horizontal,
+}
+
+/// Preferred port orientation for both ends of an edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EdgePortAxes {
+    /// Orientation preferred at the source node.
+    pub source: PortAxis,
+    /// Orientation preferred at the target node.
+    pub target: PortAxis,
+}
+
 impl NodeSide {
     fn for_direction(direction: Vector, node_size: Size) -> Self {
         let half_width = node_size.width / 2.0;
@@ -72,13 +92,48 @@ struct PortEndpoint {
     opposite_coordinate: f32,
 }
 
+/// The side of a node that faces `direction`, honoring a horizontal preference when it applies.
+fn side_facing(direction: Vector, node_size: Size, axis: PortAxis) -> NodeSide {
+    match axis {
+        PortAxis::Horizontal if direction.x > 0.0 => NodeSide::Right,
+        PortAxis::Horizontal if direction.x < 0.0 => NodeSide::Left,
+        _ => NodeSide::for_direction(direction, node_size),
+    }
+}
+
 /// Assign deterministic, neighbor-ordered ports to directed edges.
 pub fn assign_edge_ports(
     node_positions: &[Point],
     node_size: Size,
     edge_endpoints: &[(usize, usize)],
 ) -> RoutingResult<Vec<EdgePorts>> {
-    if !node_size.is_valid() || node_positions.iter().any(|point| !point.is_finite()) {
+    let axes = vec![EdgePortAxes::default(); edge_endpoints.len()];
+    assign_edge_ports_on_axes(node_positions, node_size, edge_endpoints, &axes)
+}
+
+/// Assign ports like [`assign_edge_ports`], choosing each end's side from its [`EdgePortAxes`].
+pub fn assign_edge_ports_on_axes(
+    node_positions: &[Point],
+    node_size: Size,
+    edge_endpoints: &[(usize, usize)],
+    axes: &[EdgePortAxes],
+) -> RoutingResult<Vec<EdgePorts>> {
+    let node_sizes = vec![node_size; node_positions.len()];
+    assign_edge_ports_for_sizes(node_positions, &node_sizes, edge_endpoints, axes)
+}
+
+/// Assign ports like [`assign_edge_ports_on_axes`] for nodes with individual sizes.
+pub fn assign_edge_ports_for_sizes(
+    node_positions: &[Point],
+    node_sizes: &[Size],
+    edge_endpoints: &[(usize, usize)],
+    axes: &[EdgePortAxes],
+) -> RoutingResult<Vec<EdgePorts>> {
+    if node_sizes.len() != node_positions.len()
+        || node_sizes.iter().any(|size| !size.is_valid())
+        || node_positions.iter().any(|point| !point.is_finite())
+        || axes.len() != edge_endpoints.len()
+    {
         return Err(RoutingError::InvalidGeometry);
     }
 
@@ -95,8 +150,8 @@ pub fn assign_edge_ports(
         } else {
             let direction = (target_position - source_position).normalized();
             (
-                NodeSide::for_direction(direction, node_size),
-                NodeSide::for_direction(-direction, node_size),
+                side_facing(direction, node_sizes[source], axes[edge_index].source),
+                side_facing(-direction, node_sizes[target], axes[edge_index].target),
             )
         };
         ports.push(EdgePorts {
@@ -127,13 +182,13 @@ pub fn assign_edge_ports(
             });
     }
 
-    for ((_, side), mut endpoints) in groups {
+    for ((node, side), mut endpoints) in groups {
         endpoints.sort_by(|left, right| {
             left.opposite_coordinate
                 .total_cmp(&right.opposite_coordinate)
                 .then_with(|| left.edge_index.cmp(&right.edge_index))
         });
-        let lane_spacing = (2.0 * side.max_lane_offset(node_size)
+        let lane_spacing = (2.0 * side.max_lane_offset(node_sizes[node])
             / endpoints.len().saturating_sub(1).max(1) as f32)
             .min(16.0);
         for (lane, endpoint) in endpoints.iter().enumerate() {

@@ -170,7 +170,7 @@ pub(in crate::app) fn show_graph(
             let header_font = FontId::proportional(13.0 * zoom);
             for (partition, label) in partition_labels.iter().enumerate() {
                 let position = transform(Pos2::new(
-                    24.0 + partition as f32 * GRAPH_STEP.x + GRAPH_NODE_SIZE.x / 2.0,
+                    partition_column_center(graph, &routing.node_positions, partition),
                     10.0,
                 ));
                 painter.text(
@@ -184,7 +184,8 @@ pub(in crate::app) fn show_graph(
         }
         let mut hovered_node = None;
         for (index, node) in graph.nodes.iter().enumerate() {
-            let rect = egui::Rect::from_center_size(positions[index], GRAPH_NODE_SIZE * zoom);
+            let rect =
+                egui::Rect::from_center_size(positions[index], routing.node_sizes[index] * zoom);
             if !rect.intersects(viewport) {
                 continue;
             }
@@ -263,9 +264,12 @@ pub(in crate::app) fn show_graph(
         if response.drag_started() && ui.input(|i| i.modifiers.shift) {
             let start = ui.input(|input| input.pointer.press_origin());
             if let Some(start) = start
-                && !positions.iter().any(|center| {
-                    egui::Rect::from_center_size(*center, GRAPH_NODE_SIZE * zoom).contains(start)
-                })
+                && !positions
+                    .iter()
+                    .zip(&routing.node_sizes)
+                    .any(|(center, size)| {
+                        egui::Rect::from_center_size(*center, *size * zoom).contains(start)
+                    })
             {
                 interaction.marquee_start =
                     Some(Pos2::ZERO + (start - canvas.min - interaction.pan) / zoom);
@@ -284,9 +288,10 @@ pub(in crate::app) fn show_graph(
             let selection_rect = egui::Rect::from_two_pos(start, end);
             interaction.selected = interaction.marquee_base.clone();
             for (index, position) in routing.node_positions.iter().enumerate() {
-                if selection_rect
-                    .intersects(egui::Rect::from_center_size(*position, GRAPH_NODE_SIZE))
-                {
+                if selection_rect.intersects(egui::Rect::from_center_size(
+                    *position,
+                    routing.node_sizes[index],
+                )) {
                     interaction.selected.insert(index);
                 }
             }
@@ -439,7 +444,7 @@ pub(in crate::app) fn show_graph(
 
         for (index, node) in graph.nodes.iter().enumerate() {
             let center = positions[index];
-            let rect = egui::Rect::from_center_size(center, GRAPH_NODE_SIZE * zoom);
+            let rect = egui::Rect::from_center_size(center, routing.node_sizes[index] * zoom);
             let active_match = node
                 .search_paths
                 .iter()
@@ -510,7 +515,7 @@ pub(in crate::app) fn show_graph(
                 &node.label,
                 24,
                 &label_font,
-                (GRAPH_NODE_SIZE.x - 16.0) * zoom,
+                (routing.node_sizes[index].x - 16.0) * zoom,
                 if is_dimmed {
                     colors.key.gamma_multiply(GRAPH_DIM_FACTOR)
                 } else {
@@ -518,7 +523,7 @@ pub(in crate::app) fn show_graph(
                 },
             );
             painter.text(
-                Pos2::new(center.x, center.y - 9.0 * zoom),
+                Pos2::new(center.x, rect.top() + GRAPH_CARD_LABEL_OFFSET * zoom),
                 Align2::CENTER_CENTER,
                 label,
                 label_font,
@@ -541,16 +546,47 @@ pub(in crate::app) fn show_graph(
                 &node.id,
                 26,
                 &id_font,
-                (GRAPH_NODE_SIZE.x - 16.0) * zoom,
+                (routing.node_sizes[index].x - 16.0) * zoom,
                 id_color,
             );
             painter.text(
-                Pos2::new(center.x, center.y + 13.0 * zoom),
+                Pos2::new(center.x, rect.top() + GRAPH_CARD_ID_OFFSET * zoom),
                 Align2::CENTER_CENTER,
                 id,
                 id_font,
                 id_color,
             );
+            if routing.node_sizes[index].y > GRAPH_NODE_SIZE.y {
+                let (incoming, outgoing) = routing.link_counts[index];
+                let counts = format!(
+                    "{} {incoming} · {} {outgoing}",
+                    locale.text(TextKey::GraphIncomingLinks),
+                    locale.text(TextKey::GraphOutgoingLinks),
+                );
+                let info_font = FontId::proportional(11.0 * zoom);
+                let path = shorten_to_width(
+                    &painter,
+                    &node.path,
+                    60,
+                    &info_font,
+                    (routing.node_sizes[index].x - 16.0) * zoom,
+                    id_color,
+                );
+                painter.text(
+                    Pos2::new(center.x, rect.top() + GRAPH_CARD_COUNTS_OFFSET * zoom),
+                    Align2::CENTER_CENTER,
+                    counts,
+                    info_font.clone(),
+                    id_color,
+                );
+                painter.text(
+                    Pos2::new(center.x, rect.top() + GRAPH_CARD_PATH_OFFSET * zoom),
+                    Align2::CENTER_CENTER,
+                    path,
+                    info_font,
+                    id_color,
+                );
+            }
         }
         let pin_route_tooltip = ui.input(|input| input.modifiers.ctrl || input.modifiers.command);
         if !pin_route_tooltip {
@@ -564,9 +600,12 @@ pub(in crate::app) fn show_graph(
             && ui.clip_rect().contains(pointer)
             && canvas.contains(pointer)
             && ui.ctx().layer_id_at(pointer) == Some(ui.layer_id())
-            && !positions.iter().any(|center| {
-                egui::Rect::from_center_size(*center, GRAPH_NODE_SIZE * zoom).contains(pointer)
-            })
+            && !positions
+                .iter()
+                .zip(&routing.node_sizes)
+                .any(|(center, size)| {
+                    egui::Rect::from_center_size(*center, *size * zoom).contains(pointer)
+                })
             && !routing.edge_labels.iter().flatten().any(|label| {
                 egui::Rect::from_min_max(
                     transform(label.background.min),

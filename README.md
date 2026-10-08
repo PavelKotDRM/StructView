@@ -205,18 +205,28 @@ The interface provides:
   Parallel edges are retained for multigraphs. See the
   [graph input guide](docs/tutorial/en.md) for supported shapes and examples;
   layout is calculated in the background with a progress indicator.
-  Graphs with at least 64 edges calculate preliminary routes in parallel,
-  using up to eight workers and leaving one logical CPU available when
-  possible. Conflict checks and rerouting also run in parallel against a
-  snapshot of accepted routes. Results are accepted in a fixed order; stale
-  conflicting proposals are recalculated before acceptance. Small graphs
-  and single-CPU systems use sequential routing.
+  In automatic mode, preliminary routes for all edges are calculated in
+  parallel on every logical CPU. Conflict resolution then runs on one thread
+  in edge order, so the routes are the same for any number of CPUs.
   Routing uses a spatial segment index and caches obstacle and lane checks to
   avoid repeatedly checking distant links during conflict resolution.
   Routes may cross other edges but cannot share collinear sections or pass
-  through nodes. Obstructed routes minimize length plus a fixed cost per bend
-  (including turns at port leads), do not loop back around their own port
-  entries, and among equal routes keep other ports' straight exits free.
+  through nodes.
+  Routes are orthogonal, except that a link whose ports can be joined by one
+  straight segment is drawn as that segment when the segment is at most two
+  layout columns long (680 points), clears every card, stays 8 points or more
+  from other links' corners and ends, and crosses at most one other link.
+  Straight links are chosen after the orthogonal layout is final, so they never
+  change the routes of other links. Edges between layout columns leave
+  and enter through the facing left and right sides, so relationships flow left
+  to right. A node with more than seven edges uses, for each of its edges, the
+  side that geometrically faces the other endpoint, because a left or right side
+  has room for only about seven lanes. Cards with more than 22 edges grow wider,
+  about 8 points per edge, so each edge keeps its own lane on a top or bottom
+  side. Routes minimize length plus a fixed cost per bend (including
+  turns at port leads), do not loop back around their own port entries, keep
+  other ports' straight exits free, and among equal routes center themselves on
+  the midline between their exits, so parallel routes bundle symmetrically.
   Port entries are reserved so other routes cannot occupy them. Only the gaps
   next to highly connected nodes grow. If routing still runs out of space,
   retries widen only the gaps around the crowded edges and recompute ports and
@@ -253,7 +263,9 @@ The interface provides:
   downscaled to at most 16 million pixels to bound memory use, preserving
   the entire graph, aspect ratio, and selected background style. Small images
   retain their original resolution. For full detail at any scale, use SVG.
-  Incoming and outgoing links use distinct, neighbor-ordered card ports.
+  Incoming and outgoing links use distinct, neighbor-ordered card ports. Cards
+  with more than 22 links also show their incoming and outgoing link counts and
+  their document path.
   Long shared route segments are locally detoured when a clear lane is
   available; routes may still cross in dense layouts.
   Relationship labels avoid cards, connection lines, and arrowheads. Displaced labels have dashed

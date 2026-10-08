@@ -162,48 +162,38 @@ pub(in crate::app::views::graph) fn route_graph_edges_with_progress(
         return Ok(Vec::new());
     }
     let workers = worker_count.max(1).min(endpoints.len());
+    let mut candidates = vec![None; endpoints.len()];
     if workers == 1 {
         begin_graph_stage(progress, GraphStage::Sequential, endpoints.len(), 1);
-        let mut routes = Vec::with_capacity(endpoints.len());
-        let mut route_index = GraphRouteSegmentIndex::new(&[]);
-        let mut crowded = CrowdedEdges::default();
-        for (&(source, target), &ports) in endpoints.iter().zip(ports) {
-            let route = crowded
-                .route(
-                    source,
-                    target,
-                    grid.route_edge_with_index(source, target, ports, &route_index),
-                )?
-                .unwrap_or_default();
-            route_index.insert_route(&route);
-            routes.push(route);
-            advance_graph_progress(progress);
+        let empty_index = GraphRouteSegmentIndex::new(&[]);
+        for (index, candidate) in candidates.iter_mut().enumerate() {
+            let (source, target) = endpoints[index];
+            *candidate =
+                Some(grid.route_edge_with_index(source, target, ports[index], &empty_index));
         }
-        return crowded.finish(routes);
+    } else {
+        let chunk_size = endpoints.len().div_ceil(workers);
+        begin_graph_stage(progress, GraphStage::Preliminary, endpoints.len(), workers);
+        thread::scope(|scope| {
+            for (chunk_index, chunk) in candidates.chunks_mut(chunk_size).enumerate() {
+                let start = chunk_index * chunk_size;
+                scope.spawn(move || {
+                    let empty_index = GraphRouteSegmentIndex::new(&[]);
+                    for (offset, candidate) in chunk.iter_mut().enumerate() {
+                        let index = start + offset;
+                        let (source, target) = endpoints[index];
+                        *candidate = Some(grid.route_edge_with_index(
+                            source,
+                            target,
+                            ports[index],
+                            &empty_index,
+                        ));
+                        advance_graph_progress(progress);
+                    }
+                });
+            }
+        });
     }
-
-    let chunk_size = endpoints.len().div_ceil(workers);
-    begin_graph_stage(progress, GraphStage::Preliminary, endpoints.len(), workers);
-    let mut candidates = vec![None; endpoints.len()];
-    thread::scope(|scope| {
-        for (chunk_index, chunk) in candidates.chunks_mut(chunk_size).enumerate() {
-            let start = chunk_index * chunk_size;
-            scope.spawn(move || {
-                let empty_index = GraphRouteSegmentIndex::new(&[]);
-                for (offset, candidate) in chunk.iter_mut().enumerate() {
-                    let index = start + offset;
-                    let (source, target) = endpoints[index];
-                    *candidate = Some(grid.route_edge_with_index(
-                        source,
-                        target,
-                        ports[index],
-                        &empty_index,
-                    ));
-                    advance_graph_progress(progress);
-                }
-            });
-        }
-    });
     let mut crowded = CrowdedEdges::default();
     let candidates = candidates
         .into_iter()
@@ -221,9 +211,119 @@ pub(in crate::app::views::graph) fn route_graph_edges_with_progress(
     }
     let candidates = candidates.into_iter().flatten().collect();
 
-    resolve_graph_route_conflicts(grid, endpoints, ports, candidates, progress)
+    if workers > 1 {
+        begin_graph_stage(progress, GraphStage::Conflicts, endpoints.len(), 1);
+    }
+    let mut routes = resolve_graph_route_conflicts(grid, endpoints, ports, candidates, progress)?;
+    upgrade_straight_routes(grid, endpoints, &mut routes);
+    Ok(routes)
 }
 
+/// Longest straight link that may replace an orthogonal route: two layout columns.
+const GRAPH_DIAGONAL_MAX_LENGTH: f32 = 2.0 * GRAPH_STEP.x;
+/// Most crossings a straight link may have with the other links of the final layout.
+const GRAPH_DIAGONAL_MAX_CROSSINGS: usize = 1;
+
+/// A drawn segment and the index of the link it belongs to.
+struct PlacedSegment {
+    owner: usize,
+    start: Pos2,
+    end: Pos2,
+}
+
+/// Replaces orthogonal routes with the straight segment between their ports when that segment is
+/// short, clears every card, keeps the edge clearance from other links and crosses few enough
+/// links. It runs after the orthogonal layout is final, so every check sees the routes that are
+/// drawn, including straight links accepted earlier in this pass.
+pub(super) fn upgrade_straight_routes(
+    grid: &GraphRoutingGrid,
+    endpoints: &[(usize, usize)],
+    routes: &mut [Vec<Pos2>],
+) {
+    let mut placed = Vec::new();
+    for (owner, route) in routes.iter().enumerate() {
+        placed.extend(route.windows(2).map(|pair| PlacedSegment {
+            owner,
+            start: pair[0],
+            end: pair[1],
+        }));
+    }
+    let mut straight_crossings: Vec<Option<usize>> = vec![None; routes.len()];
+    for index in 0..routes.len() {
+        let (source, target) = endpoints[index];
+        let route = &routes[index];
+        if source == target || route.len() <= 2 {
+            continue;
+        }
+        let (start, end) = (route[0], route[route.len() - 1]);
+        if start.distance(end) > GRAPH_DIAGONAL_MAX_LENGTH
+            || !grid.card_clear_of_segment(source, target, start, end)
+        {
+            continue;
+        }
+        let Some((crossings, crossed_straight)) =
+            straight_link_crossings(start, end, index, &placed, &straight_crossings)
+        else {
+            continue;
+        };
+        for owner in crossed_straight {
+            if let Some(count) = &mut straight_crossings[owner] {
+                *count += 1;
+            }
+        }
+        placed.retain(|segment| segment.owner != index);
+        placed.push(PlacedSegment {
+            owner: index,
+            start,
+            end,
+        });
+        straight_crossings[index] = Some(crossings);
+        routes[index] = vec![start, end];
+    }
+}
+
+/// Crossings a straight link from `start` to `end` makes with the other links, and the straight
+/// links among them. `None` when it runs within the edge clearance of another link, or when it or
+/// a straight link it crosses would exceed the crossing limit.
+fn straight_link_crossings(
+    start: Pos2,
+    end: Pos2,
+    owner: usize,
+    placed: &[PlacedSegment],
+    straight_crossings: &[Option<usize>],
+) -> Option<(usize, Vec<usize>)> {
+    let margin = Vec2::splat(GRAPH_EDGE_CLEARANCE);
+    let (low, high) = (start.min(end) - margin, start.max(end) + margin);
+    let mut crossings = 0;
+    let mut crossed_straight = Vec::new();
+    for segment in placed.iter().filter(|segment| segment.owner != owner) {
+        let segment_low = segment.start.min(segment.end);
+        let segment_high = segment.start.max(segment.end);
+        if segment_high.x < low.x
+            || segment_low.x > high.x
+            || segment_high.y < low.y
+            || segment_low.y > high.y
+        {
+            continue;
+        }
+        if segment_endpoints_too_close(start, end, segment.start, segment.end) {
+            return None;
+        }
+        if segments_intersect(start, end, segment.start, segment.end) {
+            crossings += 1;
+            if crossings > GRAPH_DIAGONAL_MAX_CROSSINGS {
+                return None;
+            }
+            if let Some(count) = straight_crossings[segment.owner] {
+                if count >= GRAPH_DIAGONAL_MAX_CROSSINGS {
+                    return None;
+                }
+                crossed_straight.push(segment.owner);
+            }
+        }
+    }
+    Some((crossings, crossed_straight))
+}
 fn resolve_graph_route_conflicts(
     grid: &GraphRoutingGrid,
     endpoints: &[(usize, usize)],
@@ -234,7 +334,6 @@ fn resolve_graph_route_conflicts(
     let mut routes = Vec::with_capacity(endpoints.len());
     let mut route_index = GraphRouteSegmentIndex::new(&[]);
     let mut crowded = CrowdedEdges::default();
-    begin_graph_stage(progress, GraphStage::Conflicts, endpoints.len(), 1);
     for (index, candidate) in candidates.iter().enumerate() {
         let route = if route_index.parallel_conflicts_route(candidate) {
             let (source, target) = endpoints[index];

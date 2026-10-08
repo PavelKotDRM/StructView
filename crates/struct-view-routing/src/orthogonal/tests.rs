@@ -554,6 +554,136 @@ fn edge_ports_use_neighbor_order_and_separate_parallel_lanes() {
 }
 
 #[test]
+fn horizontal_axis_uses_side_facing_the_other_node_and_falls_back_within_a_column() {
+    let positions = [
+        Point::new(0.0, 0.0),
+        Point::new(300.0, 150.0),
+        Point::new(0.0, 300.0),
+    ];
+    let node_size = Size::new(120.0, 80.0);
+    let horizontal = EdgePortAxes {
+        source: PortAxis::Horizontal,
+        target: PortAxis::Horizontal,
+    };
+    let ports = assign_edge_ports_on_axes(
+        &positions,
+        node_size,
+        &[(0, 1), (0, 2), (1, 0)],
+        &[horizontal; 3],
+    )
+    .unwrap();
+
+    assert_eq!(
+        (ports[0].source_side, ports[0].target_side),
+        (NodeSide::Right, NodeSide::Left)
+    );
+    // Nodes 0 and 2 share a column, so their ports stay on the top and bottom sides.
+    assert_eq!(
+        (ports[1].source_side, ports[1].target_side),
+        (NodeSide::Bottom, NodeSide::Top)
+    );
+    assert_eq!(
+        (ports[2].source_side, ports[2].target_side),
+        (NodeSide::Left, NodeSide::Right)
+    );
+    assert_eq!(
+        assign_edge_ports_on_axes(&positions, node_size, &[(0, 1)], &[]).unwrap_err(),
+        RoutingError::InvalidGeometry
+    );
+}
+
+#[test]
+fn unaligned_ports_connect_with_orthogonal_bends_centered_between_the_nodes() {
+    let positions = [Point::new(0.0, 0.0), Point::new(300.0, 200.0)];
+    let mut options = OrthogonalRouterOptions::new(Size::new(120.0, 80.0), Size::new(300.0, 200.0));
+    let axes = [EdgePortAxes {
+        source: PortAxis::Horizontal,
+        target: PortAxis::Horizontal,
+    }];
+    let ports =
+        assign_edge_ports_on_axes(&positions, options.node_size, &[(0, 1)], &axes).unwrap()[0];
+    let index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+    for backend in [
+        RoutingSearchBackend::Builtin,
+        RoutingSearchBackend::Pathfinding,
+        RoutingSearchBackend::Petgraph,
+    ] {
+        options.search_backend = backend;
+        let router = OrthogonalRouter::new(&positions, &[0, 1], options).unwrap();
+        let route = router.route_edge(0, 1, ports, &index).unwrap();
+        assert_eq!(
+            route,
+            [
+                Point::new(60.0, 0.0),
+                Point::new(150.0, 0.0),
+                Point::new(150.0, 200.0),
+                Point::new(240.0, 200.0),
+            ],
+            "{backend:?}"
+        );
+    }
+}
+
+#[test]
+fn parallel_routes_between_the_same_columns_bundle_around_the_midline() {
+    let positions = [Point::new(200.0, 200.0), Point::new(500.0, 400.0)];
+    let options = OrthogonalRouterOptions::new(Size::new(120.0, 80.0), Size::new(300.0, 200.0));
+    let axes = [EdgePortAxes {
+        source: PortAxis::Horizontal,
+        target: PortAxis::Horizontal,
+    }; 2];
+    let ports =
+        assign_edge_ports_on_axes(&positions, options.node_size, &[(0, 1); 2], &axes).unwrap();
+    let router = OrthogonalRouter::new(&positions, &[0, 1], options).unwrap();
+    let mut index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+    let mut routes = Vec::new();
+    for port in ports {
+        let route = router.route_edge(0, 1, port, &index).unwrap();
+        index.insert_route(&route).unwrap();
+        routes.push(route);
+    }
+
+    let vertical_x = |route: &[Point]| {
+        route
+            .windows(2)
+            .find(|segment| segment[0].x == segment[1].x)
+            .map(|segment| segment[0].x)
+            .unwrap()
+    };
+    // The midline between the two exits is x = 350; the first track sits on it and the second
+    // track takes a neighbouring lane, so the pair stays within half a track of the midline.
+    let track_spacing = options.edge_clearance + 2.0;
+    let center = (vertical_x(&routes[0]) + vertical_x(&routes[1])) / 2.0;
+    assert!((center - 350.0).abs() <= track_spacing / 2.0, "{routes:?}");
+    assert!(
+        (vertical_x(&routes[0]) - vertical_x(&routes[1])).abs() >= options.edge_clearance,
+        "{routes:?}"
+    );
+}
+
+#[test]
+fn per_node_sizes_place_ports_on_each_card_border() {
+    let positions = [Point::new(0.0, 0.0), Point::new(400.0, 0.0)];
+    let sizes = [Size::new(240.0, 80.0), Size::new(120.0, 60.0)];
+    let options = OrthogonalRouterOptions::new(Size::new(60.0, 40.0), Size::new(300.0, 200.0));
+    let axes = [EdgePortAxes {
+        source: PortAxis::Horizontal,
+        target: PortAxis::Horizontal,
+    }];
+    let ports = assign_edge_ports_for_sizes(&positions, &sizes, &[(0, 1)], &axes).unwrap()[0];
+    let router = OrthogonalRouter::with_node_sizes(&positions, &sizes, &[0, 1], options).unwrap();
+    let index = RouteIndex::new(&[], options.edge_clearance).unwrap();
+    let route = router.route_edge(0, 1, ports, &index).unwrap();
+
+    assert_eq!(route.first(), Some(&Point::new(120.0, 0.0)));
+    assert_eq!(route.last(), Some(&Point::new(340.0, 0.0)));
+    assert!(
+        assign_edge_ports_for_sizes(&positions, &sizes[..1], &[(0, 1)], &axes).is_err(),
+        "one size for two nodes must be rejected"
+    );
+}
+
+#[test]
 fn route_index_detects_overlap_and_scales_the_penalty() {
     let index = RouteIndex::new(
         &[vec![Point::ZERO, Point::new(1_000.0, 0.0)]],

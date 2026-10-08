@@ -1,6 +1,7 @@
+use super::index::CellMap;
 use super::*;
 use crate::{RoutingError, RoutingResult};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 mod search;
 
@@ -19,6 +20,9 @@ pub const GRAPH_ROUTE_TURN_PENALTY: f32 = 96.0;
 pub const GRAPH_ROUTE_BEND_COST: f32 = 48.0;
 /// Tie-breaking cost per unit of length run along another port's straight exit.
 const PORT_EXIT_RAY_COST: f64 = 0.01;
+/// Tie-breaking cost per unit a segment lies away from the midline between the two port exits,
+/// so equally short routes bundle symmetrically around the middle of their channel.
+const ROUTE_MIDLINE_COST: f64 = 1e-6;
 /// Cost for traversing the full span of an obstacle on its less-preferred side.
 pub const GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY: f32 = 240.0;
 const GRAPH_ROUTE_DIRECTIONS: usize = 2;
@@ -97,11 +101,12 @@ impl OrthogonalRouterOptions {
 #[derive(Debug)]
 pub struct OrthogonalRouter {
     node_positions: Vec<Point>,
+    max_node_size: Size,
     routed_nodes: Vec<bool>,
     node_rects: Vec<Rect>,
     obstacles: Vec<Rect>,
     lead_zones: Vec<Rect>,
-    obstacle_buckets: HashMap<(i32, i32), Vec<usize>>,
+    obstacle_buckets: CellMap<Vec<usize>>,
     x_coordinates: Vec<f32>,
     y_coordinates: Vec<f32>,
     reserved_port_leads: RouteIndex,
@@ -110,13 +115,30 @@ pub struct OrthogonalRouter {
 }
 
 impl OrthogonalRouter {
-    /// Create a router. Only `routed_nodes` become obstacles to edge paths.
+    /// Create a router whose nodes all have `options.node_size`. Only `routed_nodes` become
+    /// obstacles to edge paths.
     pub fn new(
         node_positions: &[Point],
         routed_nodes: &[usize],
         options: OrthogonalRouterOptions,
     ) -> RoutingResult<Self> {
-        if !options.is_valid() || node_positions.iter().any(|point| !point.is_finite()) {
+        let node_sizes = vec![options.node_size; node_positions.len()];
+        Self::with_node_sizes(node_positions, &node_sizes, routed_nodes, options)
+    }
+
+    /// Create a router for nodes with individual sizes. `options.node_size` is not used here,
+    /// but must still be valid. Only `routed_nodes` become obstacles to edge paths.
+    pub fn with_node_sizes(
+        node_positions: &[Point],
+        node_sizes: &[Size],
+        routed_nodes: &[usize],
+        options: OrthogonalRouterOptions,
+    ) -> RoutingResult<Self> {
+        if !options.is_valid()
+            || node_positions.iter().any(|point| !point.is_finite())
+            || node_sizes.len() != node_positions.len()
+            || node_sizes.iter().any(|size| !size.is_valid())
+        {
             return Err(RoutingError::InvalidGeometry);
         }
         let mut unique_routed_nodes = Vec::with_capacity(routed_nodes.len());
@@ -136,8 +158,12 @@ impl OrthogonalRouter {
 
         let node_rects = node_positions
             .iter()
-            .map(|center| Rect::from_center_size(*center, options.node_size))
+            .zip(node_sizes)
+            .map(|(center, size)| Rect::from_center_size(*center, *size))
             .collect::<Vec<_>>();
+        let max_node_size = node_sizes.iter().fold(Size::new(0.0, 0.0), |max, size| {
+            Size::new(max.width.max(size.width), max.height.max(size.height))
+        });
         let obstacles = node_rects
             .iter()
             .map(|rect| rect.expand(options.obstacle_clearance))
@@ -154,7 +180,7 @@ impl OrthogonalRouter {
             .iter()
             .map(|rect| rect.expand(options.edge_clearance + ROUTE_PORT_LEAD_EXTRA))
             .collect::<Vec<_>>();
-        let mut obstacle_buckets = HashMap::<(i32, i32), Vec<usize>>::new();
+        let mut obstacle_buckets = CellMap::<Vec<usize>>::default();
         for &index in &unique_routed_nodes {
             for cell in routing_grid_cells(lead_zones[index]) {
                 obstacle_buckets.entry(cell).or_default().push(index);
@@ -176,6 +202,7 @@ impl OrthogonalRouter {
 
         Ok(Self {
             node_positions: node_positions.to_vec(),
+            max_node_size,
             routed_nodes: routed_node_mask,
             node_rects,
             obstacles,
@@ -228,12 +255,7 @@ impl OrthogonalRouter {
     /// The straight continuation of a port lead up to the next node's lead zone. Other routes
     /// may use it, but prefer equally good alternatives so the port keeps a straight exit.
     fn port_exit_ray(&self, node: usize, port: PortGeometry) -> [Point; 2] {
-        let reach = 2.0
-            * self
-                .options
-                .node_size
-                .width
-                .max(self.options.node_size.height);
+        let reach = 2.0 * self.max_node_size.width.max(self.max_node_size.height);
         let far = port.escape + port.outward * reach;
         let length = routing_grid_cells(Rect::from_two_points(port.escape, far))
             .filter_map(|cell| self.obstacle_buckets.get(&cell))
@@ -335,6 +357,8 @@ impl OrthogonalRouter {
         }
         let line_start = source_port.card;
         let line_end = target_port.card;
+        // Only ports that line up can share a straight orthogonal segment; others need bends.
+        let aligned = line_start.x == line_end.x || line_start.y == line_end.y;
         let crosses_another_node = self.segment_crosses_obstacle(
             line_start,
             line_end,
@@ -348,7 +372,7 @@ impl OrthogonalRouter {
             || self
                 .reserved_port_leads
                 .overlaps_segment(source_port.escape, target_port.escape);
-        if source != target && !crosses_another_node && !conflicts_with_another_edge {
+        if source != target && aligned && !crosses_another_node && !conflicts_with_another_edge {
             return Ok(vec![line_start, line_end]);
         }
         for lead in [
@@ -367,7 +391,7 @@ impl OrthogonalRouter {
         // Existing obstacle boundaries alone cannot separate detoured parallel edges.
         let track_spacing = self.options.edge_clearance + 2.0;
         let track_bounds = Rect::from_two_points(source_port.escape, target_port.escape)
-            .expand(self.options.obstacle_clearance + self.options.node_size.width / 2.0);
+            .expand(self.options.obstacle_clearance + self.max_node_size.width / 2.0);
         let mut track_x = Vec::new();
         let mut track_y = Vec::new();
         for segment in routed_edge_index.segments_near(track_bounds) {
@@ -402,6 +426,14 @@ impl OrthogonalRouter {
         );
         x_coordinates.extend(track_x);
         y_coordinates.extend(track_y);
+        // The midline between the two exits is the center of a Z-shaped channel, so keep it even
+        // when the nearest-track limit dropped it.
+        let midline = Point::new(
+            (source_port.escape.x + target_port.escape.x) / 2.0,
+            (source_port.escape.y + target_port.escape.y) / 2.0,
+        );
+        x_coordinates.push(midline.x);
+        y_coordinates.push(midline.y);
         x_coordinates.retain(|coordinate| *coordinate >= 0.0);
         y_coordinates.retain(|coordinate| *coordinate >= 0.0);
         sort_unique_coordinates(&mut x_coordinates);

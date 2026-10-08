@@ -46,7 +46,10 @@ pub use index::{
     GRAPH_ROUTE_SHARED_SEGMENT_DETOUR_LIMIT, GRAPH_ROUTE_SHARED_SEGMENT_SEARCH_THRESHOLD,
     GRAPH_ROUTE_SHARED_SEGMENT_VISIBLE_THRESHOLD, RouteIndex, segment_pair_penalty,
 };
-pub use ports::{EdgePorts, NodeSide, assign_edge_ports};
+pub use ports::{
+    EdgePortAxes, EdgePorts, NodeSide, PortAxis, assign_edge_ports, assign_edge_ports_for_sizes,
+    assign_edge_ports_on_axes,
+};
 pub use router::{
     DEFAULT_EDGE_CLEARANCE, DEFAULT_ROUTE_CLEARANCE, DEFAULT_ROUTE_TRACK_LIMIT,
     GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY, GRAPH_ROUTE_TURN_PENALTY, OrthogonalRouter,

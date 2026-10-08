@@ -268,6 +268,8 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::SchemaConstraintsMore => "ещё",
         TextKey::SchemaConstraintObserved => "Наблюдалось в примерах",
         TextKey::GraphNodes => "Сущности",
+        TextKey::GraphIncomingLinks => "входящих",
+        TextKey::GraphOutgoingLinks => "исходящих",
         TextKey::GraphEdges => "Связи",
         TextKey::GraphNoEntities => "Сущности с идентификаторами не найдены.",
         TextKey::GraphCalculating => "Вычисление графа связей…",

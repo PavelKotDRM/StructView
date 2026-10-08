@@ -25,6 +25,30 @@ pub const GRAPH_EDGE_SHARED_SEGMENT_PENALTY_MINIMUM: f32 = 8_000.0;
 /// Maximum penalty for a shared segment.
 pub const GRAPH_EDGE_SHARED_SEGMENT_PENALTY_LIMIT: f32 = 5_000_000.0;
 
+/// Hash for grid cell keys: a multiply-rotate mix that is much cheaper than the default SipHash.
+#[derive(Default)]
+pub(crate) struct CellHasher(u64);
+
+const CELL_HASH_SEED: u64 = 0x517c_c1b7_2722_0a95;
+
+impl std::hash::Hasher for CellHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 = (self.0.rotate_left(5) ^ u64::from(byte)).wrapping_mul(CELL_HASH_SEED);
+        }
+    }
+
+    fn write_i32(&mut self, value: i32) {
+        self.0 = (self.0.rotate_left(5) ^ u64::from(value as u32)).wrapping_mul(CELL_HASH_SEED);
+    }
+}
+
+pub(crate) type CellMap<V> = HashMap<(i32, i32), V, std::hash::BuildHasherDefault<CellHasher>>;
+
 /// A spatial index of already-routed segments.
 ///
 /// Use `insert_route` after accepting a route, then pass the index to
@@ -32,7 +56,7 @@ pub const GRAPH_EDGE_SHARED_SEGMENT_PENALTY_LIMIT: f32 = 5_000_000.0;
 #[derive(Debug)]
 pub struct RouteIndex {
     segments: Vec<[Point; 2]>,
-    buckets: HashMap<(i32, i32), Vec<usize>>,
+    buckets: CellMap<Vec<usize>>,
     edge_clearance: f32,
 }
 
@@ -44,7 +68,7 @@ impl RouteIndex {
         }
         let mut index = Self {
             segments: Vec::new(),
-            buckets: HashMap::new(),
+            buckets: CellMap::default(),
             edge_clearance,
         };
         for route in routes {
@@ -89,28 +113,25 @@ impl RouteIndex {
         if !clearance.is_finite() || clearance < 0.0 {
             return true;
         }
-        self.indices_near(start, end, clearance.max(self.edge_clearance))
-            .into_iter()
-            .any(|index| {
-                let [other_start, other_end] = self.segments[index];
-                let direction = end - start;
-                let other_direction = other_end - other_start;
-                let length = direction.length();
-                let other_length = other_direction.length();
-                if length <= f32::EPSILON || other_length <= f32::EPSILON {
-                    return false;
-                }
-                if cross_product(direction, other_direction).abs() > length * other_length * 0.00001
-                {
-                    return false;
-                }
-                let unit = direction / length;
-                let distance = cross_product(unit, other_start - start).abs();
-                let first = (other_start - start).dot(unit);
-                let second = (other_end - start).dot(unit);
-                let overlap = length.min(first.max(second)) - 0.0_f32.max(first.min(second));
-                overlap > 0.01 && (distance < clearance || distance <= 0.01)
-            })
+        self.any_index_near(start, end, clearance.max(self.edge_clearance), |index| {
+            let [other_start, other_end] = self.segments[index];
+            let direction = end - start;
+            let other_direction = other_end - other_start;
+            let length = direction.length();
+            let other_length = other_direction.length();
+            if length <= f32::EPSILON || other_length <= f32::EPSILON {
+                return false;
+            }
+            if cross_product(direction, other_direction).abs() > length * other_length * 0.00001 {
+                return false;
+            }
+            let unit = direction / length;
+            let distance = cross_product(unit, other_start - start).abs();
+            let first = (other_start - start).dot(unit);
+            let second = (other_end - start).dot(unit);
+            let overlap = length.min(first.max(second)) - 0.0_f32.max(first.min(second));
+            overlap > 0.01 && (distance < clearance || distance <= 0.01)
+        })
     }
 
     /// Whether the segment is within `clearance` of an indexed segment.
@@ -120,17 +141,15 @@ impl RouteIndex {
         } else {
             return true;
         };
-        self.indices_near(start, end, padding)
-            .into_iter()
-            .any(|index| {
-                segments_within_clearance(
-                    start,
-                    end,
-                    self.segments[index][0],
-                    self.segments[index][1],
-                    clearance,
-                )
-            })
+        self.any_index_near(start, end, padding, |index| {
+            segments_within_clearance(
+                start,
+                end,
+                self.segments[index][0],
+                self.segments[index][1],
+                clearance,
+            )
+        })
     }
 
     /// Whether `route` intersects any indexed route.
@@ -142,17 +161,15 @@ impl RouteIndex {
 
     /// Whether a segment intersects an indexed segment.
     pub fn intersects_segment(&self, start: Point, end: Point) -> bool {
-        self.indices_near(start, end, self.edge_clearance)
-            .into_iter()
-            .any(|index| {
-                segments_intersect(start, end, self.segments[index][0], self.segments[index][1])
-                    || collinear_segments_overlap(
-                        start,
-                        end,
-                        self.segments[index][0],
-                        self.segments[index][1],
-                    )
-            })
+        self.any_index_near(start, end, self.edge_clearance, |index| {
+            segments_intersect(start, end, self.segments[index][0], self.segments[index][1])
+                || collinear_segments_overlap(
+                    start,
+                    end,
+                    self.segments[index][0],
+                    self.segments[index][1],
+                )
+        })
     }
 
     /// Find the first collinear shared section longer than `minimum_overlap`.
@@ -183,16 +200,9 @@ impl RouteIndex {
 
     /// Whether a candidate segment shares any positive-length collinear section.
     pub fn overlaps_segment(&self, start: Point, end: Point) -> bool {
-        self.indices_near(start, end, self.edge_clearance)
-            .into_iter()
-            .any(|index| {
-                collinear_segments_overlap(
-                    start,
-                    end,
-                    self.segments[index][0],
-                    self.segments[index][1],
-                )
-            })
+        self.any_index_near(start, end, self.edge_clearance, |index| {
+            collinear_segments_overlap(start, end, self.segments[index][0], self.segments[index][1])
+        })
     }
 
     /// Total collinear overlap with indexed segments other than `excluded` ones.
@@ -202,6 +212,19 @@ impl RouteIndex {
         end: Point,
         excluded: &[[Point; 2]],
     ) -> f32 {
+        let overlaps = |index: usize| {
+            !excluded.contains(&self.segments[index])
+                && collinear_segment_overlap(
+                    start,
+                    end,
+                    self.segments[index][0],
+                    self.segments[index][1],
+                )
+                .is_some()
+        };
+        if !self.any_index_near(start, end, 0.0, overlaps) {
+            return 0.0;
+        }
         self.indices_near(start, end, 0.0)
             .into_iter()
             .filter(|&index| !excluded.contains(&self.segments[index]))
@@ -264,6 +287,20 @@ impl RouteIndex {
         let top = (bounds.top() / ROUTE_INDEX_CELL_SIZE).floor() as i32;
         let bottom = (bounds.bottom() / ROUTE_INDEX_CELL_SIZE).floor() as i32;
         (top..=bottom).flat_map(move |row| (left..=right).map(move |column| (column, row)))
+    }
+
+    /// Whether `predicate` holds for some indexed segment whose cells the span touches. Buckets are
+    /// scanned in place, so a segment may be tested more than once; the predicate must be pure.
+    fn any_index_near(
+        &self,
+        start: Point,
+        end: Point,
+        padding: f32,
+        predicate: impl Fn(usize) -> bool,
+    ) -> bool {
+        Self::cells(start, end, padding)
+            .filter_map(|cell| self.buckets.get(&cell))
+            .any(|indices| indices.iter().any(|&index| predicate(index)))
     }
 
     fn indices_near(&self, start: Point, end: Point, padding: f32) -> Vec<usize> {

@@ -24,11 +24,27 @@ pub(in crate::app::views) fn build_graph_routing_layout(
     .expect("test graph must have a valid layout")
 }
 
+/// Horizontal center of partition `partition`'s column, taken from the first node placed in it.
+pub(super) fn partition_column_center(
+    graph: &RelationshipGraph,
+    node_positions: &[Pos2],
+    partition: usize,
+) -> f32 {
+    graph
+        .nodes
+        .iter()
+        .position(|node| node.partition == Some(partition))
+        .map_or(
+            24.0 + partition as f32 * GRAPH_STEP.x + GRAPH_NODE_SIZE.x / 2.0,
+            |index| node_positions[index].x,
+        )
+}
+
 #[cfg(test)]
 pub(super) fn graph_node_positions(graph: &RelationshipGraph) -> Vec<Pos2> {
     let slots = graph_node_slots(graph);
     let gaps = GraphGaps::for_density(graph, &slots);
-    slots.positions(&gaps)
+    slots.positions(&gaps, &graph_node_sizes(graph))
 }
 
 /// Grid cell of every node: connected nodes get a layer column and a global row.
@@ -113,31 +129,49 @@ impl GraphGaps {
 }
 
 impl GraphSlots {
-    fn positions(&self, gaps: &GraphGaps) -> Vec<Pos2> {
-        let offsets = |extra: &[f32], step: f32, count: usize| {
+    /// Card centers of every node. A column is as wide as its widest card and a row as tall as its
+    /// tallest card; neighbouring tracks keep the same clearance as with uniform cards, and every
+    /// card is centred in its column and row.
+    fn positions(&self, gaps: &GraphGaps, sizes: &[Vec2]) -> Vec<Pos2> {
+        let mut column_widths = vec![GRAPH_NODE_SIZE.x; self.columns];
+        let mut row_heights = vec![GRAPH_NODE_SIZE.y; self.rows];
+        for (cell, size) in self.cells.iter().zip(sizes) {
+            if let Some((column, row)) = *cell {
+                column_widths[column] = column_widths[column].max(size.x);
+                row_heights[row] = row_heights[row].max(size.y);
+            }
+        }
+        let offsets = |extra: &[f32], tracks: &[f32], gap: f32| {
             let mut offset = 24.0 + extra[0] / 2.0;
-            (0..count)
+            (0..tracks.len())
                 .map(|index| {
                     if index > 0 {
-                        offset += step + extra[index];
+                        offset += tracks[index - 1] + gap + extra[index];
                     }
                     offset
                 })
                 .collect::<Vec<_>>()
         };
-        let xs = offsets(&gaps.columns, GRAPH_STEP.x, self.columns);
-        let ys = offsets(&gaps.rows, GRAPH_STEP.y, self.rows);
+        let xs = offsets(
+            &gaps.columns,
+            &column_widths,
+            GRAPH_STEP.x - GRAPH_NODE_SIZE.x,
+        );
+        let ys = offsets(&gaps.rows, &row_heights, GRAPH_STEP.y - GRAPH_NODE_SIZE.y);
         let mut positions = vec![Pos2::ZERO; self.cells.len()];
         for (position, cell) in positions.iter_mut().zip(&self.cells) {
             if let Some((column, row)) = *cell {
-                *position = Pos2::new(xs[column], ys[row]) + GRAPH_NODE_SIZE / 2.0;
+                *position = Pos2::new(
+                    xs[column] + column_widths[column] / 2.0,
+                    ys[row] + row_heights[row] / 2.0,
+                );
             }
         }
         if !self.isolated.is_empty() {
             let columns = (self.isolated.len() as f32).sqrt().ceil() as usize;
             let isolated_start_x = if self.has_edges {
                 xs.last().copied().unwrap_or(24.0)
-                    + GRAPH_NODE_SIZE.x / 2.0
+                    + column_widths.last().copied().unwrap_or(GRAPH_NODE_SIZE.x) / 2.0
                     + GRAPH_STEP.x * 2.0
                     + gaps.columns.last().copied().unwrap_or(0.0)
             } else {
@@ -147,8 +181,8 @@ impl GraphSlots {
                 let column = index % columns;
                 let row = index / columns;
                 positions[node] = Pos2::new(
-                    isolated_start_x + column as f32 * GRAPH_STEP.x + GRAPH_NODE_SIZE.x / 2.0,
-                    24.0 + row as f32 * GRAPH_STEP.y + GRAPH_NODE_SIZE.y / 2.0,
+                    isolated_start_x + column as f32 * GRAPH_STEP.x + sizes[node].x / 2.0,
+                    24.0 + row as f32 * GRAPH_STEP.y + sizes[node].y / 2.0,
                 );
             }
         }
@@ -384,16 +418,17 @@ fn route_graph_with_spacing(
     progress: Option<&GraphProgressTracker>,
 ) -> Result<GraphRoutePlacement, String> {
     let slots = graph_node_slots(graph);
+    let node_sizes = graph_node_sizes(graph);
     let mut gaps = GraphGaps::for_density(graph, &slots);
     let mut previously_crowded = HashSet::new();
     let mut straightening_passes = 0;
     let mut routed = None;
     for attempt in 1..=GRAPH_ROUTING_MAX_LAYOUT_ATTEMPTS {
         begin_graph_stage(progress, GraphStage::Layout, 0, 1);
-        let positions = slots.positions(&gaps);
+        let positions = slots.positions(&gaps, &node_sizes);
         let mut routing_grid =
-            GraphRoutingGrid::new_for_graph(&positions, routed_nodes, search_backend);
-        let edge_ports = graph_edge_ports(&positions, edge_endpoints);
+            GraphRoutingGrid::new_for_graph(&positions, &node_sizes, routed_nodes, search_backend);
+        let edge_ports = graph_edge_ports_sized(&positions, &node_sizes, edge_endpoints);
         routing_grid.reserve_port_leads(edge_endpoints, &edge_ports);
         match route_graph_edges_with_progress(
             &routing_grid,
@@ -406,8 +441,13 @@ fn route_graph_with_spacing(
                 let detoured = if straightening_passes < GRAPH_ROUTING_MAX_STRAIGHTENING_PASSES
                     && attempt < GRAPH_ROUTING_MAX_LAYOUT_ATTEMPTS
                 {
-                    GraphRoutingGrid::new_for_graph(&positions, routed_nodes, search_backend)
-                        .detoured_edges(edge_endpoints, &edge_ports, &routes)
+                    GraphRoutingGrid::new_for_graph(
+                        &positions,
+                        &node_sizes,
+                        routed_nodes,
+                        search_backend,
+                    )
+                    .detoured_edges(edge_endpoints, &edge_ports, &routes)
                 } else {
                     Vec::new()
                 };
@@ -475,29 +515,32 @@ pub(super) fn build_graph_routing_layout_with_progress(
         search_backend,
         progress,
     )?;
-    let mut content_size = node_positions
-        .iter()
-        .fold(Vec2::splat(48.0), |size, point| {
-            Vec2::new(
-                size.x
-                    .max(point.x + GRAPH_STEP.x - GRAPH_NODE_SIZE.x / 2.0 + 24.0),
-                size.y
-                    .max(point.y + GRAPH_STEP.y - GRAPH_NODE_SIZE.y / 2.0 + 24.0),
-            )
-        });
+    let node_sizes = graph_node_sizes(graph);
+    let mut content_size =
+        node_positions
+            .iter()
+            .zip(&node_sizes)
+            .fold(Vec2::splat(48.0), |size, (point, card)| {
+                Vec2::new(
+                    size.x
+                        .max(point.x + card.x / 2.0 + GRAPH_STEP.x - GRAPH_NODE_SIZE.x + 24.0),
+                    size.y
+                        .max(point.y + card.y / 2.0 + GRAPH_STEP.y - GRAPH_NODE_SIZE.y + 24.0),
+                )
+            });
     for point in routed_edges.iter().flatten() {
         content_size.x = content_size.x.max(point.x + 24.0);
         content_size.y = content_size.y.max(point.y + 24.0);
     }
     let connected_node_rects = routed_nodes
         .iter()
-        .map(|&index| egui::Rect::from_center_size(node_positions[index], GRAPH_NODE_SIZE))
+        .map(|&index| egui::Rect::from_center_size(node_positions[index], node_sizes[index]))
         .collect::<Vec<_>>();
     let mut label_content_size = routed_nodes.iter().fold(Vec2::splat(48.0), |size, &index| {
         let position = node_positions[index];
         Vec2::new(
-            size.x.max(position.x + GRAPH_NODE_SIZE.x / 2.0 + 24.0),
-            size.y.max(position.y + GRAPH_NODE_SIZE.y / 2.0 + 24.0),
+            size.x.max(position.x + node_sizes[index].x / 2.0 + 24.0),
+            size.y.max(position.y + node_sizes[index].y / 2.0 + 24.0),
         )
     });
     for point in routed_edges.iter().flatten() {
@@ -593,9 +636,11 @@ pub(super) fn build_graph_routing_layout_with_progress(
                 for (index, position) in node_positions.iter_mut().enumerate() {
                     if !is_routed[index] {
                         position.x += shift;
-                        content_size.x = content_size
-                            .x
-                            .max(position.x + GRAPH_STEP.x - GRAPH_NODE_SIZE.x / 2.0 + 24.0);
+                        content_size.x = content_size.x.max(
+                            position.x + node_sizes[index].x / 2.0 + GRAPH_STEP.x
+                                - GRAPH_NODE_SIZE.x
+                                + 24.0,
+                        );
                     }
                 }
             }
@@ -605,6 +650,8 @@ pub(super) fn build_graph_routing_layout_with_progress(
     Ok(GraphRoutingLayout {
         graph_fingerprint: relationship_graph_fingerprint(graph),
         node_positions,
+        node_sizes,
+        link_counts: graph_link_counts(graph),
         edge_paths: routed_edges,
         edge_labels,
         partition_labels: graph.partition_names.clone(),
@@ -645,9 +692,10 @@ mod tests {
         let routed_nodes = (0..graph.nodes.len())
             .filter(|&node| endpoints.iter().any(|&(s, t)| s == node || t == node))
             .collect::<Vec<_>>();
-        let ports = graph_edge_ports(&layout.node_positions, &endpoints);
+        let ports = graph_edge_ports_sized(&layout.node_positions, &layout.node_sizes, &endpoints);
         let detoured = GraphRoutingGrid::new_for_graph(
             &layout.node_positions,
+            &layout.node_sizes,
             &routed_nodes,
             RoutingSearchBackend::Builtin,
         )
@@ -678,16 +726,30 @@ mod tests {
             .iter()
             .map(|edge| (edge.source, edge.target))
             .collect::<Vec<_>>();
+        let sizes = graph_node_sizes(&graph);
         let detoured = |positions: &[Pos2], routes: &[Vec<Pos2>]| {
-            GraphRoutingGrid::new_for_graph(positions, &routed_nodes, RoutingSearchBackend::Builtin)
-                .detoured_edges(&endpoints, &graph_edge_ports(positions, &endpoints), routes)
-                .len()
+            GraphRoutingGrid::new_for_graph(
+                positions,
+                &sizes,
+                &routed_nodes,
+                RoutingSearchBackend::Builtin,
+            )
+            .detoured_edges(
+                &endpoints,
+                &graph_edge_ports_sized(positions, &sizes, &endpoints),
+                routes,
+            )
+            .len()
         };
         let slots = graph_node_slots(&graph);
-        let compact = slots.positions(&GraphGaps::for_density(&graph, &slots));
-        let mut grid =
-            GraphRoutingGrid::new_for_graph(&compact, &routed_nodes, RoutingSearchBackend::Builtin);
-        let ports = graph_edge_ports(&compact, &endpoints);
+        let compact = slots.positions(&GraphGaps::for_density(&graph, &slots), &sizes);
+        let mut grid = GraphRoutingGrid::new_for_graph(
+            &compact,
+            &sizes,
+            &routed_nodes,
+            RoutingSearchBackend::Builtin,
+        );
+        let ports = graph_edge_ports_sized(&compact, &sizes, &endpoints);
         grid.reserve_port_leads(&endpoints, &ports);
         let compact_routes =
             route_graph_edges_with_progress(&grid, &endpoints, &ports, 1, None).unwrap();
@@ -732,7 +794,7 @@ mod tests {
             assert_eq!(gaps.rows[dense_row], extra);
             assert_eq!(gaps.rows[dense_row + 1], extra);
             assert_eq!(gaps.rows[sparse_row + 1], 0.0, "{gaps:?}");
-            let positions = slots.positions(&gaps);
+            let positions = slots.positions(&gaps, &vec![GRAPH_NODE_SIZE; slots.cells.len()]);
             assert_eq!(positions[3].y - positions[2].y, 0.0);
             assert_eq!(positions[1].x - positions[0].x, GRAPH_STEP.x + extra);
         }
@@ -749,8 +811,9 @@ mod tests {
         let (_, sparse_row) = slots.cells[2].unwrap();
         assert!(gaps.rows[dense_row] > 0.0 && gaps.rows[dense_row + 1] > 0.0);
         assert_eq!(gaps.rows[sparse_row + 1], 0.0);
-        let before = slots.positions(&compact);
-        let after = slots.positions(&gaps);
+        let uniform = vec![GRAPH_NODE_SIZE; slots.cells.len()];
+        let before = slots.positions(&compact, &uniform);
+        let after = slots.positions(&gaps, &uniform);
         assert!(after[1].x - after[0].x > before[1].x - before[0].x);
         assert_eq!(after[3].y - after[2].y, before[3].y - before[2].y);
     }
@@ -783,13 +846,15 @@ mod tests {
             .map(|edge| (edge.source, edge.target))
             .collect::<Vec<_>>();
         let slots = graph_node_slots(&graph);
-        let original_positions = slots.positions(&GraphGaps::compact(&slots));
+        let sizes = graph_node_sizes(&graph);
+        let original_positions = slots.positions(&GraphGaps::compact(&slots), &sizes);
         let grid = GraphRoutingGrid::new_for_graph(
             &original_positions,
+            &sizes,
             &routed_nodes,
             RoutingSearchBackend::Builtin,
         );
-        let ports = graph_edge_ports(&original_positions, &endpoints);
+        let ports = graph_edge_ports_sized(&original_positions, &sizes, &endpoints);
         let error =
             route_graph_edges_with_progress(&grid, &endpoints, &ports, 4, None).unwrap_err();
         assert!(error.needs_more_space(), "{error}");

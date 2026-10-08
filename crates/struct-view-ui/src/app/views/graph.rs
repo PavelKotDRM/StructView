@@ -4,6 +4,7 @@ use struct_view_core::graph::EdgeDirection;
 
 mod calculation;
 mod canvas;
+mod cards;
 mod export;
 mod labels;
 mod layout;
@@ -15,6 +16,10 @@ pub(in crate::app) use canvas::graph_view_menu;
 pub(in crate::app) use canvas::show_graph;
 #[cfg(test)]
 use canvas::{GraphInteractionState, graph_edges_at_pointer};
+use cards::{
+    GRAPH_CARD_COUNTS_OFFSET, GRAPH_CARD_ID_OFFSET, GRAPH_CARD_LABEL_OFFSET,
+    GRAPH_CARD_PATH_OFFSET, graph_link_counts, graph_node_sizes,
+};
 pub(in crate::app) use export::render_graph_image;
 pub(in crate::app) use export::{GraphExportFormat, GraphExportStyle, export_graph_image};
 use labels::{
@@ -29,6 +34,10 @@ pub(super) use layout::build_graph_routing_layout;
 use layout::build_graph_routing_layout_with_progress;
 #[cfg(test)]
 use layout::graph_node_positions;
+use layout::partition_column_center;
+#[cfg(test)]
+pub(super) use routing::graph_edge_ports;
+use routing::graph_edge_ports_sized;
 #[cfg(not(test))]
 use routing::segments_within_clearance;
 #[cfg(test)]
@@ -41,7 +50,7 @@ use routing::{
     edge_arrowheads, point_to_segment_distance, relationship_graph_fingerprint,
     route_graph_edges_with_progress, segment_intersects_rect, segments_intersect,
 };
-pub(super) use routing::{GraphRoutingGrid, graph_edge_color, graph_edge_ports};
+pub(super) use routing::{GraphRoutingGrid, graph_edge_color};
 pub(in crate::app) use routing::{
     GraphRoutingWorkerSetting, RoutingSearchBackend, available_graph_routing_workers,
     graph_routing_worker_count,

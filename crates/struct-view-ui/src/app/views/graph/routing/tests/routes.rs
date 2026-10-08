@@ -304,7 +304,7 @@ fn direct_route_detours_when_it_runs_inside_the_edge_clearance() {
 }
 
 #[test]
-fn crossing_routes_stay_straight_in_serial_and_parallel_routing() {
+fn crossing_routes_stay_orthogonal_in_serial_and_parallel_routing() {
     let positions = [
         Pos2::new(200.0, 200.0),
         Pos2::new(800.0, 800.0),
@@ -317,13 +317,15 @@ fn crossing_routes_stay_straight_in_serial_and_parallel_routing() {
     let serial = route_graph_edges(&grid, &endpoints, &ports, 1);
     let parallel = route_graph_edges(&grid, &endpoints, &ports, 2);
     assert_eq!(serial, parallel);
-    assert!(serial.iter().all(|route| route.len() == 2), "{serial:?}");
-    assert!(segments_intersect(
-        serial[0][0],
-        serial[0][1],
-        serial[1][0],
-        serial[1][1],
-    ));
+    for route in &serial {
+        assert!(
+            route.len() == 2
+                || route
+                    .windows(2)
+                    .all(|segment| segment[0].x == segment[1].x || segment[0].y == segment[1].y),
+            "Graph routes must be orthogonal or one straight diagonal: {route:?}"
+        );
+    }
     let index = GraphRouteSegmentIndex::new(&serial[..1]);
     assert!(!index.parallel_conflicts_route(&serial[1]));
     assert!(index.first_overlapping_segment(&serial[1], 0.0).is_none());
@@ -426,7 +428,30 @@ fn parallel_graph_routing_resolves_crossing_parallel_and_reciprocal_edges() {
 }
 
 #[test]
-fn routes_crossing_the_same_node_prefer_the_same_detour_side() {
+fn routes_crossing_the_same_node_detour_around_it() {
+    fn assert_bottom_detour(route: &[Pos2], grid: &GraphRoutingGrid, obstacle_index: usize) {
+        let obstacle = grid.obstacles[obstacle_index];
+        assert!(
+            route.windows(2).any(|segment| {
+                segment[0].y == segment[1].y
+                    && segment[0].y >= obstacle.bottom()
+                    && segment[0].x.max(segment[1].x) >= obstacle.left()
+                    && segment[0].x.min(segment[1].x) <= obstacle.right()
+            }),
+            "Route should pass under the shared obstacle on its nearer side: {route:?}"
+        );
+        assert!(
+            route.windows(2).all(|segment| {
+                !segment_crosses_rect_interior(
+                    segment[0],
+                    segment[1],
+                    grid.node_rects[obstacle_index],
+                )
+            }),
+            "Route must not cross the obstacle node: {route:?}"
+        );
+    }
+
     fn assert_top_detour(route: &[Pos2], grid: &GraphRoutingGrid, obstacle_index: usize) {
         let obstacle = grid.obstacles[obstacle_index];
         assert!(
@@ -491,20 +516,19 @@ fn routes_crossing_the_same_node_prefer_the_same_detour_side() {
         );
     }
 
+    // Parallel edges share one row and split around the node: the upper lane passes over it and
+    // the lower lane under it, so neither takes the longer detour on the far side.
     let positions = [
         Pos2::new(100.0, 400.0),
         Pos2::new(400.0, 400.0),
         Pos2::new(700.0, 400.0),
-        Pos2::new(200.0, 200.0),
-        Pos2::new(600.0, 600.0),
     ];
     let grid = GraphRoutingGrid::new(&positions);
-    let endpoints = [(0, 2), (3, 4)];
+    let endpoints = [(0, 2), (0, 2)];
     let ports = graph_edge_ports(&positions, &endpoints);
     let routes = route_graph_edges(&grid, &endpoints, &ports, 1);
-    for route in routes {
-        assert_top_detour(&route, &grid, 1);
-    }
+    assert_top_detour(&routes[0], &grid, 1);
+    assert_bottom_detour(&routes[1], &grid, 1);
 
     let positions = [
         Pos2::new(400.0, 100.0),
@@ -796,4 +820,133 @@ fn displaced_graph_labels_point_to_their_own_route() {
     assert!((40.0..=240.0).contains(&anchor.x));
     assert!(label.background.expand(0.001).contains(end));
     assert!(!label.background.shrink(0.001).contains(end));
+}
+
+#[test]
+fn straight_upgrade_replaces_only_short_unobstructed_links() {
+    let positions = [Pos2::new(160.0, 100.0), Pos2::new(560.0, 400.0)];
+    let short = vec![
+        Pos2::new(264.0, 100.0),
+        Pos2::new(360.0, 100.0),
+        Pos2::new(360.0, 400.0),
+        Pos2::new(456.0, 400.0),
+    ];
+    assert_eq!(
+        upgraded(&positions, &[(0, 1)], vec![short.clone()]),
+        vec![vec![short[0], short[3]]]
+    );
+
+    let zigzag = vec![
+        Pos2::new(264.0, 100.0),
+        Pos2::new(400.0, 100.0),
+        Pos2::new(400.0, 300.0),
+        Pos2::new(700.0, 300.0),
+        Pos2::new(700.0, 500.0),
+        Pos2::new(896.0, 500.0),
+    ];
+    let distant = [Pos2::new(160.0, 100.0), Pos2::new(1000.0, 500.0)];
+    assert_eq!(
+        upgraded(&distant, &[(0, 1)], vec![zigzag.clone()]),
+        vec![zigzag]
+    );
+
+    let blocked = [positions[0], positions[1], Pos2::new(360.0, 250.0)];
+    assert_eq!(
+        upgraded(&blocked, &[(0, 1)], vec![short.clone()]),
+        vec![short.clone()]
+    );
+
+    let grazing = vec![Pos2::new(200.0, 107.0), Pos2::new(300.0, 107.0)];
+    assert_eq!(
+        upgraded(
+            &positions,
+            &[(0, 1), (0, 1)],
+            vec![short.clone(), grazing.clone()]
+        ),
+        vec![short.clone(), grazing]
+    );
+
+    assert_eq!(
+        upgraded(&positions, &[(0, 0)], vec![short.clone()]),
+        vec![short]
+    );
+}
+
+#[test]
+fn straight_upgrade_allows_at_most_one_crossing_for_each_straight_link() {
+    let positions = [Pos2::new(160.0, 100.0), Pos2::new(560.0, 400.0)];
+    let short = vec![
+        Pos2::new(264.0, 100.0),
+        Pos2::new(360.0, 100.0),
+        Pos2::new(360.0, 400.0),
+        Pos2::new(456.0, 400.0),
+    ];
+    let straight = vec![short[0], short[3]];
+    let vertical = |x: f32| vec![Pos2::new(x, 0.0), Pos2::new(x, 700.0)];
+
+    assert_eq!(
+        upgraded(
+            &positions,
+            &[(0, 1), (0, 1)],
+            vec![short.clone(), vertical(330.0)]
+        ),
+        vec![straight, vertical(330.0)]
+    );
+    assert_eq!(
+        upgraded(
+            &positions,
+            &[(0, 1), (0, 1), (0, 1)],
+            vec![short.clone(), vertical(330.0), vertical(390.0)]
+        ),
+        vec![short, vertical(330.0), vertical(390.0)]
+    );
+
+    let far = [
+        Pos2::new(-5000.0, -5000.0),
+        Pos2::new(-5000.0, 5000.0),
+        Pos2::new(5000.0, -5000.0),
+        Pos2::new(5000.0, 5000.0),
+    ];
+    let first = vec![
+        Pos2::new(0.0, 0.0),
+        Pos2::new(150.0, 0.0),
+        Pos2::new(150.0, 300.0),
+        Pos2::new(300.0, 300.0),
+    ];
+    let second = vec![
+        Pos2::new(0.0, 300.0),
+        Pos2::new(0.0, 420.0),
+        Pos2::new(420.0, 420.0),
+        Pos2::new(420.0, 0.0),
+        Pos2::new(300.0, 0.0),
+    ];
+    let crossing = vec![Pos2::new(75.0, -50.0), Pos2::new(75.0, 100.0)];
+    let first_straight = vec![first[0], first[3]];
+    let second_straight = vec![second[0], second[4]];
+    assert_eq!(
+        upgraded(
+            &far,
+            &[(0, 1), (2, 3), (0, 1)],
+            vec![first.clone(), second.clone(), crossing.clone()]
+        ),
+        vec![first_straight, second.clone(), crossing.clone()]
+    );
+    assert_eq!(
+        upgraded(
+            &far,
+            &[(2, 3), (0, 1), (0, 1)],
+            vec![second.clone(), first.clone(), crossing.clone()]
+        ),
+        vec![second_straight, first, crossing]
+    );
+}
+
+fn upgraded(
+    positions: &[Pos2],
+    endpoints: &[(usize, usize)],
+    mut routes: Vec<Vec<Pos2>>,
+) -> Vec<Vec<Pos2>> {
+    let grid = GraphRoutingGrid::new(positions);
+    upgrade_straight_routes(&grid, endpoints, &mut routes);
+    routes
 }

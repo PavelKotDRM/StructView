@@ -97,6 +97,24 @@ pub(in crate::app::views::graph) fn segments_intersect(
     )
 }
 
+/// Whether an endpoint of either segment lies within the edge clearance of the other one. Crossings
+/// away from those endpoints do not count.
+pub(in crate::app::views::graph) fn segment_endpoints_too_close(
+    first_start: Pos2,
+    first_end: Pos2,
+    second_start: Pos2,
+    second_end: Pos2,
+) -> bool {
+    [
+        point_to_segment_distance(first_start, second_start, second_end),
+        point_to_segment_distance(first_end, second_start, second_end),
+        point_to_segment_distance(second_start, first_start, first_end),
+        point_to_segment_distance(second_end, first_start, first_end),
+    ]
+    .into_iter()
+    .any(|distance| distance <= GRAPH_EDGE_CLEARANCE)
+}
+
 pub(in crate::app::views::graph) fn point_to_segment_distance(
     point: Pos2,
     start: Pos2,

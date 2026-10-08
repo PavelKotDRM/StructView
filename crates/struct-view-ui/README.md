@@ -57,22 +57,33 @@ routing, and
 The relationship graph draws each edge as a routed path between node borders.
 Routing is performed after node layout and follows these steps:
 
-1. **Select ports.** Each edge uses the side of its source and target nodes
-   that faces the other endpoint. Edges sharing a node side are sorted by the
-   position of their opposite endpoint and assigned separate, evenly spaced
-   port offsets. Detoured links receive a short lead-out past the expanded node
-   boundary. Self-links use the right and bottom sides.
-2. **Try a direct segment.** A straight line is retained when it clears every
-   other node's expanded obstacle and does not conflict with an already routed
-   edge. Obstacles extend 18 points beyond the node border.
+1. **Select ports.** Edges between two layout columns leave and enter through
+   the left and right sides that face each other, so relationships flow left to
+   right. Edges within one column use the top and bottom sides that face each
+   other. A node with more than seven incident edges uses, for each of its edges,
+   the side that geometrically faces the other endpoint, because a left or right
+   side only has room for about seven lanes. Edges sharing a node side are sorted
+   by the position of their opposite endpoint and assigned separate, evenly
+   spaced port offsets. Cards with more than 22 incident edges are drawn as big
+   cards: they grow wider, about 8 points per edge, so each edge keeps its own
+   8-point lane on a top or bottom side, and they show their incoming and
+   outgoing link counts and the node's document path below the label. Detoured
+   links receive a short lead-out past the expanded node boundary. Self-links use
+   the right and bottom sides.
+2. **Keep aligned ports straight.** A straight line is retained when the two ports line up,
+   it clears every other node's expanded obstacle, and it does not conflict with
+   an already routed edge. Obstacles extend 18 points beyond the node border.
 3. **Find an orthogonal detour when needed.** The UI adapts node positions to
    the geometry types in `struct-view-routing`; its reusable orthogonal router
    builds a coordinate grid from obstacle boundaries, node centers, edge ports,
-   and nearby tracks from previously routed edges. Indexed A* searches this
-   coordinate grid using path length plus 48 points per bend, including turns
-   at the destination port. Candidate tracks are spaced 10 points from existing
-   route vertices, with at most 128 nearby candidate coordinates retained on
-   each axis. If the initial grid has no path, intermediate tracks are added.
+   the midline between each pair of exits, and nearby tracks from previously
+   routed edges. Indexed A* searches this coordinate grid using path length plus
+   48 points per bend, including turns at the destination port. Among equal
+   routes it prefers the track nearest the midline, so channels between columns
+   are centered and parallel links bundle symmetrically around it. Candidate
+   tracks are spaced 10 points from existing route vertices, with at most 128
+   nearby candidate coordinates retained on each axis. If the initial grid has
+   no path, intermediate tracks are added.
 4. **Keep parallel routes apart.** Shared collinear sections are forbidden.
    Parallel segments use the configured 8-point clearance outside endpoint
    lead zones. If dense paths remain blocked after intermediate tracks are
@@ -80,13 +91,21 @@ Routing is performed after node layout and follows these steps:
    shared sections remain forbidden. Perpendicular crossings remain allowed so
    a crossing alone does not create a long detour. If no path remains, routing
    reports a crowded edge and the layout widens nearby gaps before retrying.
-5. **Resolve edge conflicts.** With multiple workers, initial candidates are
-   routed independently. A final deterministic pass checks parallel-lane
-   conflicts in edge order and reroutes any path that conflicts with an earlier
-   route. The single-worker path uses this same edge order and incrementally
-   considers accepted routes. Perpendicular crossings are not treated as lane
-   conflicts.
-6. **Simplify the result.** Duplicate points, closed detours, and redundant
+5. **Resolve edge conflicts.** Initial candidates are routed in parallel, one per
+   edge, on every logical CPU in automatic mode. Conflict resolution then runs
+   on one thread in edge order: an edge whose candidate conflicts with an
+   earlier accepted route is rerouted against the routes accepted so far. The
+   routes are the same for any number of workers. Perpendicular crossings are
+   not treated as lane conflicts.
+6. **Straighten clean links.** Once the orthogonal routes are final, a link whose
+   ports can be joined by one straight segment is drawn as that segment: it needs
+   no bends and is the shortest route. The segment must be at most two layout
+   columns long (680 points), clear every other node's obstacle (18 points beyond
+   the node border), and stay 8 points or more from the other links' corners and
+   ends. It may cross at most one other link, and a straight link that already has
+   a crossing may not gain another. Because this runs after conflict resolution,
+   it never changes the routes of other links.
+7. **Simplify the result.** Duplicate points, closed detours, and redundant
    collinear points—including collinear backtracking—are removed before the
    path is drawn. An intentionally closed route keeps its final endpoint.
 

@@ -266,6 +266,8 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::SchemaConstraintsMore => "more",
         TextKey::SchemaConstraintObserved => "Observed in samples",
         TextKey::GraphNodes => "Entities",
+        TextKey::GraphIncomingLinks => "incoming",
+        TextKey::GraphOutgoingLinks => "outgoing",
         TextKey::GraphEdges => "Links",
         TextKey::GraphNoEntities => "No entities with identifiers were found.",
         TextKey::GraphCalculating => "Building relationship graph…",

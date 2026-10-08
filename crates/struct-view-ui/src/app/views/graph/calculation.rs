@@ -86,6 +86,7 @@ pub(in crate::app) fn headless_graph_image_with_progress(
         } else {
             GraphExportStyle::LightTransparent
         },
+        Locale::English,
     )
     .map_err(|error| format!("Graph export error: {error}"));
     progress
@@ -254,6 +255,8 @@ pub(in crate::app) struct GraphCalculationResult {
 pub(in crate::app) struct GraphRoutingLayout {
     pub(super) graph_fingerprint: u64,
     pub(super) node_positions: Vec<Pos2>,
+    pub(super) node_sizes: Vec<Vec2>,
+    pub(super) link_counts: Vec<(usize, usize)>,
     pub(super) edge_paths: Vec<Vec<Pos2>>,
     pub(super) edge_labels: Vec<Option<GraphEdgeLabelLayout>>,
     pub(super) partition_labels: Option<Vec<String>>,

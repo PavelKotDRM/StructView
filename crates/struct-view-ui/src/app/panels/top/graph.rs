@@ -22,6 +22,7 @@ impl StructViewApp {
                 } else {
                     crate::app::views::GraphExportStyle::LightTransparent
                 },
+                self.locale,
             );
             match result {
                 Ok(true) => self.show_toast(self.locale.text(TextKey::GraphExported)),

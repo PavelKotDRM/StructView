@@ -10,6 +10,7 @@ pub(in crate::app::views) struct GraphRoutingGrid {
     #[cfg(test)]
     pub(super) node_positions: Vec<Pos2>,
     #[cfg(test)]
+    pub(super) node_sizes: Vec<Vec2>,
     pub(super) node_rects: Vec<egui::Rect>,
     #[cfg(test)]
     pub(super) obstacles: Vec<egui::Rect>,
@@ -19,18 +20,25 @@ impl GraphRoutingGrid {
     #[cfg(test)]
     pub(in crate::app::views) fn new(node_positions: &[Pos2]) -> Self {
         let routed_nodes = (0..node_positions.len()).collect::<Vec<_>>();
-        Self::new_for_graph(node_positions, &routed_nodes, RoutingSearchBackend::Builtin)
+        let node_sizes = vec![GRAPH_NODE_SIZE; node_positions.len()];
+        Self::new_for_graph(
+            node_positions,
+            &node_sizes,
+            &routed_nodes,
+            RoutingSearchBackend::Builtin,
+        )
     }
 
     pub(in crate::app::views::graph) fn new_for_graph(
         node_positions: &[Pos2],
+        node_sizes: &[Vec2],
         routed_nodes: &[usize],
         search_backend: RoutingSearchBackend,
     ) -> Self {
-        #[cfg(test)]
         let node_rects = node_positions
             .iter()
-            .map(|center| egui::Rect::from_center_size(*center, GRAPH_NODE_SIZE))
+            .zip(node_sizes)
+            .map(|(center, size)| egui::Rect::from_center_size(*center, *size))
             .collect::<Vec<_>>();
         #[cfg(test)]
         let obstacles = node_rects
@@ -39,9 +47,15 @@ impl GraphRoutingGrid {
             .collect::<Vec<_>>();
         #[cfg(test)]
         let node_positions = node_positions.to_vec();
+        #[cfg(test)]
+        let node_sizes = node_sizes.to_vec();
         let positions = node_positions
             .iter()
             .map(|point| Point::new(point.x, point.y))
+            .collect::<Vec<_>>();
+        let sizes = node_sizes
+            .iter()
+            .map(|size| Size::new(size.x, size.y))
             .collect::<Vec<_>>();
         let mut options = OrthogonalRouterOptions::new(
             Size::new(GRAPH_NODE_SIZE.x, GRAPH_NODE_SIZE.y),
@@ -50,7 +64,7 @@ impl GraphRoutingGrid {
         options.search_backend = search_backend;
         options.obstacle_clearance = GRAPH_ROUTE_CLEARANCE;
         options.edge_clearance = GRAPH_EDGE_CLEARANCE;
-        let inner = OrthogonalRouter::new(&positions, routed_nodes, options)
+        let inner = OrthogonalRouter::with_node_sizes(&positions, &sizes, routed_nodes, options)
             .expect("the UI graph layout supplies finite node geometry");
 
         Self {
@@ -58,6 +72,7 @@ impl GraphRoutingGrid {
             #[cfg(test)]
             node_positions: node_positions.to_vec(),
             #[cfg(test)]
+            node_sizes,
             node_rects,
             #[cfg(test)]
             obstacles,
@@ -73,6 +88,25 @@ impl GraphRoutingGrid {
         self.inner
             .reserve_port_leads(endpoints, ports)
             .expect("the UI graph layout supplies matching edges and ports");
+    }
+
+    /// Whether the straight segment between two ports clears every card. A port's own card only
+    /// needs the segment to leave it outward; other cards keep the routing clearance.
+    pub(super) fn card_clear_of_segment(
+        &self,
+        source: usize,
+        target: usize,
+        start: Pos2,
+        end: Pos2,
+    ) -> bool {
+        self.node_rects.iter().enumerate().all(|(index, rect)| {
+            let obstacle = if index == source || index == target {
+                *rect
+            } else {
+                rect.expand(GRAPH_ROUTE_CLEARANCE)
+            };
+            !segment_intersects_rect(start, end, obstacle)
+        })
     }
 
     /// Edges whose routes are worse than they would be without other edges: they need extra
@@ -110,7 +144,8 @@ impl GraphRoutingGrid {
 
     #[cfg(test)]
     pub(in crate::app::views) fn route_edge(&self, source: usize, target: usize) -> Vec<Pos2> {
-        let ports = graph_edge_ports(&self.node_positions, &[(source, target)])[0];
+        let ports =
+            graph_edge_ports_sized(&self.node_positions, &self.node_sizes, &[(source, target)])[0];
         self.route_edge_with_ports(source, target, ports, &[])
     }
 

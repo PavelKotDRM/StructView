@@ -247,6 +247,8 @@ pub(in crate::app) enum TextKey {
     SchemaConstraintsMore,
     SchemaConstraintObserved,
     GraphNodes,
+    GraphIncomingLinks,
+    GraphOutgoingLinks,
     GraphEdges,
     GraphNoEntities,
     GraphNoRelationships,

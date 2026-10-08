@@ -50,16 +50,31 @@ crossings, shared segments, and indexed A* search. Its geometry types are
 independent of UI frameworks, so an application only needs to convert its
 node rectangles and positions to `Point`, `Size`, and `Rect`.
 
-Unobstructed connections stay straight, even when they cross other edges.
-Otherwise, the selected A* backend minimizes route length plus
+Connections whose ports line up stay straight, even when they cross other
+edges. Every other connection is orthogonal and bends, even when nothing
+obstructs it. The selected A* backend minimizes route length plus
 `GRAPH_ROUTE_BEND_COST` (48 units) per bend, including turns at port leads, on
 the retained routing grid, so a short jog is never taken just to save a few
 units of length. Detours keep out of the port-lead band around the route's own
 source and target nodes, which prevents loops back across its own port lead;
 the band is only entered when no other path exists. Among otherwise equal
 routes, the search avoids the straight exits of other reserved ports, so later
-edges can leave their ports without extra bends. There are no crossing
-penalties and no first-found local-route shortcut.
+edges can leave their ports without extra bends, and it prefers the midline
+between the two exits, so Z-shaped channels sit in the middle of their gap and
+parallel routes bundle symmetrically around it. There are no crossing penalties
+and no first-found local-route shortcut.
+
+`assign_edge_ports_on_axes` chooses the port side for each end of an edge with
+`EdgePortAxes`. `PortAxis::Horizontal` uses the left or right side facing the
+other node when the nodes differ horizontally, which suits layered layouts that
+flow left to right; `PortAxis::Geometric` (the behavior of `assign_edge_ports`)
+uses the side that faces the other node along the direction between them.
+
+`OrthogonalRouter::with_node_sizes` and `assign_edge_ports_for_sizes` accept one
+size per node for layouts whose cards differ in size: ports stay on each node's
+own border, and lanes on a side are spaced using the size of the node that owns
+it. `OrthogonalRouter::new` and `assign_edge_ports` treat every node as
+`options.node_size`.
 
 Shared collinear sections are forbidden, including short overlaps and port
 leads. Parallel tracks first use the configured edge clearance outside their

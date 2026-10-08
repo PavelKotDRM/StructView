@@ -49,6 +49,7 @@ impl OrthogonalRouter {
         } = options;
         let width = x_coordinates.len();
         let vertex_count = width * y_coordinates.len();
+        let midline = Point::new((source.x + target.x) / 2.0, (source.y + target.y) / 2.0);
         // A virtual sink charges for the final turn into the target port.
         let goal_state = vertex_count * GRAPH_ROUTE_DIRECTIONS;
         let state_count = goal_state + 1;
@@ -58,46 +59,40 @@ impl OrthogonalRouter {
         ) else {
             return Err(RoutingError::InvalidGeometry);
         };
-        // `None` marks a blocked segment; otherwise the extra tie-breaking cost.
-        let mut segment_costs = HashMap::new();
-        let mut neighbors = |vertex| {
-            let current_point = Self::point_at(vertex, x_coordinates, y_coordinates);
-            Self::grid_neighbors(vertex, x_coordinates, y_coordinates)
-                .into_iter()
-                .flatten()
-                .filter_map(|(next_vertex, direction, length)| {
-                    let key = (vertex.min(next_vertex), vertex.max(next_vertex));
-                    let extra = *segment_costs.entry(key).or_insert_with(|| {
-                        let next_point = Self::point_at(next_vertex, x_coordinates, y_coordinates);
-                        let near_route_port = [source, target].into_iter().any(|port| {
-                            let exemption = self.options.edge_clearance + 4.0;
-                            current_point.distance(port) <= exemption
-                                && next_point.distance(port) <= exemption
-                        });
-                        let lane_clearance = if near_route_port { 0.0 } else { lane_clearance };
-                        let blocked = self.segment_crosses_obstacle(
-                            current_point,
-                            next_point,
-                            None,
-                            lead_zones,
-                        ) || reserved_port_leads
-                            .overlaps_segment(current_point, next_point)
-                            || segment_index.parallel_conflicts_segment(
-                                current_point,
-                                next_point,
-                                lane_clearance,
-                            );
-                        (!blocked).then(|| {
-                            f64::from(port_exit_rays.collinear_overlap_length(
-                                current_point,
-                                next_point,
-                                &own_exit_rays,
-                            )) * PORT_EXIT_RAY_COST
-                        })
-                    });
-                    extra.map(|extra| (next_vertex, direction, length + extra))
-                })
-                .collect::<Vec<_>>()
+        // Per undirected grid segment, indexed by its lower vertex and axis: `None` until computed,
+        // then `Some(None)` for a blocked segment or `Some(Some(extra))` for its tie-breaking cost.
+        let mut segment_costs = vec![None; vertex_count * 2];
+        let mut extra_cost = |current: usize, next: usize, direction: usize| -> Option<f64> {
+            let slot = current.min(next) * 2 + usize::from(direction == GRAPH_ROUTE_VERTICAL);
+            if let Some(known) = segment_costs[slot] {
+                return known;
+            }
+            let current_point = Self::point_at(current, x_coordinates, y_coordinates);
+            let next_point = Self::point_at(next, x_coordinates, y_coordinates);
+            let near_route_port = [source, target].into_iter().any(|port| {
+                let exemption = self.options.edge_clearance + 4.0;
+                current_point.distance(port) <= exemption && next_point.distance(port) <= exemption
+            });
+            let lane_clearance = if near_route_port { 0.0 } else { lane_clearance };
+            let blocked =
+                self.segment_crosses_obstacle(current_point, next_point, None, lead_zones)
+                    || reserved_port_leads.overlaps_segment(current_point, next_point)
+                    || segment_index.parallel_conflicts_segment(
+                        current_point,
+                        next_point,
+                        lane_clearance,
+                    );
+            let extra = (!blocked).then(|| {
+                f64::from(port_exit_rays.collinear_overlap_length(
+                    current_point,
+                    next_point,
+                    &own_exit_rays,
+                )) * PORT_EXIT_RAY_COST
+                    + f64::from(midline_offset(current_point, next_point, midline))
+                        * ROUTE_MIDLINE_COST
+            });
+            segment_costs[slot] = Some(extra);
+            extra
         };
         let bend_cost = f64::from(GRAPH_ROUTE_BEND_COST);
         let goal_point = target;
@@ -125,7 +120,15 @@ impl OrthogonalRouter {
                     });
                     return;
                 }
-                for (next_vertex, direction, segment_length) in neighbors(current_vertex) {
+                for (next_vertex, direction, length) in
+                    Self::grid_neighbors(current_vertex, x_coordinates, y_coordinates)
+                        .into_iter()
+                        .flatten()
+                {
+                    let Some(extra) = extra_cost(current_vertex, next_vertex, direction) else {
+                        continue;
+                    };
+                    let segment_length = length + extra;
                     let turn_cost = if direction_before != direction {
                         bend_cost
                     } else {
@@ -225,5 +228,14 @@ impl OrthogonalRouter {
     fn point_at(vertex: usize, x_coordinates: &[f32], y_coordinates: &[f32]) -> Point {
         let width = x_coordinates.len();
         Point::new(x_coordinates[vertex % width], y_coordinates[vertex / width])
+    }
+}
+
+/// Offset of an axis-aligned segment from the midline, along the axis perpendicular to the segment.
+fn midline_offset(start: Point, end: Point, midline: Point) -> f32 {
+    if start.x == end.x {
+        (start.x - midline.x).abs()
+    } else {
+        (start.y - midline.y).abs()
     }
 }

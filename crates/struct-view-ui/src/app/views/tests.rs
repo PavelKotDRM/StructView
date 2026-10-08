@@ -1010,6 +1010,47 @@ fn graph_ports_follow_neighbor_order_not_edge_order() {
 }
 
 #[test]
+fn graph_ports_leave_columns_horizontally_unless_a_node_has_many_edges() {
+    use struct_view_routing::orthogonal::NodeSide;
+
+    let positions = [
+        egui::pos2(128.0, 59.0),
+        egui::pos2(468.0, 209.0),
+        egui::pos2(128.0, 359.0),
+    ];
+    let ports = super::graph::graph_edge_ports(&positions, &[(0, 1), (0, 2)]);
+    assert_eq!(
+        (ports[0].source_side, ports[0].target_side),
+        (NodeSide::Right, NodeSide::Left)
+    );
+    assert_eq!(
+        (ports[1].source_side, ports[1].target_side),
+        (NodeSide::Bottom, NodeSide::Top)
+    );
+
+    // Targets far below the hub would use its top and bottom sides geometrically. Seven edges
+    // still fit on the hub's left and right sides; an eighth would overfill them.
+    let mut hub_positions = vec![egui::pos2(128.0, 59.0)];
+    hub_positions.extend((0..8).map(|row| egui::pos2(468.0, 659.0 + 150.0 * row as f32)));
+    let seven = (1..=7).map(|target| (0, target)).collect::<Vec<_>>();
+    let seven_ports = super::graph::graph_edge_ports(&hub_positions, &seven);
+    assert!(
+        seven_ports
+            .iter()
+            .all(|ports| ports.source_side == NodeSide::Right),
+        "{seven_ports:?}"
+    );
+    let eight = (1..=8).map(|target| (0, target)).collect::<Vec<_>>();
+    let eight_ports = super::graph::graph_edge_ports(&hub_positions, &eight);
+    assert!(
+        eight_ports
+            .iter()
+            .all(|ports| ports.source_side == NodeSide::Bottom),
+        "{eight_ports:?}"
+    );
+}
+
+#[test]
 fn detoured_parallel_graph_edges_have_separate_tracks() {
     let positions = [
         egui::pos2(128.0, 59.0),
@@ -1053,7 +1094,7 @@ fn detoured_parallel_graph_edges_have_separate_tracks() {
 }
 
 #[test]
-fn crossing_graph_edges_remain_straight_without_shared_sections() {
+fn crossing_graph_edges_stay_orthogonal_without_shared_sections() {
     let positions = [
         egui::pos2(128.0, 59.0),
         egui::pos2(468.0, 59.0),
@@ -1066,21 +1107,28 @@ fn crossing_graph_edges_remain_straight_without_shared_sections() {
     let first = routing_grid.route_edge_with_ports(0, 3, ports[0], &[]);
     let second = routing_grid.route_edge_with_ports(1, 2, ports[1], std::slice::from_ref(&first));
 
-    assert_eq!(first.len(), 2);
-    assert_eq!(
-        second.len(),
-        2,
-        "The crossing edge should stay straight: {second:?}"
-    );
-    assert!(super::graph::segments_within_clearance(
-        first[0], first[1], second[0], second[1], 0.0
-    ));
-    let first_direction = first[1] - first[0];
-    let second_direction = second[1] - second[0];
-    assert_ne!(
-        first_direction.x * second_direction.y - first_direction.y * second_direction.x,
-        0.0,
-        "Straight routes must not share a collinear section"
+    for route in [&first, &second] {
+        assert!(
+            route
+                .windows(2)
+                .all(|segment| segment[0].x == segment[1].x || segment[0].y == segment[1].y),
+            "Graph routes must be orthogonal: {route:?}"
+        );
+    }
+    let shared_section = |a: [egui::Pos2; 2], b: [egui::Pos2; 2]| {
+        let horizontal = a[0].y == a[1].y && b[0].y == b[1].y && a[0].y == b[0].y;
+        let vertical = a[0].x == a[1].x && b[0].x == b[1].x && a[0].x == b[0].x;
+        let overlap = |first: f32, second: f32, third: f32, fourth: f32| {
+            first.min(second).max(third.min(fourth)) < first.max(second).min(third.max(fourth))
+        };
+        (horizontal && overlap(a[0].x, a[1].x, b[0].x, b[1].x))
+            || (vertical && overlap(a[0].y, a[1].y, b[0].y, b[1].y))
+    };
+    assert!(
+        first.windows(2).all(|a| second
+            .windows(2)
+            .all(|b| !shared_section([a[0], a[1]], [b[0], b[1]]))),
+        "Crossing edges must not share a section: {first:?}, {second:?}"
     );
 }
 
