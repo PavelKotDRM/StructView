@@ -132,6 +132,20 @@ fn isolated_entities_do_not_spread_or_reroute_the_connected_graph() {
         connected_routing.node_positions
     );
     assert_eq!(isolated_routing.edge_paths, connected_routing.edge_paths);
+    let mut routes_at_half_clearance =
+        struct_view_routing::orthogonal::RouteIndex::new(&[], routing::GRAPH_EDGE_CLEARANCE / 2.0)
+            .unwrap();
+    for route in &connected_routing.edge_paths {
+        let route = route
+            .iter()
+            .map(|point| struct_view_routing::orthogonal::Point::new(point.x, point.y))
+            .collect::<Vec<_>>();
+        assert!(
+            !routes_at_half_clearance.parallel_conflicts_route(&route),
+            "{route:?}"
+        );
+        routes_at_half_clearance.insert_route(&route).unwrap();
+    }
     let connected_bottom = connected_routing
         .node_positions
         .iter()

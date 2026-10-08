@@ -601,6 +601,31 @@ fn simplify_route_removes_collinear_backtracking() {
 }
 
 #[test]
+fn simplify_route_removes_closed_detours_but_preserves_closed_routes() {
+    let route_with_detour = [
+        Point::ZERO,
+        Point::new(0.0, 10.0),
+        Point::new(10.0, 10.0),
+        Point::new(10.0, 0.0),
+        Point::ZERO,
+        Point::new(20.0, 0.0),
+    ];
+    assert_eq!(
+        simplify_route(route_with_detour.to_vec()),
+        [Point::ZERO, Point::new(20.0, 0.0)]
+    );
+
+    let closed_route = [
+        Point::ZERO,
+        Point::new(0.0, 10.0),
+        Point::new(10.0, 10.0),
+        Point::new(10.0, 0.0),
+        Point::ZERO,
+    ];
+    assert_eq!(simplify_route(closed_route.to_vec()), closed_route);
+}
+
+#[test]
 fn all_search_backends_avoid_previously_routed_segments() {
     let node_positions = [Point::new(100.0, 100.0), Point::new(700.0, 100.0)];
     let mut options = OrthogonalRouterOptions::new(Size::new(120.0, 80.0), Size::new(100.0, 80.0));

@@ -62,15 +62,19 @@ edges can leave their ports without extra bends. There are no crossing
 penalties and no first-found local-route shortcut.
 
 Shared collinear sections are forbidden, including short overlaps and port
-leads. Parallel tracks normally retain the configured edge clearance. If dense
-ports leave no path with that clearance, intermediate tracks are added between
-existing coordinates and lane spacing is relaxed;
-overlapping sections and node obstacles remain forbidden. Incompatible fixed
-ports return `RoutingError::NoOrthogonalPath` instead of an overlapping route.
+leads. Parallel tracks first use the configured edge clearance outside their
+endpoint port-lead zones. If dense ports leave no path, intermediate tracks are
+added between existing coordinates and fallback searches progressively reduce
+the clearance down to zero. Exact shared sections and node obstacles remain
+forbidden; if no path remains, `RoutingError::NoOrthogonalPath` is returned so
+callers can make more space. Closed detours are removed during route
+simplification while preserving intentionally closed paths. Incompatible fixed
+ports return
+`RoutingError::NoOrthogonalPath` instead of an overlapping route.
 Legacy geometry-scoring helpers remain available independently of route search.
 Call `OrthogonalRouter::reserve_port_leads` with all edges and their ports to
-reserve every port lead up front: other routes may cross a reserved lead but never
-run along it, so edges routed later always find their own port entry free.
+reserve every port lead up front: other routes may cross a reserved lead but
+never run along it, so edges routed later always find their own port entry free.
 
 The graph UI propagates routing failures with the edge endpoints to the
 background-operation error display instead of panicking the calculation worker.

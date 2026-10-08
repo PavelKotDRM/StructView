@@ -462,17 +462,29 @@ impl OrthogonalRouter {
         if path.is_none() {
             add_intermediate_route_tracks(&mut x_coordinates);
             add_intermediate_route_tracks(&mut y_coordinates);
-            path = self.find_orthogonal_path(
-                source_port.escape,
-                target_port.escape,
-                &x_coordinates,
-                &y_coordinates,
-                RouteSearchOptions {
-                    lane_clearance: 0.0,
-                    lead_zones: LeadZones::None,
-                    ..search_options
-                },
-            )?;
+            let mut lane_clearances = vec![
+                self.options.edge_clearance * 0.5,
+                self.options.edge_clearance * 0.25,
+                0.0,
+            ];
+            lane_clearances.dedup();
+            // Keep as much separation as the remaining tracks permit; zero still rejects overlap.
+            for lane_clearance in lane_clearances {
+                path = self.find_orthogonal_path(
+                    source_port.escape,
+                    target_port.escape,
+                    &x_coordinates,
+                    &y_coordinates,
+                    RouteSearchOptions {
+                        lane_clearance,
+                        lead_zones: LeadZones::None,
+                        ..search_options
+                    },
+                )?;
+                if path.is_some() {
+                    break;
+                }
+            }
         }
         let route = path
             .map(route_from_path)
@@ -620,11 +632,20 @@ pub fn detour_side_preference_penalty(
         * GRAPH_ROUTE_SIDE_PREFERENCE_PENALTY
 }
 
-/// Remove duplicate points and collinear points that continue in the same direction.
+/// Remove route loops, duplicate points, and collinear points.
 pub fn simplify_route(points: Vec<Point>) -> Vec<Point> {
     let mut simplified: Vec<Point> = Vec::with_capacity(points.len());
-    for point in points {
+    let last_index = points.len().saturating_sub(1);
+    for (index, point) in points.into_iter().enumerate() {
         if simplified.last() == Some(&point) {
+            continue;
+        }
+        if let Some(loop_start) = simplified.iter().position(|existing| *existing == point) {
+            if index == last_index {
+                simplified.push(point);
+            } else {
+                simplified.truncate(loop_start + 1);
+            }
             continue;
         }
         while simplified.len() >= 2 {

@@ -74,6 +74,7 @@ impl OrthogonalRouter {
                             current_point.distance(port) <= exemption
                                 && next_point.distance(port) <= exemption
                         });
+                        let lane_clearance = if near_route_port { 0.0 } else { lane_clearance };
                         let blocked = self.segment_crosses_obstacle(
                             current_point,
                             next_point,
@@ -84,7 +85,7 @@ impl OrthogonalRouter {
                             || segment_index.parallel_conflicts_segment(
                                 current_point,
                                 next_point,
-                                if near_route_port { 0.0 } else { lane_clearance },
+                                lane_clearance,
                             );
                         (!blocked).then(|| {
                             f64::from(port_exit_rays.collinear_overlap_length(
