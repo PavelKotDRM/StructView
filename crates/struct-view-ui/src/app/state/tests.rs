@@ -1020,6 +1020,33 @@ fn exit_confirmation_cancels_pending_file_replacement() {
     );
 }
 
+#[test]
+fn continue_without_saving_on_exit_clears_unsaved_document_before_closing() {
+    let mut app = editable_document();
+    let context = egui::Context::default();
+
+    app.request_exit(&context);
+    assert!(app.close_file_confirmation_open);
+    assert!(app.exit_after_close_confirmation);
+
+    app.continue_without_saving(&context);
+
+    assert!(app.root.is_none());
+    assert!(!app.close_file_confirmation_open);
+    assert!(!app.exit_after_close_confirmation);
+
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .events
+        .push(egui::ViewportEvent::Close);
+    let output = context.run_ui(input, |ui| app.handle_native_close_request(ui.ctx()));
+    assert!(!app.close_file_confirmation_open);
+    output.drop_without_applying_deltas();
+}
+
 fn editable_document() -> StructViewApp {
     let root = parse_data(r#"{"value":1}"#, Some(DataFormat::Json))
         .unwrap()

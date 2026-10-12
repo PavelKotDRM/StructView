@@ -13,6 +13,10 @@ integration.
 - `run_native_gui(files)` starts the native application, optionally opening
   the supplied files;
 - `app` exposes the GUI application modules;
+- `app::graph_animation::{AnimationCommand, AnimationStep, AnimationScenario}`
+  exposes serializable visual-animation protocol types;
+- `app::graph_animation::{RealtimeCommand, RealtimeUpdate, ElementStatus}`
+  exposes persistent marker and element-state protocol types;
 - `clipboard` provides clipboard support.
 
 ## Crate structure
@@ -28,6 +32,10 @@ struct-view-ui/
         ├── state.rs           application and document state
         ├── docking.rs         panel layout
         ├── edit.rs            edit actions
+        ├── graph_animation.rs visual animation protocol and GUI dispatch
+        ├── graph_animation/   authenticated loopback HTTP transport and tests
+        ├── graph_editor.rs    semantic graph editor
+        ├── graph_editor/      editable model, forms, and tests
         ├── tree.rs            document tree rendering
         ├── views.rs           view selection and shared view behavior
         ├── visualization.rs   data-to-view models
@@ -53,6 +61,36 @@ routing, and
 [main README](../../README.md) documents the interface and its features.
 
 ## Relationship graph routing
+
+The relationship view also provides a semantic graph editor. It creates
+untitled graphs or independent editable copies of any supported graph, with
+entity/link/group CRUD, directions, weights, typed attributes, and shared
+document undo/redo and saving. `app/graph_editor` owns the canonical editable
+model and UI, including a dockable editor window using the same docking
+helpers as search. Creation/copy commands live in File, mutation commands in
+Edit, and the editor-window toggle in View; graph-specific commands are
+hidden in unrelated views. `graph.editor_version: 1` distinguishes its mixed-multigraph
+documents. Node positions and routes are never editable and continue to use
+the layout and routing pipeline below. See the
+[graph editor guide](../../README.md#relationship-graph-editor).
+
+Element forms show a live read-only complete JSON record; `id` and `label`
+remain separate from additional `attributes`. The optional
+`app/graph_animation` subsystem accepts authenticated HTTP/HTTPS scenarios
+and realtime batches,
+validates targets against the completed graph calculation, and stores visual
+playback in the egui context. The GUI thread handles requests; the canvas
+paints highlights and arc-length flow markers over existing routes and smoothly
+updates the camera. Its independent realtime layer tracks percentage targets
+monotonically with elapsed-time exponential smoothing and paints persistent
+status highlights and badges. Realtime batches validate atomically before
+replacing state. Commands never mutate document data or layout.
+The bounded concurrent server starts only through Settings, defaults to
+loopback, requires explicit network opt-in, and supports a configurable
+listen IP/public host and PEM-backed rustls TLS. It stops all workers when
+disabled or the application closes. See the
+[animation API guide](../../README.md#graph-animation-api) for endpoints,
+limits, lifecycle, and Python/PowerShell examples.
 
 The relationship graph draws each edge as a routed path between node borders.
 Routing is performed after node layout and follows these steps:

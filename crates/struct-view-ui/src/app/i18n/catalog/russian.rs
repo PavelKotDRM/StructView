@@ -39,6 +39,73 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::Visualization => "Представление",
         TextKey::TreeView => "Интерактивное дерево",
         TextKey::GraphView => "Граф связей",
+        TextKey::GraphNew => "Создать граф",
+        TextKey::GraphEditableCopy => "Создать редактируемую копию графа",
+        TextKey::GraphAutomaticLayout => "Размещение узлов и маршруты связей — автоматические.",
+        TextKey::GraphEditor => "Редактор графа",
+        TextKey::GraphEditorHint => {
+            "Нажмите элемент списка или дважды нажмите узел / подпись связи для редактирования. Поддерживаются петли и параллельные связи."
+        }
+        TextKey::GraphEditOnly => "Изменение графа доступно в режиме редактирования.",
+        TextKey::GraphAddNode => "Добавить сущность",
+        TextKey::GraphSpawnNode => "Применить и создать связанную сущность",
+        TextKey::GraphAddEdge => "Добавить связь",
+        TextKey::GraphGroups => "Группы",
+        TextKey::GraphAddGroup => "Добавить группу",
+        TextKey::GraphSettings => "Свойства графа",
+        TextKey::GraphSettingsHint => "Правка -> Свойства графа",
+        TextKey::GraphId => "Уникальный ID",
+        TextKey::GraphLabel => "Имя / подпись",
+        TextKey::GraphSource => "Исходная сущность",
+        TextKey::GraphTarget => "Целевая сущность",
+        TextKey::GraphDirection => "Направление (в свойствах графа — для новых связей)",
+        TextKey::GraphDirected => "Направленная",
+        TextKey::GraphUndirected => "Ненаправленная",
+        TextKey::GraphBidirectional => "Двунаправленная",
+        TextKey::GraphReverse => "Обратная",
+        TextKey::GraphWeight => "Вес (число JSON, необязательно)",
+        TextKey::GraphWeightUnit => "Единица веса",
+        TextKey::GraphAttributes => "Атрибуты (объект JSON)",
+        TextKey::GraphAttributesHint => {
+            "Дополнительные данные. ID и подпись — отдельные основные поля, показанные в полном JSON ниже."
+        }
+        TextKey::GraphElementJson => "Полный JSON элемента (предпросмотр)",
+        TextKey::GraphAnimationApi => "API анимации графа",
+        TextKey::GraphApiStart => "Включить сервер API",
+        TextKey::GraphApiStop => "Выключить API",
+        TextKey::GraphApiPort => "Порт (0 — свободный)",
+        TextKey::GraphApiBind => "IP прослушивания",
+        TextKey::GraphApiHost => "Публичный IP или DNS-имя (необязательно для конкретного IP)",
+        TextKey::GraphApiNetwork => "Разрешить сетевой доступ (не только loopback)",
+        TextKey::GraphApiNetworkWarning => {
+            "HTTP передаёт токен открытым текстом. Вне доверенной локальной сети используйте HTTPS. Открывайте брандмауэр только для доверенных клиентов."
+        }
+        TextKey::GraphApiCertificate => "Цепочка сертификатов TLS (PEM)",
+        TextKey::GraphApiPrivateKey => "Приватный ключ TLS (PEM)",
+        TextKey::GraphApiCopyToken => "Копировать токен",
+        TextKey::GraphApiRegenerateToken => "Сгенерировать новый токен",
+        TextKey::GraphApiOwnToken => "Собственный токен",
+        TextKey::GraphApiPasteToken => "Вставить токен",
+        TextKey::GraphApiApplyToken => "Применить токен",
+        TextKey::GraphApiTokenHint => {
+            "16–256 печатных ASCII-символов без пробелов. Смена применяется сразу; подключите клиентов с новым токеном. Токены не сохраняются."
+        }
+        TextKey::GraphApiTokenDone => "Операция с токеном выполнена",
+        TextKey::GraphStatusWaiting => "Ожидание",
+        TextKey::GraphStatusRunning => "Выполнение",
+        TextKey::GraphStatusSuccess => "Успех",
+        TextKey::GraphStatusError => "Ошибка",
+        TextKey::GraphAnimationStop => "Остановить анимацию",
+        TextKey::GraphApiHint => {
+            "По умолчанию только 127.0.0.1. HTTP/HTTPS, обязательный токен. Данные и размещение графа не изменяются."
+        }
+        TextKey::GraphReverseEndpoints => "Поменять концы местами",
+        TextKey::GraphNoGroup => "Без группы",
+        TextKey::GraphDelete => "Удалить",
+        TextKey::GraphDeleteWarning => {
+            "Удалить элемент? Удаление сущности также удалит все её связи. Удаление группы уберёт группировку её сущностей. Действие можно отменить."
+        }
+        TextKey::GraphDuplicate => "Дублировать",
         TextKey::StructureView => "Схема структуры данных",
         TextKey::StructureSource => "Исходный текст",
         TextKey::StructureSelectedSource => "Выбранная структура",

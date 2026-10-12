@@ -1,0 +1,2256 @@
+[graph]
+name = "Интернет-магазин: полная экосистема"
+directed = true
+description = "Каталог, заказы, склад, логистика, финансы, маркетинг и поддержка"
+entity_count = 100
+relation_count = 250
+
+[[entities]]
+id = "customer"
+name = "Покупатель"
+attributes = ["id", "name", "email"]
+
+[[entities]]
+id = "order"
+name = "Заказ"
+attributes = ["id", "created_at", "status", "total"]
+
+[[entities]]
+id = "order_item"
+name = "Позиция заказа"
+attributes = ["id", "quantity", "unit_price"]
+
+[[entities]]
+id = "product"
+name = "Товар"
+attributes = ["id", "name", "price", "stock"]
+
+[[entities]]
+id = "category"
+name = "Категория"
+attributes = ["id", "name"]
+
+[[entities]]
+id = "payment"
+name = "Оплата"
+attributes = ["id", "amount", "method", "status"]
+
+[[entities]]
+id = "delivery"
+name = "Доставка"
+attributes = ["id", "address", "tracking_number", "status"]
+
+[[entities]]
+id = "cart"
+name = "Корзина"
+attributes = ["id", "created_at", "total"]
+
+[[entities]]
+id = "wishlist"
+name = "Список желаний"
+attributes = ["id", "name", "visibility"]
+
+[[entities]]
+id = "review"
+name = "Отзыв"
+attributes = ["id", "rating", "text"]
+
+[[entities]]
+id = "catalog"
+name = "Каталог"
+attributes = ["id", "name", "version"]
+
+[[entities]]
+id = "brand"
+name = "Бренд"
+attributes = ["id", "name", "country"]
+
+[[entities]]
+id = "product_variant"
+name = "Вариант товара"
+attributes = ["id", "sku", "size", "color"]
+
+[[entities]]
+id = "product_attribute"
+name = "Характеристика товара"
+attributes = ["id", "name", "value"]
+
+[[entities]]
+id = "attribute_definition"
+name = "Тип характеристики"
+attributes = ["id", "name", "data_type"]
+
+[[entities]]
+id = "media_asset"
+name = "Медиафайл"
+attributes = ["id", "url", "mime_type"]
+
+[[entities]]
+id = "price_list"
+name = "Прайс-лист"
+attributes = ["id", "name", "valid_from"]
+
+[[entities]]
+id = "price_entry"
+name = "Цена товара"
+attributes = ["id", "amount", "valid_until"]
+
+[[entities]]
+id = "bundle"
+name = "Комплект"
+attributes = ["id", "name", "discount"]
+
+[[entities]]
+id = "seo_page"
+name = "Страница SEO"
+attributes = ["id", "slug", "title"]
+
+[[entities]]
+id = "warehouse"
+name = "Склад"
+attributes = ["id", "name", "address"]
+
+[[entities]]
+id = "warehouse_zone"
+name = "Зона склада"
+attributes = ["id", "code", "temperature"]
+
+[[entities]]
+id = "bin_location"
+name = "Ячейка хранения"
+attributes = ["id", "code", "capacity"]
+
+[[entities]]
+id = "inventory_item"
+name = "Остаток товара"
+attributes = ["id", "quantity", "reserved"]
+
+[[entities]]
+id = "stock_movement"
+name = "Движение запасов"
+attributes = ["id", "quantity", "occurred_at"]
+
+[[entities]]
+id = "stock_reservation"
+name = "Резерв товара"
+attributes = ["id", "quantity", "expires_at"]
+
+[[entities]]
+id = "supplier"
+name = "Поставщик"
+attributes = ["id", "name", "email"]
+
+[[entities]]
+id = "purchase_order"
+name = "Закупка"
+attributes = ["id", "number", "status"]
+
+[[entities]]
+id = "purchase_item"
+name = "Позиция закупки"
+attributes = ["id", "quantity", "cost"]
+
+[[entities]]
+id = "supplier_contract"
+name = "Договор поставки"
+attributes = ["id", "number", "valid_until"]
+
+[[entities]]
+id = "shipment"
+name = "Отправление"
+attributes = ["id", "tracking_number", "status"]
+
+[[entities]]
+id = "shipment_item"
+name = "Позиция отправления"
+attributes = ["id", "quantity", "weight"]
+
+[[entities]]
+id = "carrier"
+name = "Перевозчик"
+attributes = ["id", "name", "tracking_url"]
+
+[[entities]]
+id = "delivery_route"
+name = "Маршрут доставки"
+attributes = ["id", "distance", "duration"]
+
+[[entities]]
+id = "route_stop"
+name = "Остановка маршрута"
+attributes = ["id", "sequence", "eta"]
+
+[[entities]]
+id = "vehicle"
+name = "Транспорт"
+attributes = ["id", "plate", "capacity"]
+
+[[entities]]
+id = "driver"
+name = "Водитель"
+attributes = ["id", "name", "license"]
+
+[[entities]]
+id = "pickup_point"
+name = "Пункт выдачи"
+attributes = ["id", "name", "opening_hours"]
+
+[[entities]]
+id = "package"
+name = "Упаковка"
+attributes = ["id", "weight", "dimensions"]
+
+[[entities]]
+id = "shipping_rate"
+name = "Тариф доставки"
+attributes = ["id", "amount", "zone"]
+
+[[entities]]
+id = "payment_method"
+name = "Способ оплаты"
+attributes = ["id", "name", "enabled"]
+
+[[entities]]
+id = "payment_gateway"
+name = "Платёжный шлюз"
+attributes = ["id", "name", "endpoint"]
+
+[[entities]]
+id = "gateway_account"
+name = "Аккаунт шлюза"
+attributes = ["id", "merchant_id", "status"]
+
+[[entities]]
+id = "transaction"
+name = "Транзакция"
+attributes = ["id", "reference", "status", "amount"]
+
+[[entities]]
+id = "refund"
+name = "Возврат платежа"
+attributes = ["id", "amount", "reason"]
+
+[[entities]]
+id = "invoice"
+name = "Счёт"
+attributes = ["id", "number", "amount", "due_at"]
+
+[[entities]]
+id = "tax_rate"
+name = "Налоговая ставка"
+attributes = ["id", "name", "percent"]
+
+[[entities]]
+id = "tax_region"
+name = "Налоговый регион"
+attributes = ["id", "code", "name"]
+
+[[entities]]
+id = "currency"
+name = "Валюта"
+attributes = ["id", "code", "symbol"]
+
+[[entities]]
+id = "ledger_entry"
+name = "Проводка"
+attributes = ["id", "debit", "credit"]
+
+[[entities]]
+id = "promotion"
+name = "Акция"
+attributes = ["id", "name", "start_at", "end_at"]
+
+[[entities]]
+id = "promotion_rule"
+name = "Правило акции"
+attributes = ["id", "condition", "discount"]
+
+[[entities]]
+id = "coupon"
+name = "Купон"
+attributes = ["id", "code", "discount", "expires_at"]
+
+[[entities]]
+id = "campaign"
+name = "Кампания"
+attributes = ["id", "name", "budget"]
+
+[[entities]]
+id = "channel"
+name = "Канал продаж"
+attributes = ["id", "name", "kind"]
+
+[[entities]]
+id = "audience"
+name = "Аудитория"
+attributes = ["id", "name", "size"]
+
+[[entities]]
+id = "customer_segment"
+name = "Сегмент клиентов"
+attributes = ["id", "name", "criteria"]
+
+[[entities]]
+id = "loyalty_program"
+name = "Программа лояльности"
+attributes = ["id", "name", "point_rate"]
+
+[[entities]]
+id = "loyalty_account"
+name = "Счёт лояльности"
+attributes = ["id", "points", "tier"]
+
+[[entities]]
+id = "reward"
+name = "Награда"
+attributes = ["id", "name", "cost_points"]
+
+[[entities]]
+id = "support_ticket"
+name = "Обращение поддержки"
+attributes = ["id", "subject", "priority", "status"]
+
+[[entities]]
+id = "ticket_message"
+name = "Сообщение поддержки"
+attributes = ["id", "text", "created_at"]
+
+[[entities]]
+id = "return_request"
+name = "Заявка на возврат"
+attributes = ["id", "reason", "status"]
+
+[[entities]]
+id = "return_item"
+name = "Возвращаемая позиция"
+attributes = ["id", "quantity", "condition"]
+
+[[entities]]
+id = "warranty"
+name = "Гарантия"
+attributes = ["id", "expires_at", "terms"]
+
+[[entities]]
+id = "service_case"
+name = "Сервисный случай"
+attributes = ["id", "description", "status"]
+
+[[entities]]
+id = "repair_order"
+name = "Ремонт"
+attributes = ["id", "status", "cost"]
+
+[[entities]]
+id = "spare_part"
+name = "Запчасть"
+attributes = ["id", "sku", "quantity"]
+
+[[entities]]
+id = "knowledge_article"
+name = "Статья базы знаний"
+attributes = ["id", "title", "body"]
+
+[[entities]]
+id = "feedback"
+name = "Обратная связь"
+attributes = ["id", "score", "text"]
+
+[[entities]]
+id = "organization"
+name = "Организация"
+attributes = ["id", "name", "registration_number"]
+
+[[entities]]
+id = "department"
+name = "Отдел"
+attributes = ["id", "name", "cost_center"]
+
+[[entities]]
+id = "employee"
+name = "Сотрудник"
+attributes = ["id", "name", "email"]
+
+[[entities]]
+id = "user_account"
+name = "Учётная запись"
+attributes = ["id", "login", "enabled"]
+
+[[entities]]
+id = "role"
+name = "Роль доступа"
+attributes = ["id", "name", "description"]
+
+[[entities]]
+id = "permission"
+name = "Разрешение"
+attributes = ["id", "resource", "action"]
+
+[[entities]]
+id = "session"
+name = "Сессия"
+attributes = ["id", "created_at", "expires_at"]
+
+[[entities]]
+id = "device"
+name = "Устройство"
+attributes = ["id", "type", "fingerprint"]
+
+[[entities]]
+id = "authentication_policy"
+name = "Политика доступа"
+attributes = ["id", "mfa", "timeout"]
+
+[[entities]]
+id = "audit_event"
+name = "Событие аудита"
+attributes = ["id", "action", "occurred_at"]
+
+[[entities]]
+id = "notification"
+name = "Уведомление"
+attributes = ["id", "subject", "status"]
+
+[[entities]]
+id = "notification_template"
+name = "Шаблон уведомления"
+attributes = ["id", "name", "body"]
+
+[[entities]]
+id = "email_message"
+name = "Письмо"
+attributes = ["id", "recipient", "status"]
+
+[[entities]]
+id = "sms_message"
+name = "SMS"
+attributes = ["id", "phone", "status"]
+
+[[entities]]
+id = "webhook"
+name = "Вебхук"
+attributes = ["id", "url", "enabled"]
+
+[[entities]]
+id = "integration"
+name = "Интеграция"
+attributes = ["id", "name", "endpoint"]
+
+[[entities]]
+id = "integration_event"
+name = "Событие интеграции"
+attributes = ["id", "type", "status"]
+
+[[entities]]
+id = "message_queue"
+name = "Очередь сообщений"
+attributes = ["id", "name", "backlog"]
+
+[[entities]]
+id = "worker_job"
+name = "Фоновая задача"
+attributes = ["id", "type", "progress"]
+
+[[entities]]
+id = "api_credential"
+name = "Ключ API"
+attributes = ["id", "key_id", "expires_at"]
+
+[[entities]]
+id = "address"
+name = "Адрес"
+attributes = ["id", "street", "postal_code"]
+
+[[entities]]
+id = "city"
+name = "Город"
+attributes = ["id", "name", "region"]
+
+[[entities]]
+id = "country"
+name = "Страна"
+attributes = ["id", "code", "name"]
+
+[[entities]]
+id = "localization"
+name = "Локализация"
+attributes = ["id", "locale", "timezone"]
+
+[[entities]]
+id = "translation"
+name = "Перевод"
+attributes = ["id", "key", "text"]
+
+[[entities]]
+id = "document"
+name = "Документ"
+attributes = ["id", "number", "file_url"]
+
+[[entities]]
+id = "analytics_event"
+name = "Событие аналитики"
+attributes = ["id", "type", "timestamp"]
+
+[[entities]]
+id = "analytics_report"
+name = "Отчёт аналитики"
+attributes = ["id", "name", "period"]
+
+[[entities]]
+id = "dashboard"
+name = "Панель мониторинга"
+attributes = ["id", "name", "refresh_interval"]
+
+[[entities]]
+id = "monitoring_metric"
+name = "Метрика мониторинга"
+attributes = ["id", "name", "value"]
+
+[[relations]]
+id = "customer_orders"
+source = "customer"
+target = "order"
+name = "оформляет"
+cardinality = "1:N"
+
+[[relations]]
+id = "order_items"
+source = "order"
+target = "order_item"
+name = "содержит"
+cardinality = "1:N"
+
+[[relations]]
+id = "item_product"
+source = "order_item"
+target = "product"
+name = "ссылается на"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_category"
+source = "product"
+target = "category"
+name = "относится к"
+cardinality = "N:1"
+
+[[relations]]
+id = "order_payments"
+source = "order"
+target = "payment"
+name = "имеет попытки оплаты"
+cardinality = "1:N"
+
+[[relations]]
+id = "order_deliveries"
+source = "order"
+target = "delivery"
+name = "отправляется доставками"
+cardinality = "1:N"
+
+[[relations]]
+id = "address_to_city"
+source = "address"
+target = "city"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "address_to_customer"
+source = "address"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "analytics_event_to_analytics_report"
+source = "analytics_event"
+target = "analytics_report"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "analytics_event_to_customer"
+source = "analytics_event"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "analytics_report_to_dashboard"
+source = "analytics_report"
+target = "dashboard"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "analytics_report_to_monitoring_metric"
+source = "analytics_report"
+target = "monitoring_metric"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "analytics_report_to_order"
+source = "analytics_report"
+target = "order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "api_credential_to_integration"
+source = "api_credential"
+target = "integration"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "api_credential_to_role"
+source = "api_credential"
+target = "role"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "attribute_definition_to_category"
+source = "attribute_definition"
+target = "category"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "attribute_definition_to_localization"
+source = "attribute_definition"
+target = "localization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "audience_to_campaign"
+source = "audience"
+target = "campaign"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "audience_to_customer_segment"
+source = "audience"
+target = "customer_segment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "audit_event_to_analytics_event"
+source = "audit_event"
+target = "analytics_event"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "audit_event_to_employee"
+source = "audit_event"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "authentication_policy_to_customer_segment"
+source = "authentication_policy"
+target = "customer_segment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "authentication_policy_to_organization"
+source = "authentication_policy"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "bin_location_to_inventory_item"
+source = "bin_location"
+target = "inventory_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "bin_location_to_warehouse_zone"
+source = "bin_location"
+target = "warehouse_zone"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "brand_to_media_asset"
+source = "brand"
+target = "media_asset"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "brand_to_supplier"
+source = "brand"
+target = "supplier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "bundle_to_product"
+source = "bundle"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "bundle_to_product_variant"
+source = "bundle"
+target = "product_variant"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "campaign_to_audience"
+source = "campaign"
+target = "audience"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "campaign_to_channel"
+source = "campaign"
+target = "channel"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "campaign_to_notification"
+source = "campaign"
+target = "notification"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "carrier_to_integration"
+source = "carrier"
+target = "integration"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "carrier_to_shipping_rate"
+source = "carrier"
+target = "shipping_rate"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "carrier_to_supplier_contract"
+source = "carrier"
+target = "supplier_contract"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "cart_to_coupon"
+source = "cart"
+target = "coupon"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "cart_to_customer"
+source = "cart"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "cart_to_order_item"
+source = "cart"
+target = "order_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "catalog_to_channel"
+source = "catalog"
+target = "channel"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "catalog_to_price_list"
+source = "catalog"
+target = "price_list"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "catalog_to_product"
+source = "catalog"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "category_to_catalog"
+source = "category"
+target = "catalog"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "category_to_promotion_rule"
+source = "category"
+target = "promotion_rule"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "category_to_seo_page"
+source = "category"
+target = "seo_page"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "channel_to_analytics_event"
+source = "channel"
+target = "analytics_event"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "channel_to_organization"
+source = "channel"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "city_to_country"
+source = "city"
+target = "country"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "city_to_tax_region"
+source = "city"
+target = "tax_region"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "country_to_currency"
+source = "country"
+target = "currency"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "country_to_localization"
+source = "country"
+target = "localization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "coupon_to_customer"
+source = "coupon"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "coupon_to_order"
+source = "coupon"
+target = "order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "coupon_to_promotion"
+source = "coupon"
+target = "promotion"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "currency_to_country"
+source = "currency"
+target = "country"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "currency_to_price_entry"
+source = "currency"
+target = "price_entry"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "customer_to_address"
+source = "customer"
+target = "address"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "customer_to_cart"
+source = "customer"
+target = "cart"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "customer_to_customer_segment"
+source = "customer"
+target = "customer_segment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "customer_to_loyalty_account"
+source = "customer"
+target = "loyalty_account"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "customer_to_wishlist"
+source = "customer"
+target = "wishlist"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "customer_segment_to_customer"
+source = "customer_segment"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "customer_segment_to_loyalty_program"
+source = "customer_segment"
+target = "loyalty_program"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "dashboard_to_analytics_report"
+source = "dashboard"
+target = "analytics_report"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "dashboard_to_employee"
+source = "dashboard"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "dashboard_to_monitoring_metric"
+source = "dashboard"
+target = "monitoring_metric"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "delivery_to_address"
+source = "delivery"
+target = "address"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "delivery_to_carrier"
+source = "delivery"
+target = "carrier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "delivery_to_package"
+source = "delivery"
+target = "package"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "delivery_to_pickup_point"
+source = "delivery"
+target = "pickup_point"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "delivery_to_shipment"
+source = "delivery"
+target = "shipment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "delivery_route_to_route_stop"
+source = "delivery_route"
+target = "route_stop"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "delivery_route_to_vehicle"
+source = "delivery_route"
+target = "vehicle"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "department_to_employee"
+source = "department"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "department_to_ledger_entry"
+source = "department"
+target = "ledger_entry"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "device_to_customer"
+source = "device"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "device_to_user_account"
+source = "device"
+target = "user_account"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "document_to_media_asset"
+source = "document"
+target = "media_asset"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "document_to_organization"
+source = "document"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "driver_to_employee"
+source = "driver"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "driver_to_vehicle"
+source = "driver"
+target = "vehicle"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "email_message_to_document"
+source = "email_message"
+target = "document"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "email_message_to_notification"
+source = "email_message"
+target = "notification"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "employee_to_department"
+source = "employee"
+target = "department"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "employee_to_role"
+source = "employee"
+target = "role"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "employee_to_user_account"
+source = "employee"
+target = "user_account"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "feedback_to_customer"
+source = "feedback"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "feedback_to_support_ticket"
+source = "feedback"
+target = "support_ticket"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "gateway_account_to_currency"
+source = "gateway_account"
+target = "currency"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "gateway_account_to_organization"
+source = "gateway_account"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "integration_to_api_credential"
+source = "integration"
+target = "api_credential"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "integration_to_organization"
+source = "integration"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "integration_event_to_message_queue"
+source = "integration_event"
+target = "message_queue"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "integration_event_to_order"
+source = "integration_event"
+target = "order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "integration_event_to_payment"
+source = "integration_event"
+target = "payment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "inventory_item_to_product_variant"
+source = "inventory_item"
+target = "product_variant"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "inventory_item_to_warehouse"
+source = "inventory_item"
+target = "warehouse"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "invoice_to_order"
+source = "invoice"
+target = "order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "invoice_to_organization"
+source = "invoice"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "invoice_to_tax_rate"
+source = "invoice"
+target = "tax_rate"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "knowledge_article_to_category"
+source = "knowledge_article"
+target = "category"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "knowledge_article_to_localization"
+source = "knowledge_article"
+target = "localization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "ledger_entry_to_gateway_account"
+source = "ledger_entry"
+target = "gateway_account"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "ledger_entry_to_invoice"
+source = "ledger_entry"
+target = "invoice"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "localization_to_organization"
+source = "localization"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "localization_to_translation"
+source = "localization"
+target = "translation"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "loyalty_account_to_customer"
+source = "loyalty_account"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "loyalty_account_to_reward"
+source = "loyalty_account"
+target = "reward"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "loyalty_account_to_transaction"
+source = "loyalty_account"
+target = "transaction"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "loyalty_program_to_loyalty_account"
+source = "loyalty_program"
+target = "loyalty_account"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "loyalty_program_to_reward"
+source = "loyalty_program"
+target = "reward"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "media_asset_to_document"
+source = "media_asset"
+target = "document"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "media_asset_to_product"
+source = "media_asset"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "message_queue_to_monitoring_metric"
+source = "message_queue"
+target = "monitoring_metric"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "message_queue_to_worker_job"
+source = "message_queue"
+target = "worker_job"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "monitoring_metric_to_notification"
+source = "monitoring_metric"
+target = "notification"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "monitoring_metric_to_worker_job"
+source = "monitoring_metric"
+target = "worker_job"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "notification_to_customer"
+source = "notification"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "notification_to_email_message"
+source = "notification"
+target = "email_message"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "notification_to_notification_template"
+source = "notification"
+target = "notification_template"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "notification_to_sms_message"
+source = "notification"
+target = "sms_message"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "notification_template_to_channel"
+source = "notification_template"
+target = "channel"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "notification_template_to_localization"
+source = "notification_template"
+target = "localization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "order_to_channel"
+source = "order"
+target = "channel"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "order_to_coupon"
+source = "order"
+target = "coupon"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "order_to_invoice"
+source = "order"
+target = "invoice"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "order_to_stock_reservation"
+source = "order"
+target = "stock_reservation"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "order_to_support_ticket"
+source = "order"
+target = "support_ticket"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "order_item_to_tax_rate"
+source = "order_item"
+target = "tax_rate"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "organization_to_address"
+source = "organization"
+target = "address"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "organization_to_department"
+source = "organization"
+target = "department"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "package_to_product_attribute"
+source = "package"
+target = "product_attribute"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "package_to_shipment"
+source = "package"
+target = "shipment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_to_invoice"
+source = "payment"
+target = "invoice"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_to_payment_method"
+source = "payment"
+target = "payment_method"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_to_refund"
+source = "payment"
+target = "refund"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_to_transaction"
+source = "payment"
+target = "transaction"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_gateway_to_gateway_account"
+source = "payment_gateway"
+target = "gateway_account"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_gateway_to_webhook"
+source = "payment_gateway"
+target = "webhook"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_method_to_currency"
+source = "payment_method"
+target = "currency"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "payment_method_to_payment_gateway"
+source = "payment_method"
+target = "payment_gateway"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "permission_to_audit_event"
+source = "permission"
+target = "audit_event"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "permission_to_authentication_policy"
+source = "permission"
+target = "authentication_policy"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "pickup_point_to_address"
+source = "pickup_point"
+target = "address"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "pickup_point_to_employee"
+source = "pickup_point"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "price_entry_to_product_variant"
+source = "price_entry"
+target = "product_variant"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "price_entry_to_tax_rate"
+source = "price_entry"
+target = "tax_rate"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "price_list_to_currency"
+source = "price_list"
+target = "currency"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "price_list_to_price_entry"
+source = "price_list"
+target = "price_entry"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_to_brand"
+source = "product"
+target = "brand"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_to_bundle"
+source = "product"
+target = "bundle"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_to_media_asset"
+source = "product"
+target = "media_asset"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_to_product_variant"
+source = "product"
+target = "product_variant"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_to_review"
+source = "product"
+target = "review"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_to_warranty"
+source = "product"
+target = "warranty"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_attribute_to_attribute_definition"
+source = "product_attribute"
+target = "attribute_definition"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_attribute_to_product"
+source = "product_attribute"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_variant_to_inventory_item"
+source = "product_variant"
+target = "inventory_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "product_variant_to_product"
+source = "product_variant"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "promotion_to_campaign"
+source = "promotion"
+target = "campaign"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "promotion_to_product"
+source = "promotion"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "promotion_to_promotion_rule"
+source = "promotion"
+target = "promotion_rule"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "promotion_rule_to_category"
+source = "promotion_rule"
+target = "category"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "promotion_rule_to_customer_segment"
+source = "promotion_rule"
+target = "customer_segment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "purchase_item_to_product_variant"
+source = "purchase_item"
+target = "product_variant"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "purchase_item_to_supplier"
+source = "purchase_item"
+target = "supplier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "purchase_order_to_invoice"
+source = "purchase_order"
+target = "invoice"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "purchase_order_to_purchase_item"
+source = "purchase_order"
+target = "purchase_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "purchase_order_to_warehouse"
+source = "purchase_order"
+target = "warehouse"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "refund_to_payment"
+source = "refund"
+target = "payment"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "refund_to_return_request"
+source = "refund"
+target = "return_request"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "repair_order_to_employee"
+source = "repair_order"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "repair_order_to_invoice"
+source = "repair_order"
+target = "invoice"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "repair_order_to_spare_part"
+source = "repair_order"
+target = "spare_part"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "return_item_to_order_item"
+source = "return_item"
+target = "order_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "return_item_to_product_variant"
+source = "return_item"
+target = "product_variant"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "return_item_to_warehouse"
+source = "return_item"
+target = "warehouse"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "return_request_to_order"
+source = "return_request"
+target = "order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "return_request_to_refund"
+source = "return_request"
+target = "refund"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "return_request_to_return_item"
+source = "return_request"
+target = "return_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "review_to_customer"
+source = "review"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "review_to_media_asset"
+source = "review"
+target = "media_asset"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "review_to_product"
+source = "review"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "reward_to_coupon"
+source = "reward"
+target = "coupon"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "reward_to_product"
+source = "reward"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "role_to_organization"
+source = "role"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "role_to_permission"
+source = "role"
+target = "permission"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "role_to_user_account"
+source = "role"
+target = "user_account"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "route_stop_to_address"
+source = "route_stop"
+target = "address"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "route_stop_to_pickup_point"
+source = "route_stop"
+target = "pickup_point"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "seo_page_to_category"
+source = "seo_page"
+target = "category"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "seo_page_to_localization"
+source = "seo_page"
+target = "localization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "service_case_to_customer"
+source = "service_case"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "service_case_to_repair_order"
+source = "service_case"
+target = "repair_order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "session_to_audit_event"
+source = "session"
+target = "audit_event"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "session_to_device"
+source = "session"
+target = "device"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "shipment_to_carrier"
+source = "shipment"
+target = "carrier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "shipment_to_delivery_route"
+source = "shipment"
+target = "delivery_route"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "shipment_to_shipment_item"
+source = "shipment"
+target = "shipment_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "shipment_item_to_order_item"
+source = "shipment_item"
+target = "order_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "shipment_item_to_package"
+source = "shipment_item"
+target = "package"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "shipping_rate_to_carrier"
+source = "shipping_rate"
+target = "carrier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "shipping_rate_to_currency"
+source = "shipping_rate"
+target = "currency"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "sms_message_to_integration"
+source = "sms_message"
+target = "integration"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "sms_message_to_notification"
+source = "sms_message"
+target = "notification"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "spare_part_to_product_variant"
+source = "spare_part"
+target = "product_variant"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "spare_part_to_supplier"
+source = "spare_part"
+target = "supplier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "stock_movement_to_employee"
+source = "stock_movement"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "stock_movement_to_inventory_item"
+source = "stock_movement"
+target = "inventory_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "stock_movement_to_purchase_order"
+source = "stock_movement"
+target = "purchase_order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "stock_reservation_to_inventory_item"
+source = "stock_reservation"
+target = "inventory_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "stock_reservation_to_order_item"
+source = "stock_reservation"
+target = "order_item"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "supplier_to_address"
+source = "supplier"
+target = "address"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "supplier_to_purchase_order"
+source = "supplier"
+target = "purchase_order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "supplier_to_supplier_contract"
+source = "supplier"
+target = "supplier_contract"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "supplier_contract_to_document"
+source = "supplier_contract"
+target = "document"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "supplier_contract_to_supplier"
+source = "supplier_contract"
+target = "supplier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "support_ticket_to_customer"
+source = "support_ticket"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "support_ticket_to_order"
+source = "support_ticket"
+target = "order"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "support_ticket_to_ticket_message"
+source = "support_ticket"
+target = "ticket_message"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "tax_rate_to_currency"
+source = "tax_rate"
+target = "currency"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "tax_rate_to_tax_region"
+source = "tax_rate"
+target = "tax_region"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "tax_region_to_country"
+source = "tax_region"
+target = "country"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "tax_region_to_organization"
+source = "tax_region"
+target = "organization"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "ticket_message_to_document"
+source = "ticket_message"
+target = "document"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "ticket_message_to_employee"
+source = "ticket_message"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "transaction_to_ledger_entry"
+source = "transaction"
+target = "ledger_entry"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "transaction_to_payment_gateway"
+source = "transaction"
+target = "payment_gateway"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "transaction_to_refund"
+source = "transaction"
+target = "refund"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "translation_to_knowledge_article"
+source = "translation"
+target = "knowledge_article"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "translation_to_notification_template"
+source = "translation"
+target = "notification_template"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "user_account_to_authentication_policy"
+source = "user_account"
+target = "authentication_policy"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "user_account_to_customer"
+source = "user_account"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "user_account_to_session"
+source = "user_account"
+target = "session"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "vehicle_to_carrier"
+source = "vehicle"
+target = "carrier"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "vehicle_to_driver"
+source = "vehicle"
+target = "driver"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "vehicle_to_monitoring_metric"
+source = "vehicle"
+target = "monitoring_metric"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "warehouse_to_address"
+source = "warehouse"
+target = "address"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "warehouse_to_employee"
+source = "warehouse"
+target = "employee"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "warehouse_to_warehouse_zone"
+source = "warehouse"
+target = "warehouse_zone"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "warehouse_zone_to_bin_location"
+source = "warehouse_zone"
+target = "bin_location"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "warehouse_zone_to_warehouse"
+source = "warehouse_zone"
+target = "warehouse"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "warranty_to_product"
+source = "warranty"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "warranty_to_service_case"
+source = "warranty"
+target = "service_case"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "webhook_to_integration"
+source = "webhook"
+target = "integration"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "webhook_to_integration_event"
+source = "webhook"
+target = "integration_event"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "wishlist_to_customer"
+source = "wishlist"
+target = "customer"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "wishlist_to_product"
+source = "wishlist"
+target = "product"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "worker_job_to_audit_event"
+source = "worker_job"
+target = "audit_event"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "worker_job_to_authentication_policy"
+source = "worker_job"
+target = "authentication_policy"
+name = "связан с"
+cardinality = "N:1"
+
+[[relations]]
+id = "worker_job_to_integration_event"
+source = "worker_job"
+target = "integration_event"
+name = "связан с"
+cardinality = "N:1"

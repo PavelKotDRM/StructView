@@ -115,11 +115,49 @@ pub(in crate::app) fn build_relationship_graph(root: &JsonNode) -> RelationshipG
 pub(in crate::app) fn try_build_relationship_graph(
     root: &JsonNode,
 ) -> Result<RelationshipGraph, String> {
+    let editable = crate::app::graph_editor::GraphDocument::read(root)?;
     let explicit_graph = match shapes::build(root)? {
         Some(graph) => Some(graph),
         None => explicit::build_supported_graph(root)?,
     };
     if let Some(mut graph) = explicit_graph {
+        if let Some(document) = editable {
+            let edge_records = object_child(root, "edges").ok_or("Missing editor edges")?;
+            let unit = document
+                .metadata
+                .get("weight_unit")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let records = edge_records
+                .children
+                .iter()
+                .filter(|node| node.value_type != JsonValueType::Comment);
+            for (edge, record) in graph.edges.iter_mut().zip(records) {
+                edge.label = explicit::edge_label_with_id(record, unit, false);
+            }
+            if !document.partitions.is_empty() {
+                let mut names = document.partitions.clone();
+                let ungrouped = names.len();
+                if document
+                    .nodes
+                    .iter()
+                    .any(|record| record.get("partition").is_none())
+                {
+                    names.push(String::new());
+                }
+                for (node, record) in graph.nodes.iter_mut().zip(&document.nodes) {
+                    node.partition = Some(
+                        record["partition"]
+                            .as_str()
+                            .and_then(|name| {
+                                document.partitions.iter().position(|item| item == name)
+                            })
+                            .unwrap_or(ungrouped),
+                    );
+                }
+                graph.partition_names = Some(names);
+            }
+        }
         if !graph.edges.is_empty() {
             graph.directed = graph
                 .edges

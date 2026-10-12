@@ -130,6 +130,8 @@ pub struct StructViewApp {
     pub(super) visualization_cache: VisualizationCache,
     /// Асинхронное построение модели и маршрутов графа связей.
     pub(super) graph_calculation: GraphCalculationState,
+    pub(super) graph_editor: super::graph_editor::GraphEditorState,
+    pub(super) graph_animation: super::graph_animation::GraphAnimationState,
     pub(super) graph_routing_workers: GraphRoutingWorkerSetting,
     pub(super) graph_routing_backend: struct_view_routing::orthogonal::RoutingSearchBackend,
     pub(super) structure_view: super::views::structure::StructureView,
@@ -191,6 +193,8 @@ impl Default for StructViewApp {
             visualization: VisualizationMode::default(),
             visualization_cache: VisualizationCache::default(),
             graph_calculation: GraphCalculationState::default(),
+            graph_editor: super::graph_editor::GraphEditorState::default(),
+            graph_animation: super::graph_animation::GraphAnimationState::default(),
             graph_routing_workers: GraphRoutingWorkerSetting::default(),
             graph_routing_backend: struct_view_routing::orthogonal::RoutingSearchBackend::default(),
             structure_view: super::views::structure::StructureView::default(),
@@ -270,11 +274,14 @@ impl eframe::App for StructViewApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_file_load(ui.ctx());
         self.graph_calculation.poll(ui.ctx());
+        self.poll_graph_animation_api(ui.ctx());
         let previous_toast = self.toast.as_ref().map(|toast| toast.shown_at);
         self.show_top_panel(ui);
         self.show_bottom_panel(ui);
         self.show_central_panel(ui);
         self.show_field_dialog(ui.ctx());
+        self.show_graph_editor(ui.ctx());
+        self.show_graph_editor_dialog(ui.ctx());
         self.handle_native_close_request(ui.ctx());
         self.show_unsaved_changes_confirmation(ui.ctx());
         if let Some(toast) = &self.toast {

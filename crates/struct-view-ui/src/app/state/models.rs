@@ -47,6 +47,7 @@ pub(in crate::app) struct LoadedDocument {
 }
 
 pub(in crate::app) enum DocumentReplacement {
+    Graph(Box<JsonNode>),
     Open(PathBuf),
     Loaded(Box<LoadedDocument>),
     Create(PathBuf, DataFormat),

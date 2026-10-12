@@ -5,6 +5,8 @@ impl StructViewApp {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::SettingsMenu), |ui| {
             if self.visualization == VisualizationMode::Graph {
+                self.show_graph_animation_settings(ui);
+                ui.separator();
                 let previous_setting = self.graph_routing_workers;
                 let automatic_count = crate::app::views::graph_routing_worker_count(
                     usize::MAX,

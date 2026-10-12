@@ -95,6 +95,9 @@ impl StructViewApp {
                 ui.separator();
             }
 
+            if self.visualization == VisualizationMode::Graph && !self.is_comparing() {
+                self.show_graph_edit_commands(ui);
+            }
             if ui
                 .add_enabled(
                     self.can_undo(),
@@ -114,6 +117,9 @@ impl StructViewApp {
             {
                 self.redo_requested = true;
                 ui.close();
+            }
+            if self.visualization != VisualizationMode::Tree || self.is_comparing() {
+                return;
             }
             ui.separator();
 

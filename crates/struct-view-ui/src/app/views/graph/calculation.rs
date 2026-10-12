@@ -170,6 +170,12 @@ impl GraphCalculationState {
         self.result.as_ref()
     }
 
+    pub(in crate::app) fn animation_graph_id(&self) -> Option<String> {
+        self.result
+            .as_ref()
+            .map(|result| format!("{:016x}", result.routing.graph_fingerprint))
+    }
+
     pub(in crate::app) fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }

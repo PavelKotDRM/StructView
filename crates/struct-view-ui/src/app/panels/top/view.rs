@@ -37,14 +37,16 @@ impl StructViewApp {
                 }
             });
 
-            if self.root.is_some() && self.visualization != VisualizationMode::Structure {
+            if self.root.is_some() && self.visualization == VisualizationMode::Graph {
                 ui.add_enabled_ui(self.graph_calculation.has_started(), |ui| {
                     ui.menu_button(locale.text(TextKey::GraphTimings), |ui| {
                         self.graph_calculation.show_progress(ui, locale);
                     });
                 });
             }
-            if self.root.is_some() || self.visualization == VisualizationMode::Structure {
+            if (self.root.is_some() && self.visualization == VisualizationMode::Tree)
+                || self.visualization == VisualizationMode::Structure
+            {
                 ui.menu_button(locale.text(TextKey::TreeActions), |ui| {
                     if ui.button(locale.text(TextKey::ExpandAll)).clicked() {
                         ui.close();
@@ -62,6 +64,16 @@ impl StructViewApp {
                 self.structure_view.view_menu(ui, locale);
             } else if self.visualization == VisualizationMode::Graph {
                 ui.separator();
+                if self.can_edit_graph()
+                    && ui
+                        .checkbox(
+                            &mut self.graph_editor.open,
+                            locale.text(TextKey::GraphEditor),
+                        )
+                        .changed()
+                {
+                    ui.close();
+                }
                 ui.add_enabled_ui(self.graph_calculation.result().is_some(), |ui| {
                     if let Some(calculation) = self.graph_calculation.result() {
                         crate::app::views::graph_view_menu(ui, &calculation.routing, locale);

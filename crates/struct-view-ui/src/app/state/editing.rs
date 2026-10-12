@@ -20,7 +20,7 @@ impl StructViewApp {
         });
     }
 
-    pub(super) fn apply_document_change<T>(
+    pub(in crate::app) fn apply_document_change<T>(
         &mut self,
         change: impl FnOnce(&mut JsonNode, DataFormat) -> Result<T, String>,
     ) -> Result<T, String> {

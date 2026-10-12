@@ -32,6 +32,8 @@
 
 mod docking;
 mod edit;
+pub mod graph_animation;
+mod graph_editor;
 pub mod headless;
 mod i18n;
 mod panels;

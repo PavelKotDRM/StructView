@@ -11,12 +11,17 @@ egui.workspace = true
 rfd.workspace = true
 resvg = "0.48"
 serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+getrandom = "0.4"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
 struct-view-routing.workspace = true
 struct-view-build-info = { path = "../struct-view-build-info" }
 struct-view-core = { path = "../struct-view-core" }
 
 [dev-dependencies]
 tempfile.workspace = true
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 
 # Native clipboard support without XWayland on Wayland.
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))'.dependencies]

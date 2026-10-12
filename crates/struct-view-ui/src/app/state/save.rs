@@ -174,8 +174,7 @@ impl StructViewApp {
             self.cancel_close_file_confirmation();
             self.perform_document_replacement(replacement);
         } else if self.exit_after_close_confirmation {
-            self.close_file_confirmation_open = false;
-            self.exit_after_close_confirmation = false;
+            self.close_file_after_confirmation();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         } else {
             self.close_file_without_saving();
@@ -256,6 +255,7 @@ impl StructViewApp {
 
     fn perform_document_replacement(&mut self, replacement: DocumentReplacement) {
         match replacement {
+            DocumentReplacement::Graph(root) => self.open_graph_document(*root),
             DocumentReplacement::Open(path) => self.start_file_load(path),
             DocumentReplacement::Loaded(document) => self.apply_loaded_document(Ok(*document)),
             DocumentReplacement::Create(path, format) => self.create_new_file(path, format),
@@ -309,6 +309,7 @@ impl StructViewApp {
             .and_then(|format| super::document_content_fingerprint(root, format));
         match (file_state.saved_content_fingerprint, current_fingerprint) {
             (Some(saved), Some(current)) => saved != current,
+            (None, Some(_)) if file_state.path.is_none() => true,
             _ => !undo_history.is_empty(),
         }
     }
@@ -352,7 +353,7 @@ impl StructViewApp {
         self.clear_document_state();
     }
 
-    pub(super) fn clear_document_state(&mut self) {
+    pub(in crate::app) fn clear_document_state(&mut self) {
         self.pending_document_replacement = None;
         self.clear_history();
         self.file_load_receiver = None;
@@ -374,6 +375,7 @@ impl StructViewApp {
         self.exit_after_close_confirmation = false;
         self.file_state = FileState::default();
         self.field_dialog = None;
+        self.graph_editor = super::super::graph_editor::GraphEditorState::default();
         self.mode = AppMode::View;
         self.selected_paths.clear();
         self.copy_structures_requested = false;

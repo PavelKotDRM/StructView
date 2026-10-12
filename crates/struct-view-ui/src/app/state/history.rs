@@ -14,6 +14,7 @@ impl StructViewApp {
         self.mode == AppMode::Edit
             && self.comparison.is_none()
             && self.field_dialog.is_none()
+            && !self.graph_editor.is_busy()
             && self.root.is_some()
             && (!self.undo_history.is_empty() || self.pending_inline_edit.is_some())
     }
@@ -22,6 +23,7 @@ impl StructViewApp {
         self.mode == AppMode::Edit
             && self.comparison.is_none()
             && self.field_dialog.is_none()
+            && !self.graph_editor.is_busy()
             && self.root.is_some()
             && self.pending_inline_edit.is_none()
             && !self.redo_history.is_empty()

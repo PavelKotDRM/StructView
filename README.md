@@ -314,6 +314,435 @@ The interface provides:
 - adding fields and elements in edit mode;
 - light and dark theme switching.
 
+### Relationship graph editor
+
+In the relationship view, use **File -> New graph** to start an empty, unsaved
+graph in Edit mode. For any existing graph, including inferred relationships
+and DOT/GraphML/GEXF imports, **File -> Create editable graph copy** opens a
+separate document without writing to the source file.
+Unsaved changes are confirmed before replacing the current document.
+
+**View -> Graph editor** opens a resizable window with entity, link, group,
+and graph-property tabs. Like the search window, it starts inside the main
+window and can be collapsed or expanded by double-clicking its title.
+Its three-dot menu offers **Detach window**, and the separate window
+offers **Dock window** to return. Reopen a closed editor through **View**.
+**Add entity**, **Add link**, **Add group**, and **Graph properties** are in
+**Edit**, with duplicate buttons at the top of the editor window, including
+when detached. Graph commands are hidden outside the relationship view; the editor
+window and mutation commands require an editable graph in Edit mode.
+The editor supports:
+
+- add, rename, duplicate, and delete entities and links;
+- choose source and target entities, including self-links and parallel links;
+- set directed, undirected, bidirectional, or reverse directions, optional
+  numeric weights, weight units, labels, and typed JSON-object attributes;
+- create and rename groups, assign entities to them, or remove a group without
+  deleting its entities;
+- use **Apply and add connected entity** in an entity's dialog to create
+  another entity with a link from the current one;
+- open an element's editor from its list or by double-clicking a node or link
+  label. Unlabelled links remain editable from the link list.
+
+Deleting an entity also deletes its incident links, after confirmation.
+Changes use the shared document undo/redo history. Node placement and link
+routing are always automatic: dragging pans the canvas, not individual nodes.
+Groups affect automatic layout; ungrouped entities have their own column when
+groups exist. Changing the graph's default direction affects new links only.
+
+**Save / Save as** stores the editable graph as JSON, JSON5, YAML, or TOML.
+SVG/PNG export continues to use the automatic layout. The editable format uses
+`graph.editor_version: 1`, `graph.type: "mixed_multigraph"`, `nodes`, `edges`,
+and a `partitions` array of group names; entity membership is a `partition`
+string. IDs must be nonempty and unique, and link endpoints must exist.
+Copies retain a normalized, typed source snapshot in `graph.source_document`;
+unsupported source-specific details remain available there. Node source
+records are retained as attributes; recognized numeric link weights become
+editable weights, and other link tooltip attributes are retained as text.
+Editing the copy does not synchronize it back to the source.
+
+**Attributes** contains additional data only. **Unique ID** and **Name / label**
+are core `id`/`label` fields, not entries in `attributes`; they are saved even
+when the attributes object is empty. Expand **Full element JSON (preview)** in
+an entity, link, or graph-properties dialog to see all current fields together.
+This read-only preview updates while typing; malformed attributes or weights
+show an error instead of an outdated preview.
+
+### Graph animation API
+
+Open a graph in the relationship view and wait for its layout to finish.
+Choose **Settings -> Graph animation API -> Enable API server**. Port `0`
+selects an available port; alternatively set an explicit port before enabling.
+The submenu displays the actual `http://127.0.0.1:PORT` address and a selectable
+Bearer token. All requests require `Authorization: Bearer TOKEN`.
+The API is off by default, initially listens on IPv4 loopback, rejects browser
+`Origin` requests, and requires a configured `Host` header. Use a local or remote
+script or another native application, not a browser page. Keep the token
+private. **Disable API** closes the listener and stops playback; enabling it
+again generates a new token. Neither the token nor enabled state is saved.
+
+The API menu includes **Copy token**, **Paste token**, **Apply token**, and
+**Generate new token**. A custom token must contain 16–256 printable ASCII
+characters without spaces; use a long random secret. Applying or regenerating
+changes authentication immediately without restarting the listener or playback.
+Old credentials are rejected for new requests; already authorized requests may
+finish. Restart external controllers with the new token. No token is persisted.
+
+Commands animate the existing automatically laid-out graph without editing
+entities, attributes, routes, undo history, or saved files. Highlights and
+moving markers are not included in SVG/PNG exports. Switching views, entering
+comparison, or invalidating the graph calculation cancels playback. The API
+works in View and Edit modes, including imported graphs; no editable copy is
+required. It cannot move individual nodes or edit a document.
+
+| Method | Endpoint | JSON response / behavior |
+| --- | --- | --- |
+| GET | `/v1/graph` | `{graph_id, nodes:[{id,label}], edges:[{index,source,target,label,direction}]}` |
+| GET | `/v1/animation` | `{graph_id,running}` |
+| POST | `/v1/animation` | Accept a scenario, replacing playback; `{accepted:true,duration_ms}` |
+| POST | `/v1/animation/stop` | Empty body; stop the scenario and clear all realtime effects; `{stopped:true}`, also outside the graph view |
+| GET | `/v1/realtime` | `{graph_id,markers,elements}` — persistent visual state |
+| POST | `/v1/realtime` | Atomically apply realtime commands; `{accepted:true}` |
+
+For scenario requests, send `Content-Type: application/json` and a
+`Content-Length` (standard Python/PowerShell clients do this automatically).
+Read `/v1/graph` first. Node targets use its string IDs; links use its zero-based
+**indexes**, not the document's link IDs, so parallel links are distinguishable.
+Send the returned `graph_id` unchanged; after graph changes fetch the descriptor
+again. Unknown or ambiguous node IDs and unknown link indexes are rejected.
+
+Scenario shape:
+
+```json
+{
+  "graph_id": "COPY_FROM_GET_GRAPH",
+  "steps": [
+    {"at_ms": 0, "command": {"type": "highlight", "nodes": ["a"], "edges": [0], "pulse": true, "duration_ms": 2000}},
+    {"at_ms": 0, "command": {"type": "camera", "node": "a", "zoom": 1.5, "duration_ms": 800}},
+    {"at_ms": 800, "command": {"type": "flow", "edge": 0, "color": [40, 200, 255], "duration_ms": 1800}},
+    {"at_ms": 2600, "command": {"type": "clear"}}
+  ]
+}
+```
+
+Replace `a`, `0`, and `graph_id` with values from your descriptor.
+`at_ms` defaults to `0` and is measured from GUI acceptance, not wall-clock
+time. Steps are stably sorted by time; equal-time steps keep input order.
+
+| Command | Fields and behavior |
+| --- | --- |
+| `highlight` | `nodes` and/or `edges` arrays, optional RGB `color` and `pulse`; outlines existing entities/links for `duration_ms` |
+| `flow` | Required `edge`, optional RGB `color` and `reverse`; a marker follows the routed polyline by distance |
+| `flow_percent` | Required `edge` and `to_percent`, optional `from_percent` (default 0); move along that percentage segment over `duration_ms`, with the same `color`/`reverse` options as `flow` |
+| `camera` | `node` and/or `zoom`, or `fit:true`; smoothly pans/zooms for `duration_ms` |
+| `clear` | Cancels effects and camera commands preceding it; later steps still run; does not reset the camera |
+
+For example, `{"type":"flow_percent","edge":0,"from_percent":25,"to_percent":75,"duration_ms":2000}`
+plays the middle half of a link in two seconds. Percentages are route-length
+percentages, including bends and loops: `0 <= from_percent <= to_percent <= 100`.
+Scheduled flow markers disappear when their command finishes; use realtime
+markers below when a marker must keep its position.
+
+Defaults: `duration_ms:1000`, `color:[255,180,40]`, `pulse:false`,
+`reverse:false`, `fit:false`, empty target arrays. A highlight needs at least
+one target. `flow` follows stored source-to-target order irrespective of arrow
+direction; `reverse:true` reverses travel, including for self-links.
+Camera zoom is `0.15..3`; `fit` cannot be combined with `node` or `zoom`.
+The latest due camera command takes over; completed camera movement keeps its
+final position and releases manual pan/zoom even if other effects continue.
+
+Limits: 1–256 steps, 1–60000 ms per non-clear command, total timeline at most
+600000 ms, at most 1024 targets per highlight, 65536 bytes per request body,
+8192 bytes of HTTP headers. Unknown JSON fields are rejected. Errors return
+`{"error":"..."}`: `400` invalid scenario/request, `401` invalid/missing token,
+`403` invalid Host/browser Origin, `404` unknown endpoint, `408` transport
+timeout, `409` inactive/not-ready graph or stale graph ID, `413` oversized
+request, `415` incorrect content type, `503` unavailable queue, `504` GUI
+timeout. Expired queued commands are not executed later. The HTTP API accepts
+HTTP/1.1 with content length, not chunked encoding or `Expect: 100-continue`.
+
+**Python (standard library):**
+
+```python
+import getpass
+import json
+import urllib.request
+
+base = input("API address shown in StructView: ").rstrip("/")
+token = getpass.getpass("Bearer token: ")
+
+def request(path, body=None):
+    headers = {"Authorization": f"Bearer {token}"}
+    data = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(base + path, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return json.load(response)
+
+graph = request("/v1/graph")
+if not graph["edges"]:
+    raise RuntimeError("Open a graph containing at least one link")
+edge = graph["edges"][0]
+print(request("/v1/animation", {
+    "graph_id": graph["graph_id"],
+    "steps": [
+        {"command": {"type": "highlight", "nodes": [edge["source"]], "pulse": True}},
+        {"command": {"type": "camera", "node": edge["source"], "zoom": 1.5}},
+        {"at_ms": 1000, "command": {"type": "flow", "edge": edge["index"], "duration_ms": 3000}},
+    ],
+}))
+print(request("/v1/animation"))  # playback status
+# To stop early, send an empty POST:
+stop = urllib.request.Request(base + "/v1/animation/stop",
+    method="POST", headers={"Authorization": f"Bearer {token}"})
+# urllib.request.urlopen(stop, timeout=5).close()
+```
+
+**PowerShell:**
+
+```powershell
+$base = (Read-Host 'API address shown in StructView').TrimEnd('/')
+$headers = @{ Authorization = 'Bearer ' + (Read-Host 'Bearer token') }
+$graph = Invoke-RestMethod "$base/v1/graph" -Headers $headers
+if (@($graph.nodes).Count -eq 0) { throw 'Open a graph with entities' }
+$scenario = @{
+    graph_id = $graph.graph_id
+    steps = @(@{
+        command = @{
+            type = 'highlight'; nodes = @($graph.nodes[0].id)
+            color = @(255, 180, 40); pulse = $true; duration_ms = 3000
+        }
+    })
+} | ConvertTo-Json -Depth 8 -Compress
+Invoke-RestMethod "$base/v1/animation" -Method Post -Headers $headers `
+    -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($scenario))
+Invoke-RestMethod "$base/v1/animation" -Headers $headers
+# Stop early:
+# Invoke-RestMethod "$base/v1/animation/stop" -Method Post -Headers $headers
+```
+
+#### Real-time markers and element states
+
+Realtime updates run alongside a scenario; starting a new scenario or its
+scheduled `clear` does not remove them. `GET /v1/animation` reports only the
+scenario. `GET /v1/realtime` reports marker IDs, link indexes, current `percent`,
+`target_percent`, color, direction, and smoothing, plus element-effect IDs,
+node IDs, link indexes, status, color, and pulse.
+Send updates to `POST /v1/realtime`:
+
+```json
+{
+  "graph_id": "COPY_FROM_GET_GRAPH",
+  "commands": [
+    {"type": "marker", "id": "transfer-42", "edge": 0, "percent": 37.5, "smoothing_ms": 300, "color": [40, 200, 255]},
+    {"type": "element", "id": "worker-state", "nodes": ["a"], "edges": [0], "status": "running"}
+  ]
+}
+```
+
+- A marker starts at `0%` and smoothly approaches the highest percentage
+  received for its ID. Updating `37.5 -> 60 -> 100` changes its target without
+  resetting position or restarting motion. A delayed lower value never moves
+  it backwards. Each ID is independent, so multiple jobs may share a link.
+- `smoothing_ms` defaults to `300` and is the exponential smoothing time
+  constant, **not a fixed travel duration**: about 63% of the remaining gap is
+  covered per interval, about 95% after three intervals. The last gap below
+  `0.01` percentage point snaps to the exact target. Updates may arrive faster
+  than rendering; interpolation is based on elapsed time, not request count.
+- `percent` is numeric `0..100`, `smoothing_ms` is `16..10000`, and optional
+  `reverse:true` maps `0%` to the target end of the route. A marker remains
+  visible at its final position until removed; no continuous repaint is needed
+  once it settles.
+- An existing marker cannot switch links or direction. Send
+  `{"type":"remove_marker","id":"transfer-42"}` before reusing its ID, including
+  when restarting progress from zero. Remove and recreate in the same batch
+  for an atomic restart.
+- `element` replaces the effect with the same ID. Supply `nodes` and/or `edges`.
+  `status` may be `waiting` (gray), `running` (blue/pulsing), `success` (green),
+  or `error` (red/pulsing). Nodes also display a localized status badge.
+  Explicit `color:[r,g,b]` and `pulse:true/false` override status defaults.
+  With no status, the default is a steady amber highlight.
+- Send `{"type":"remove_element","id":"worker-state"}` to remove an effect, or
+  `{"type":"clear"}` in `/v1/realtime` to clear **only** the realtime layer.
+  Removing an unknown ID returns `400` rather than silently succeeding.
+- Batches contain 1–256 commands and are atomic: invalid targets, stale graph
+  IDs, malformed values, or resource-limit failures leave the visual state
+  unchanged. At most 256 markers and element effects combined may exist,
+  each visual ID is nonblank and at most 128 UTF-8 bytes; each element effect
+  targets at most 1024 nodes/links. General body/header limits still apply.
+- View changes, graph recalculation, disabling the server, and **Stop
+  animation** clear both layers. Nothing is saved to the graph or exported.
+  Concurrent clients are applied in GUI queue order; monotonic marker targets
+  tolerate out-of-order percentages, while element states use the last applied
+  update. A graph ID mismatch returns `409`.
+
+**Python realtime producer**, using `request()` and `base` from the earlier
+example (the same calls work with HTTP or HTTPS):
+
+```python
+import time
+
+graph = request("/v1/graph")
+if not graph["edges"]:
+    raise RuntimeError("Open a graph containing at least one link")
+edge = graph["edges"][0]
+
+def send_progress(percent, status="running"):
+    return request("/v1/realtime", {
+        "graph_id": graph["graph_id"],
+        "commands": [
+            {"type": "marker", "id": "job-42", "edge": edge["index"],
+             "percent": percent, "smoothing_ms": 300},
+            {"type": "element", "id": "job-42-state",
+             "nodes": [edge["target"]], "status": status},
+        ],
+    })
+
+# In a real producer, call send_progress() from progress notifications.
+for percent in (10, 30, 80, 45, 100):  # late 45 does not reverse progress
+    send_progress(percent)
+    time.sleep(0.03)
+send_progress(100, "success")
+print(request("/v1/realtime"))
+# Clear live effects without stopping the scenario:
+# request("/v1/realtime", {"graph_id": graph["graph_id"],
+#                         "commands": [{"type": "clear"}]})
+```
+
+#### Network HTTP, built-in HTTPS, and reverse proxy
+
+This is a server **inside the running GUI application**, not a headless daemon.
+Leave the application and graph view open. Before enabling the server:
+
+1. Set **Listen IP** to the machine's LAN IP, or `0.0.0.0`/`::` to listen on
+   all IPv4/IPv6 interfaces. The safe default is `127.0.0.1`.
+2. Select **Allow network access** for any non-loopback bind address.
+3. Set a fixed port for other machines. If listening on all interfaces, fill
+   **Public IP or DNS host** with the IP/name clients will use, **without**
+   scheme, port, or path. For a concrete listen IP this is optional, but use it
+   when clients connect by DNS. IPv6 URLs use brackets. The submenu displays
+   the client URL and the actual listen socket separately.
+4. Allow inbound traffic in the system firewall only for trusted clients.
+   The application does not alter firewall rules or open router ports.
+
+**HTTP:** leave HTTPS unchecked. Use it only on a trusted LAN, or keep the
+listener on loopback behind a HTTPS reverse proxy. Token authentication is
+required even on loopback, but plain HTTP does not encrypt it.
+
+**Built-in HTTPS:** check **HTTPS (TLS)**, choose a PEM certificate chain
+(leaf certificate first, then intermediates) and matching PEM private key.
+The certificate's SAN must contain the DNS name/IP used by clients. Supported
+private-key encodings are PKCS#8, RSA PKCS#1, and SEC1 as supported by rustls;
+the key must be unencrypted. Invalid/missing/mismatched files prevent startup
+and show an error. There is no fallback to HTTP. Protect the key with filesystem
+permissions, never commit it, and keep it outside the repository. Certificates
+are loaded at startup; disable/re-enable the server after renewal.
+TLS 1.2/1.3 is supported; authentication still uses the API token, not client
+certificates. Install a trusted certificate, or explicitly trust your internal
+CA on clients rather than disabling verification.
+
+For Python with an internal CA, add `import ssl`, create
+`tls_context = ssl.create_default_context(cafile=r"C:\certs\ca.pem")`, and
+pass `context=tls_context` to `urllib.request.urlopen`. With a publicly trusted
+certificate the earlier example needs only an `https://` base URL.
+PowerShell uses the operating system trust store; trust the internal CA there
+and use the displayed HTTPS URL. Do not bypass certificate validation.
+
+**HTTPS reverse proxy:** keep StructView at `127.0.0.1:8088` (or your chosen
+fixed port) with HTTPS unchecked. Terminate TLS in your proxy, preserve
+`Authorization`, restrict clients there, and rewrite `Host` to the internal
+address/port expected by StructView. For example, an nginx location:
+
+```nginx
+location /v1/ {
+    proxy_pass http://127.0.0.1:8088;
+    proxy_set_header Host 127.0.0.1:8088;
+    proxy_set_header Authorization $http_authorization;
+    proxy_http_version 1.1;
+    proxy_request_buffering on;
+    proxy_set_header Expect "";
+}
+```
+
+Configure HTTPS/certificates and an appropriate client allowlist on the proxy's
+server block. Requests must still arrive with `Content-Length`; chunked bodies
+are unsupported. Do not strip browser `Origin` to bypass the API's origin
+restriction, and do not expose its token in frontend JavaScript.
+The server accepts up to 8 simultaneous clients and bounds request parsing/
+TLS-handshake time to 2 seconds, separately from the 2-second GUI reply deadline.
+One slow client no longer blocks others. Excess HTTP clients receive `503`;
+excess TLS clients are disconnected before handshake. Disabling joins client
+workers and releases the listener; it may briefly wait for their I/O deadlines.
+
+#### Graph.toml demo server (Python)
+
+The standard-library controller [tests/demo_graph_animation.py](tests/demo_graph_animation.py)
+demonstrates [tests/fixtures/Graph.toml](tests/fixtures/Graph.toml).
+It requires **Python 3.11+**, no pip packages. StructView recognizes the fixture's
+`[[entities]]` and `[[relations]]` arrays as an explicit node/link graph.
+The fixture contains **100 entities and 250 unique relationships** spanning
+catalog, warehouse, delivery, finance, marketing, support and integrations.
+It can be reproduced with `python tests\generate_shop_graph.py`.
+
+1. Open the fixture in StructView, select the relationship graph, and wait for
+   layout/routing to finish.
+2. Enable the animation API and copy its URL and Bearer token.
+3. From the repository root, run (replace the API address with the displayed one):
+
+```powershell
+python tests\demo_graph_animation.py --api http://127.0.0.1:8088
+```
+
+Enter the token at the hidden prompt. Alternatively the script reads
+`STRUCTVIEW_API_TOKEN` from its environment; do not put real tokens in source
+files or command-line arguments. For HTTPS, use the HTTPS address and, if
+needed, `--ca C:\certs\ca.pem`; certificate verification remains enabled.
+
+The demo starts **both** modes automatically and opens a local control server
+at `http://127.0.0.1:8765` (open that URL in your browser):
+
+- **Scheduled:** precomputed highlighting and percentage flow through all 250
+  relationships in waves of ten, split into three bounded scenarios, with camera fit.
+- **Realtime:** waiting/running/success/error badges, smooth percentage
+  updates including rapid bursts and a delayed lower value, failed payment
+  followed by retry. Scheduled highlighting runs alongside live progress.
+- Dashboard buttons **Both**, **Scheduled**, **Realtime**, **Stop / clear**
+  allow replay and cleanup. Status and errors appear in the page and console.
+  Only one demonstration may run at once.
+- **Camera:** fit the graph, focus a selected entity, or set zoom (0.15–3).
+  Select an entity/link, color, duration, pulse and reverse direction.
+- **Manual effects:** highlight/pulse, full flow, percentage segment, realtime
+  percentage updates with configurable smoothing, all four element statuses
+  with optional custom color/pulse, removal of the named marker/element effect.
+  Clear scheduled or realtime layers independently, or stop/clear both.
+- **API inspection / JSON console:** read the graph descriptor and both animation
+  states. Send arbitrary scheduled steps/timestamps or atomic realtime batches;
+  `graph_id` is filled from the verified graph. API errors are displayed.
+  Stop the automatic demonstration before manual mutations, so commands cannot
+  accidentally replace its scheduled scenarios. Inspection remains available.
+
+The script resolves link indexes from `/v1/graph`, verifies entity IDs and
+relationships against the TOML fixture, and refuses a mismatched graph.
+Starting a demo stops existing animations. Completed wave markers/link effects
+are removed; final node statuses remain visible until cleared. Realtime never
+retains more than 120 effects for this fixture, within the server limit of 256.
+At speed 1, scheduled playback takes about 40 seconds and realtime about 100
+seconds plus request overhead. Keep the graph view active. Ctrl+C stops playback, clears
+effects, and closes the demo server.
+The browser talks only to the local controller, which forwards authenticated
+requests to StructView; the StructView token is never embedded in the page.
+
+Options: `--mode scenario|realtime|both`, `--speed 0.1..10`, `--port 0` for an
+available dashboard port, `--graph PATH` for a fixture in the same shop schema,
+and `--once` to run without a dashboard and exit after completion:
+
+```powershell
+python tests\demo_graph_animation.py --api http://127.0.0.1:8088 --mode both --once --speed 2
+python -B -m unittest discover -s tests -p test_demo_graph_animation.py -v
+```
+
 ### Large files and performance
 
 The GUI keeps the parsed document in memory, but the tree uses row
@@ -738,6 +1167,30 @@ Each workspace crate's README contains its source tree and module
 responsibilities. The `struct-view-build-info` crate embeds the Rust version,
 target platform, build time, and optimization mode. This information is
 available through `--version` and the `Help` menu.
+
+## Planned development stages
+
+The following stages are planned improvements, not completed features.
+
+### Stage 1 — API server refinement
+
+- [ ] Refine the graph animation API server and its configuration.
+- [ ] Improve request validation, error reporting, and connection reliability.
+- [ ] Update API documentation, demonstration scenarios, and related tests.
+
+### Stage 2 — Status on hover
+
+- [ ] Display the current animation status when hovering over an entity or link.
+- [ ] Show waiting, running, success, and error states; include marker progress
+  where applicable.
+- [ ] Clearly distinguish elements without an assigned status.
+
+### Stage 3 — Graph visualization refinement
+
+- [ ] Improve the readability of entities, links, labels, and status indicators.
+- [ ] Refine highlighting, animation effects, and camera interaction.
+- [ ] Check visualization performance on large graphs while preserving automatic
+  layout and routing.
 
 ## License
 

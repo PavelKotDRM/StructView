@@ -221,7 +221,8 @@ fn graph_svg_localized(
         if let Some(names) = &routing.partition_labels {
             for (index, name) in names.iter().enumerate() {
                 text(&mut svg, Pos2::new(partition_column_center(graph, &routing.node_positions, index), 10.0),
-                    name, 13.0, colors.key, "middle", "sans-serif");
+                    if name.is_empty() { locale.text(TextKey::GraphNoGroup) } else { name },
+                    13.0, colors.key, "middle", "sans-serif");
             }
         }
         for (index, edge) in graph.edges.iter().enumerate() {

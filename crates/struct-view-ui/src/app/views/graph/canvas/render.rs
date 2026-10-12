@@ -15,6 +15,10 @@ pub(in crate::app) fn show_graph(
     locale: Locale,
 ) {
     let colors = SyntaxColors::new(ui.visuals());
+    let editable = ui.ctx().data(|data| {
+        data.get_temp::<bool>(egui::Id::new("graph-editor-enabled"))
+            .unwrap_or(false)
+    });
     let interaction_id = egui::Id::new(("graph-interaction", routing.graph_fingerprint));
     let mut interaction = ui
         .ctx()
@@ -35,6 +39,14 @@ pub(in crate::app) fn show_graph(
     });
 
     if graph.nodes.is_empty() {
+        if let Some(player) = crate::app::graph_animation::player(ui.ctx()) {
+            if player.is_running(ui.input(|input| input.time)) {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(16));
+            } else {
+                crate::app::graph_animation::stop_scenario(ui.ctx());
+            }
+        }
         ui.centered_and_justified(|ui| {
             ui.label(locale.text(TextKey::GraphNoEntities));
         });
@@ -146,6 +158,32 @@ pub(in crate::app) fn show_graph(
                 viewport.size() * 0.5 - routing.node_positions[index].to_vec2() * interaction.zoom;
         }
     }
+    let now = ui.input(|input| input.time);
+    let mut realtime = crate::app::graph_animation::realtime::state(ui.ctx())
+        .filter(|state| state.matches_graph(routing.graph_fingerprint));
+    if let Some(state) = &mut realtime {
+        state.advance(now);
+        if state.needs_repaint() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+        }
+    }
+    let mut animation = crate::app::graph_animation::player(ui.ctx())
+        .filter(|player| player.matches_graph(routing.graph_fingerprint));
+    if let Some(player) = &mut animation {
+        player.camera(
+            now,
+            viewport.size(),
+            routing.content_size,
+            &routing.node_positions,
+            &mut interaction.zoom,
+            &mut interaction.pan,
+        );
+        if player.is_running(now) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+        }
+    }
     let zoom = interaction.zoom;
     let matching_paths = search
         .matches
@@ -176,7 +214,11 @@ pub(in crate::app) fn show_graph(
                 painter.text(
                     position,
                     Align2::CENTER_CENTER,
-                    label,
+                    if label.is_empty() {
+                        locale.text(TextKey::GraphNoGroup)
+                    } else {
+                        label
+                    },
                     header_font.clone(),
                     colors.key,
                 );
@@ -252,6 +294,14 @@ pub(in crate::app) fn show_graph(
             });
             if response.hovered() {
                 hovered_node = Some(index);
+            }
+            if editable && response.double_clicked() {
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::new("graph-editor-canvas-request"),
+                        crate::app::graph_editor::CanvasTarget::Node(index),
+                    )
+                });
             }
             if response.clicked() && !crate::app::views::diagram::keyboard_activate(ui) {
                 canvas_response.request_focus();
@@ -434,8 +484,20 @@ pub(in crate::app) fn show_graph(
                 let response = ui.interact(
                     label_rect,
                     ui.make_persistent_id(("graph-edge-label", edge_index)),
-                    Sense::hover(),
+                    if editable {
+                        Sense::click()
+                    } else {
+                        Sense::hover()
+                    },
                 );
+                if editable && response.double_clicked() {
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(
+                            egui::Id::new("graph-editor-canvas-request"),
+                            crate::app::graph_editor::CanvasTarget::Edge(edge_index),
+                        )
+                    });
+                }
                 show_graph_tooltip(&response, false, |ui| {
                     show_graph_edge_information(ui, graph, edge_index, locale)
                 });
@@ -588,6 +650,19 @@ pub(in crate::app) fn show_graph(
                 );
             }
         }
+        let animation_canvas = crate::app::graph_animation::AnimationCanvas {
+            positions: &routing.node_positions,
+            sizes: &routing.node_sizes,
+            paths: &routing.edge_paths,
+            zoom,
+            offset: canvas_offset,
+        };
+        if let Some(player) = &animation {
+            player.paint(&painter, now, animation_canvas);
+        }
+        if let Some(state) = &realtime {
+            state.paint(&painter, now, animation_canvas, locale);
+        }
         let pin_route_tooltip = ui.input(|input| input.modifiers.ctrl || input.modifiers.command);
         if !pin_route_tooltip {
             interaction.edge_hover_pinned = false;
@@ -654,4 +729,14 @@ pub(in crate::app) fn show_graph(
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(interaction_id, interaction));
+    if let Some(player) = animation {
+        if player.is_running(now) {
+            crate::app::graph_animation::store_player(ui.ctx(), player);
+        } else {
+            crate::app::graph_animation::stop_scenario(ui.ctx());
+        }
+    }
+    if let Some(state) = realtime {
+        crate::app::graph_animation::realtime::store(ui.ctx(), state);
+    }
 }

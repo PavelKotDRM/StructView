@@ -811,9 +811,25 @@ fn both_diagrams_use_identical_menu_controls_and_shared_search_window() {
             TextKey::GraphFit,
             TextKey::GraphSelectAll,
             TextKey::GraphClearSelection,
-            TextKey::TreeActions,
         ] {
             label_center(&output, Locale::English.text(key));
+        }
+        if mode == crate::app::visualization::VisualizationMode::Structure {
+            label_center(&output, Locale::English.text(TextKey::TreeActions));
+        } else {
+            assert!(
+                !output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.label().is_some_and(|label| {
+                        label.trim_end_matches([' ', '\u{23f5}'])
+                            == Locale::English.text(TextKey::TreeActions)
+                    }))
+            );
         }
         label_center(&output, "100%");
         let pos = label_center(&output, Locale::English.text(TextKey::GraphZoomIn));

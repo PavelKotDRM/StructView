@@ -39,6 +39,73 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::Visualization => "Visualization",
         TextKey::TreeView => "Interactive tree",
         TextKey::GraphView => "Relationship graph",
+        TextKey::GraphNew => "New graph",
+        TextKey::GraphEditableCopy => "Create editable graph copy",
+        TextKey::GraphAutomaticLayout => "Node layout and link routing are automatic.",
+        TextKey::GraphEditor => "Graph editor",
+        TextKey::GraphEditorHint => {
+            "Click a list item or double-click a node / link label to edit. Loops and parallel links are supported."
+        }
+        TextKey::GraphEditOnly => "Graph changes require edit mode.",
+        TextKey::GraphAddNode => "Add entity",
+        TextKey::GraphSpawnNode => "Apply and add connected entity",
+        TextKey::GraphAddEdge => "Add link",
+        TextKey::GraphGroups => "Groups",
+        TextKey::GraphAddGroup => "Add group",
+        TextKey::GraphSettings => "Graph properties",
+        TextKey::GraphSettingsHint => "Edit -> Graph properties",
+        TextKey::GraphId => "Unique ID",
+        TextKey::GraphLabel => "Name / label",
+        TextKey::GraphSource => "Source entity",
+        TextKey::GraphTarget => "Target entity",
+        TextKey::GraphDirection => "Direction (graph default for new links)",
+        TextKey::GraphDirected => "Directed",
+        TextKey::GraphUndirected => "Undirected",
+        TextKey::GraphBidirectional => "Bidirectional",
+        TextKey::GraphReverse => "Reverse",
+        TextKey::GraphWeight => "Weight (JSON number, optional)",
+        TextKey::GraphWeightUnit => "Weight unit",
+        TextKey::GraphAttributes => "Attributes (JSON object)",
+        TextKey::GraphAttributesHint => {
+            "Additional data. ID and label are separate core fields, included in the full JSON below."
+        }
+        TextKey::GraphElementJson => "Full element JSON (preview)",
+        TextKey::GraphAnimationApi => "Graph animation API",
+        TextKey::GraphApiStart => "Enable API server",
+        TextKey::GraphApiStop => "Disable API",
+        TextKey::GraphApiPort => "Port (0 = available)",
+        TextKey::GraphApiBind => "Listen IP",
+        TextKey::GraphApiHost => "Public IP or DNS host (optional for a specific listen IP)",
+        TextKey::GraphApiNetwork => "Allow network access (not just loopback)",
+        TextKey::GraphApiNetworkWarning => {
+            "HTTP sends the token in plaintext. Use HTTPS outside a trusted LAN. Only open firewall access for trusted clients."
+        }
+        TextKey::GraphApiCertificate => "TLS certificate chain (PEM)",
+        TextKey::GraphApiPrivateKey => "TLS private key (PEM)",
+        TextKey::GraphApiCopyToken => "Copy token",
+        TextKey::GraphApiRegenerateToken => "Generate new token",
+        TextKey::GraphApiOwnToken => "Custom token",
+        TextKey::GraphApiPasteToken => "Paste token",
+        TextKey::GraphApiApplyToken => "Apply token",
+        TextKey::GraphApiTokenHint => {
+            "16–256 printable ASCII characters, no spaces. Changes apply immediately; reconnect clients with the new token. Tokens are not saved."
+        }
+        TextKey::GraphApiTokenDone => "Token operation completed",
+        TextKey::GraphStatusWaiting => "Waiting",
+        TextKey::GraphStatusRunning => "Running",
+        TextKey::GraphStatusSuccess => "Success",
+        TextKey::GraphStatusError => "Error",
+        TextKey::GraphAnimationStop => "Stop animation",
+        TextKey::GraphApiHint => {
+            "127.0.0.1 by default. HTTP/HTTPS, authentication required. Graph data and layout stay unchanged."
+        }
+        TextKey::GraphReverseEndpoints => "Swap endpoints",
+        TextKey::GraphNoGroup => "No group",
+        TextKey::GraphDelete => "Delete",
+        TextKey::GraphDeleteWarning => {
+            "Delete this element? Deleting an entity also deletes its incident links. Deleting a group ungroups its entities. This can be undone."
+        }
+        TextKey::GraphDuplicate => "Duplicate",
         TextKey::StructureView => "Data structure diagram",
         TextKey::StructureSource => "Source text",
         TextKey::StructureSelectedSource => "Selected structure",

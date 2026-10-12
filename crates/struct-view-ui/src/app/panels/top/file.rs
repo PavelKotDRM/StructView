@@ -4,6 +4,18 @@ impl StructViewApp {
     pub(super) fn show_file_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::FileMenu), |ui| {
+            if self.visualization == VisualizationMode::Graph && !self.is_comparing() {
+                if ui.button(locale.text(TextKey::GraphNew)).clicked() {
+                    ui.close();
+                    self.request_new_graph();
+                }
+                if self.root.is_some()
+                    && ui.button(locale.text(TextKey::GraphEditableCopy)).clicked()
+                {
+                    ui.close();
+                    self.request_graph_copy();
+                }
+            }
             if ui.button(locale.text(TextKey::NewFile)).clicked() {
                 ui.close();
                 self.open_new_file_dialog();
@@ -31,51 +43,53 @@ impl StructViewApp {
                 ui.close();
                 self.open_comparison_dialog();
             }
-            if ui
-                .add_enabled(
-                    self.root.is_some()
-                        && self.visualization != VisualizationMode::Structure
-                        && self
-                            .file_state
-                            .format
-                            .is_none_or(DataFormat::is_serializable),
-                    egui::Button::new(locale.text(TextKey::Save)),
-                )
-                .clicked()
-            {
-                ui.close();
-                self.request_save_current();
-            }
-            if ui
-                .add_enabled(
-                    self.root.is_some() && self.visualization != VisualizationMode::Structure,
-                    egui::Button::new(locale.text(TextKey::SaveAs)),
-                )
-                .clicked()
-            {
-                ui.close();
-                self.save_as();
-            }
-            ui.menu_button(locale.text(TextKey::ConvertTo), |ui| {
-                let current_format = self.file_state.format;
-                for format in DataFormat::ALL {
-                    if current_format == Some(format) {
-                        continue;
-                    }
-
-                    if ui
-                        .add_enabled(
-                            self.root.is_some()
-                                && self.visualization != VisualizationMode::Structure,
-                            egui::Button::new(format.to_string()),
-                        )
-                        .clicked()
-                    {
-                        ui.close();
-                        self.convert_to_format(format);
-                    }
+            if self.visualization != VisualizationMode::Structure {
+                if ui
+                    .add_enabled(
+                        self.root.is_some()
+                            && self.visualization != VisualizationMode::Structure
+                            && self
+                                .file_state
+                                .format
+                                .is_none_or(DataFormat::is_serializable),
+                        egui::Button::new(locale.text(TextKey::Save)),
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    self.request_save_current();
                 }
-            });
+                if ui
+                    .add_enabled(
+                        self.root.is_some() && self.visualization != VisualizationMode::Structure,
+                        egui::Button::new(locale.text(TextKey::SaveAs)),
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    self.save_as();
+                }
+                ui.menu_button(locale.text(TextKey::ConvertTo), |ui| {
+                    let current_format = self.file_state.format;
+                    for format in DataFormat::ALL {
+                        if current_format == Some(format) {
+                            continue;
+                        }
+
+                        if ui
+                            .add_enabled(
+                                self.root.is_some()
+                                    && self.visualization != VisualizationMode::Structure,
+                                egui::Button::new(format.to_string()),
+                            )
+                            .clicked()
+                        {
+                            ui.close();
+                            self.convert_to_format(format);
+                        }
+                    }
+                });
+            }
             if ui.button(locale.text(TextKey::CloseFile)).clicked() {
                 ui.close();
                 self.request_close_file();

@@ -80,6 +80,11 @@ pub(super) fn build(root: &JsonNode) -> Result<Option<RelationshipGraph>, String
         }
     });
     let container = nested.unwrap_or(root);
+    let entity_relations = metadata.is_some()
+        && object_child(container, "entities")
+            .is_some_and(|node| node.value_type == JsonValueType::Array)
+        && object_child(container, "relations")
+            .is_some_and(|node| node.value_type == JsonValueType::Array);
     if nested.is_some()
         && ["nodes", "edges", "links", "elements", "adjacency"]
             .iter()
@@ -88,8 +93,17 @@ pub(super) fn build(root: &JsonNode) -> Result<Option<RelationshipGraph>, String
         return Err("Ambiguous graph containers at the root and inside graph".to_string());
     }
     let elements = object_child(container, "elements");
-    let nodes = object_child(container, "nodes");
-    let edge_fields = ["edges", "links"]
+    let nodes = if entity_relations {
+        field(container, &["nodes", "entities"])?
+    } else {
+        object_child(container, "nodes")
+    };
+    let edge_names: &[&str] = if entity_relations {
+        &["edges", "links", "relations"]
+    } else {
+        &["edges", "links"]
+    };
+    let edge_fields = edge_names
         .iter()
         .filter_map(|name| object_child(container, name))
         .collect::<Vec<_>>();
@@ -99,7 +113,8 @@ pub(super) fn build(root: &JsonNode) -> Result<Option<RelationshipGraph>, String
     let marked = object_scalar(metadata.unwrap_or(container), &["type"])
         .is_some_and(|kind| graph_format(&kind.to_ascii_lowercase()).is_some())
         || object_child(root, "directed").is_some()
-        || object_child(container, "directed").is_some();
+        || object_child(container, "directed").is_some()
+        || entity_relations;
     let keyed_adjacency =
         adjacency.filter(|value| value.value_type == JsonValueType::Object && marked);
     if elements.is_none()

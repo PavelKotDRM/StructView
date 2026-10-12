@@ -282,7 +282,14 @@ fn graph_progress_records_all_stages_and_completion() {
     assert_eq!(snapshot.completed, result.graph.edges.len());
     assert_eq!(snapshot.total, result.graph.edges.len());
     assert!(snapshot.stage.is_none());
-    assert!(snapshot.finished.unwrap() >= snapshot.timings.iter().map(|(_, time)| *time).sum());
+    assert!(
+        snapshot.finished.unwrap()
+            >= snapshot
+                .timings
+                .iter()
+                .map(|(_, time)| *time)
+                .sum::<Duration>()
+    );
 }
 
 #[test]
