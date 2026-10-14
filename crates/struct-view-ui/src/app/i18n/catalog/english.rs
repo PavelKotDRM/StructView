@@ -95,6 +95,13 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphStatusRunning => "Running",
         TextKey::GraphStatusSuccess => "Success",
         TextKey::GraphStatusError => "Error",
+        TextKey::GraphStatusTitle => "Animation status",
+        TextKey::GraphStatusNoAssignment => "No status assigned",
+        TextKey::GraphStatusProgress => "Progress",
+        TextKey::GraphStatusTargetProgress => "Target",
+        TextKey::GraphStatusStage => "Stage",
+        TextKey::GraphJobs => "Graph jobs",
+        TextKey::GraphJobFocus => "Focus this job's location",
         TextKey::GraphAnimationStop => "Stop animation",
         TextKey::GraphApiHint => {
             "127.0.0.1 by default. HTTP/HTTPS, authentication required. Graph data and layout stay unchanged."

@@ -5,8 +5,8 @@ use std::time::Instant;
 use struct_view_core::files::{create_bytes_atomic, write_bytes_atomic};
 use struct_view_core::parser::{DataFormat, JsonValueType, parse_data, serialize_node};
 use struct_view_core::search::SearchState;
-use struct_view_ui::app::headless;
-use struct_view_ui::clipboard;
+use struct_view_operations::app::headless::{self, GraphImageRenderer};
+use struct_view_operations::clipboard;
 
 use super::super::Source;
 use super::parse::is_edit;
@@ -15,7 +15,10 @@ use super::{ImageFormat, NodePart, Operation, OperationOptions};
 mod progress;
 use progress::{CliGraphProgress, cli_spinner};
 
-pub(in crate::cli) fn run(options: &OperationOptions) -> Result<bool, String> {
+pub(in crate::cli) fn run(
+    options: &OperationOptions,
+    graph_image_renderer: Option<&dyn GraphImageRenderer>,
+) -> Result<bool, String> {
     let operation = options.operation;
     let show_progress = std::io::stderr().is_terminal()
         && matches!(
@@ -118,15 +121,19 @@ pub(in crate::cli) fn run(options: &OperationOptions) -> Result<bool, String> {
             .map_err(|error| error.to_string())?,
         Operation::Graph => match options.image {
             Some(image) if std::io::stderr().is_terminal() => {
+                let renderer = graph_image_renderer
+                    .ok_or("Graph image rendering is unavailable in this CLI host")?;
                 let reporter = Arc::new(CliGraphProgress::default());
-                headless::graph_image_with_progress(
+                renderer.render_graph_image(
                     &root,
                     image == ImageFormat::Png,
                     options.dark,
-                    move |snapshot| reporter.report(snapshot),
+                    Some(Arc::new(move |snapshot| reporter.report(snapshot))),
                 )?
             }
-            Some(image) => headless::graph_image(&root, image == ImageFormat::Png, options.dark)?,
+            Some(image) => graph_image_renderer
+                .ok_or("Graph image rendering is unavailable in this CLI host")?
+                .render_graph_image(&root, image == ImageFormat::Png, options.dark, None)?,
             None => serde_json::to_vec_pretty(&headless::graph(&root)?)
                 .map_err(|error| error.to_string())?,
         },

@@ -3,14 +3,15 @@ use super::*;
 mod progress;
 pub(super) use progress::{
     GraphProgress, GraphProgressTracker, GraphStage, advance_graph_progress, begin_graph_stage,
+    graph_progress_snapshot,
 };
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::app::headless::GraphProgressSnapshot;
 use struct_view_core::parser::JsonNode;
+use struct_view_operations::app::headless::GraphProgressSnapshot;
 
 pub(in crate::app) fn headless_graph_image(
     root: &JsonNode,
@@ -36,7 +37,7 @@ pub(in crate::app) fn headless_graph_image_with_progress(
                     loop {
                         let snapshot = {
                             let progress = progress.lock().expect("graph progress lock poisoned");
-                            GraphProgressSnapshot::from(&progress)
+                            graph_progress_snapshot(&progress)
                         };
                         let finished = snapshot.finished;
                         report_progress(snapshot);
@@ -354,11 +355,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!GraphProgressSnapshot::from(&progress.lock().unwrap()).finished);
+        assert!(!graph_progress_snapshot(&progress.lock().unwrap()).finished);
         begin_graph_stage(Some(&progress), GraphStage::Rendering, 0, 1);
-        assert!(!GraphProgressSnapshot::from(&progress.lock().unwrap()).finished);
+        assert!(!graph_progress_snapshot(&progress.lock().unwrap()).finished);
         progress.lock().unwrap().finish();
-        let snapshot = GraphProgressSnapshot::from(&progress.lock().unwrap());
+        let snapshot = graph_progress_snapshot(&progress.lock().unwrap());
         assert!(snapshot.finished);
         assert!(
             snapshot

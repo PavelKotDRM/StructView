@@ -1,4 +1,4 @@
-"""Standard-library tests for the Graph.toml demonstration server."""
+"""Standard-library tests for the graph animation demonstration server."""
 
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,8 +17,8 @@ import demo_graph_animation as demo
 import generate_shop_graph
 
 
-def fixture():
-    with demo.FIXTURE.open("rb") as source:
+def fixture(path=demo.FIXTURE):
+    with path.open("rb") as source:
         return tomllib.load(source)
 
 
@@ -40,6 +40,8 @@ class FakeApi:
         self.calls.append((path, body, method))
         if path == "/v1/graph":
             return descriptor()
+        if path == "/v1/capabilities":
+            return {"features": ["jobs", "scheduled", "realtime"]}
         if path == "/v1/animation" and body is None:
             return {"graph_id": "demo-graph", "running": False}
         if path == "/v1/animation":
@@ -64,7 +66,7 @@ def serving(server):
 
 class DemoTests(unittest.TestCase):
     def test_enlarged_fixture_is_reproducible_connected_and_has_unique_endpoints(self):
-        value = fixture()
+        value = fixture(demo.FIXTURE.parent / "Graph.toml")
         self.assertEqual(value, generate_shop_graph.build_graph())
         ids = {node["id"] for node in value["entities"]}
         self.assertEqual(len(ids), len(value["entities"]))
@@ -89,6 +91,26 @@ class DemoTests(unittest.TestCase):
                 remaining.extend(neighbors[node] - reached)
         self.assertEqual(reached, ids)
 
+    def test_demo_fixture_is_compact_connected_and_preserves_retry_routes(self):
+        value = fixture()
+        ids = {node["id"] for node in value["entities"]}
+        self.assertEqual(len(ids), 8)
+        self.assertEqual(len(value["relations"]), 9)
+        self.assertIn("order_payments", {link["id"] for link in value["relations"]})
+        self.assertEqual({link["source"] for link in value["relations"]} |
+                         {link["target"] for link in value["relations"]}, ids)
+        neighbors = {id_: set() for id_ in ids}
+        for relation in value["relations"]:
+            neighbors[relation["source"]].add(relation["target"])
+            neighbors[relation["target"]].add(relation["source"])
+        reached, remaining = set(), ["customer"]
+        while remaining:
+            node = remaining.pop()
+            if node not in reached:
+                reached.add(node)
+                remaining.extend(neighbors[node] - reached)
+        self.assertEqual(reached, ids)
+
     def test_fixture_mapping_uses_api_indexes_and_rejects_wrong_graph(self):
         mapped = demo.map_graph(fixture(), descriptor())
         self.assertEqual(mapped[0]["id"], "customer_orders")
@@ -102,19 +124,19 @@ class DemoTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "relationships"):
             demo.map_graph(fixture(), invalid)
 
-    def test_scenario_targets_all_fixture_relations_and_respects_protocol_limits(self):
-        relations = demo.map_graph(fixture(), descriptor())
+    def test_guided_scenarios_respect_protocol_limits_at_all_speeds(self):
         for speed in (0.1, 1.0, 10):
-            scenarios = demo.build_scenarios("demo-graph", relations, speed)
-            flows = [step for scenario in scenarios for step in scenario["steps"]
-                     if step["command"]["type"] == "flow_percent"]
-            self.assertEqual([step["command"]["edge"] for step in flows], [edge["index"] for edge in relations])
+            api = FakeApi()
+            runner = demo.Demo(api, fixture(), speed)
+            with patch.object(runner, "wait"), patch("builtins.print"):
+                runner.execute("both")
+            scenarios = [body for path, body, _ in api.calls if path == "/v1/animation" and body]
             for scenario in scenarios:
                 self.assertLessEqual(len(scenario["steps"]), 256)
                 self.assertLessEqual(len(json.dumps(scenario, ensure_ascii=False).encode()), 65536)
-                self.assertTrue(all(1 <= step["command"]["duration_ms"] <= 60000
-                                    for step in scenario["steps"]))
-                self.assertTrue(all(step.get("at_ms", 0) + step["command"]["duration_ms"] <= 600000
+                self.assertTrue(all(1 <= step["command"].get("duration_ms", 1000) <= 60000
+                                    for step in scenario["steps"] if step["command"]["type"] != "clear"))
+                self.assertTrue(all(step.get("at_ms", 0) + step["command"].get("duration_ms", 0) <= 600000
                                     for step in scenario["steps"]))
 
     def test_both_modes_show_progress_late_updates_statuses_and_retry(self):
@@ -123,46 +145,94 @@ class DemoTests(unittest.TestCase):
         with patch.object(runner, "wait"), patch("builtins.print"):
             runner.execute("both")
         scenarios = [body for path, body, _ in api.calls if path == "/v1/animation" and body]
-        self.assertEqual(len(scenarios), 4)
-        self.assertEqual(scenarios[0]["steps"][2]["command"]["type"], "flow_percent")
-        commands = [command for path, body, _ in api.calls if path == "/v1/realtime"
+        kinds = {step["command"]["type"] for scenario in scenarios for step in scenario["steps"]}
+        self.assertEqual(kinds, {"camera", "highlight", "flow", "flow_percent", "clear"})
+        self.assertTrue(any(step["command"].get("reverse") for scenario in scenarios
+                            for step in scenario["steps"]))
+        commands = [command for path, body, _ in api.calls if path == "/v1/jobs" and body
                     for command in body["commands"]]
-        statuses = {command["status"] for command in commands if command["type"] == "element"}
+        statuses = {command["status"] for command in commands if command["type"] == "upsert"}
         self.assertEqual(statuses, {"waiting", "running", "success", "error"})
         progress = [command["percent"] for command in commands
-                    if command["type"] == "marker" and command["id"] == "order_payments"]
-        self.assertEqual(progress, [0, 8, 25, 65, 35, 85, 100] * 2)
-        self.assertIn({"type": "remove_marker", "id": "order_payments"}, commands)
-        self.assertEqual(api.calls[1], ("/v1/animation/stop", None, "POST"))
-        markers, elements = set(), set()
-        max_effects = 0
+                    if command["type"] == "upsert" and command["stage"] == "Submitting order"]
+        self.assertEqual(progress, [0, 20, 65, 35, 100])
+        self.assertIn({"type": "remove", "id": "risk-42"}, commands)
+        self.assertIn({"type": "clear"}, commands)
+        for command in commands:
+            if command["type"] == "upsert":
+                self.assertTrue(command["label"])
+                self.assertTrue(command["stage"])
+        jobs = {}
+        shared = False
         for path, body, _ in api.calls:
-            if path != "/v1/realtime":
+            if path != "/v1/jobs" or body is None:
                 continue
-            self.assertLessEqual(len(body["commands"]), 256)
+            self.assertLessEqual(len(body["commands"]), 64)
             self.assertLessEqual(len(json.dumps(body, ensure_ascii=False).encode()), 65536)
             for command in body["commands"]:
-                kind = command["type"]
-                if kind == "clear":
-                    markers.clear()
-                    elements.clear()
-                elif kind == "marker":
-                    markers.add(command["id"])
-                elif kind == "element":
-                    elements.add(command["id"])
-                elif kind == "remove_marker":
-                    self.assertIn(command["id"], markers)
-                    markers.remove(command["id"])
-                elif kind == "remove_element":
-                    self.assertIn(command["id"], elements)
-                    elements.remove(command["id"])
-                max_effects = max(max_effects, len(markers) + len(elements))
-            self.assertLessEqual(len(markers) + len(elements), 256)
-        self.assertEqual(max_effects, 120)
-        self.assertFalse(markers)
-        self.assertEqual(len(elements), 100)
-        self.assertEqual({command["edge"] for command in commands if command["type"] == "marker"},
-                         {relation["index"] for relation in demo.map_graph(fixture(), descriptor())})
+                if command["type"] == "clear":
+                    jobs.clear()
+                elif command["type"] == "upsert":
+                    jobs[command["id"]] = command
+                else:
+                    self.assertIn(command["id"], jobs)
+                    del jobs[command["id"]]
+            self.assertLessEqual(len(jobs), 2, "The tour must not flood the graph with jobs")
+            if len(jobs) == 2:
+                values = list(jobs.values())
+                shared |= (values[0]["edge"] is not None and
+                           values[0]["edge"] == values[1]["edge"] and
+                           values[0]["nodes"] == values[1]["nodes"])
+        self.assertTrue(shared)
+        self.assertEqual(set(jobs), {"order-42"})
+        self.assertEqual(jobs["order-42"]["status"], "success")
+        self.assertIn("finished", runner.snapshot()["phase"])
+
+    def test_step_by_step_waits_and_can_be_advanced_or_cancelled(self):
+        runner = demo.Demo(FakeApi(), fixture(), step_by_step=True)
+        ready = threading.Event()
+        with patch.object(runner.next_chapter, "clear", side_effect=lambda: ready.set()):
+            worker = threading.Thread(target=runner.pause, args=(1,))
+            worker.start()
+            self.assertTrue(ready.wait(1))
+            # Synchronize with the pause's locked state, not an arbitrary sleep.
+            for _ in range(1000):
+                if runner.snapshot()["waiting_for_next"]:
+                    break
+                threading.Event().wait(0.001)
+            self.assertTrue(runner.snapshot()["waiting_for_next"])
+            runner.advance()
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+        self.assertFalse(runner.snapshot()["waiting_for_next"])
+        with self.assertRaisesRegex(RuntimeError, "not waiting"):
+            runner.advance()
+        runner.cancel.set()
+        with self.assertRaises(demo.Cancelled):
+            runner.pause(1)
+
+    def test_dashboard_is_idle_by_default_and_autoplay_is_explicit(self):
+        for autoplay in (False, True):
+            arguments = ["demo", "--api", "http://127.0.0.1:8088"]
+            if autoplay:
+                arguments.append("--autoplay")
+            with patch.object(sys, "argv", arguments), \
+                    patch.dict(os.environ, {"STRUCTVIEW_API_TOKEN": "test-token"}), \
+                    patch.object(demo, "Api", return_value=FakeApi()), \
+                    patch.object(demo, "DemoServer") as server, \
+                    patch.object(demo.Demo, "start") as start, patch("builtins.print"):
+                self.assertEqual(demo.main(), 0)
+                server.return_value.serve_forever.assert_called_once()
+                if autoplay:
+                    start.assert_called_once_with("both")
+                else:
+                    start.assert_not_called()
+
+    def test_missing_jobs_capability_is_reported(self):
+        runner = demo.Demo(FakeApi(), fixture())
+        with patch.object(runner.api, "request", return_value={"features": ["scheduled"]}):
+            with self.assertRaisesRegex(RuntimeError, "requires.*jobs support"):
+                runner.execute("both")
 
     def test_manual_controls_cover_all_commands_and_keep_layers_independent(self):
         api = FakeApi()
@@ -190,18 +260,37 @@ class DemoTests(unittest.TestCase):
         for status in ("waiting", "running", "success", "error"):
             runner.control({"action": "element", "status": status})
             self.assertEqual(api.calls[-1][1]["commands"][0]["status"], status)
+        runner.control({"action": "element", "process_id": "job-2", "label": "Invoice",
+                        "stage": "Posting"})
+        element = api.calls[-1][1]["commands"][0]
+        self.assertEqual((element["id"], element["label"], element["stage"]),
+                         ("job-2", "Invoice", "Posting"))
+        runner.control({"action": "marker", "process_id": "job-2", "label": "Invoice",
+                        "stage": "Posting"})
+        marker = api.calls[-1][1]["commands"][0]
+        self.assertEqual((marker["id"], marker["label"], marker["stage"]),
+                         ("job-2", "Invoice", "Posting"))
         for action, path in (("graph", "/v1/graph"), ("scheduled_state", "/v1/animation"),
-                             ("live_state", "/v1/realtime")):
+                             ("live_state", "/v1/realtime"), ("jobs_state", "/v1/jobs"),
+                             ("capabilities", "/v1/capabilities")):
             runner.control({"action": action})
             self.assertEqual(api.calls[-1], (path, None, None))
         for path, body in (("/v1/animation", {"steps": [{"command": {"type": "clear"}}]}),
-                           ("/v1/realtime", {"commands": [{"type": "clear"}]})):
+                           ("/v1/realtime", {"commands": [{"type": "clear"}]}),
+                           ("/v1/jobs", {"commands": [{"type": "clear"}]})):
             runner.control({"action": "raw", "path": path, "body": body})
             self.assertEqual(api.calls[-1][1], {**body, "graph_id": "demo-graph"})
+        for action, kind in (("job", "upsert"), ("remove_job", "remove"), ("clear_jobs", "clear")):
+            runner.control({"action": action, "process_id": "invoice", "label": "Invoice",
+                            "stage": "Posting"})
+            self.assertEqual(api.calls[-1][0], "/v1/jobs")
+            self.assertEqual(api.calls[-1][1]["commands"][0]["type"], kind)
         for values in ({"action": "camera_zoom", "zoom": 4},
                        {"action": "highlight", "node": "missing"},
                        {"action": "raw", "path": "/unknown", "body": {}},
-                       {"action": "unknown"}, {"action": "flow", "color": [300, 0, 0]}):
+                       {"action": "unknown"}, {"action": "flow", "color": [300, 0, 0]},
+                       {"action": "marker", "process_id": " "},
+                       {"action": "element", "stage": ""}):
             with self.assertRaises(ValueError):
                 runner.control(values)
         worker = unittest.mock.Mock()
@@ -272,8 +361,10 @@ class DemoTests(unittest.TestCase):
                 page = response.read().decode()
             self.assertIn("Scheduled", page)
             for control in ("camera_fit", "camera_focus", "camera_zoom", "flow_percent",
-                            "remove_marker", "remove_element", "clear_live", "clear_scheduled", "raw"):
+                            "remove_marker", "remove_element", "clear_live", "clear_scheduled", "raw",
+                            "job", "remove_job", "clear_jobs", "jobs_state", "capabilities"):
                 self.assertIn(control, page)
+            self.assertIn("Next chapter", page)
             self.assertNotIn("Bearer", page)
             headers = {"Origin": server.origin, "X-Demo-Token": server.control_token}
             request = urllib.request.Request(server.origin + "/run?mode=realtime", headers=headers, method="POST")
@@ -283,10 +374,15 @@ class DemoTests(unittest.TestCase):
             request = urllib.request.Request(server.origin + "/stop", headers=headers, method="POST")
             urllib.request.urlopen(request).close()
             stop.assert_called_once()
+            with patch.object(runner, "advance") as advance:
+                request = urllib.request.Request(server.origin + "/next", headers=headers, method="POST")
+                urllib.request.urlopen(request).close()
+                advance.assert_called_once()
             for action in ("camera_fit", "camera_focus", "camera_zoom", "highlight", "flow",
                            "flow_percent", "marker", "element", "element_custom", "remove_marker",
                            "remove_element", "clear_live", "clear_scheduled", "graph",
-                           "scheduled_state", "live_state", "raw"):
+                           "scheduled_state", "live_state", "jobs_state", "capabilities",
+                           "job", "remove_job", "clear_jobs", "raw"):
                 values = {"action": action}
                 if action == "raw":
                     values.update(path="/v1/realtime", body={"commands": [{"type": "clear"}]})
@@ -326,6 +422,7 @@ class DemoTests(unittest.TestCase):
                     self.send_error(401)
                     return
                 self.respond(descriptor() if self.path == "/v1/graph"
+                             else {"features": ["jobs"]} if self.path == "/v1/capabilities"
                              else {"graph_id": "demo-graph", "running": False})
 
             def do_POST(self):
@@ -350,6 +447,7 @@ class DemoTests(unittest.TestCase):
         self.assertIn("payment failed; retrying", result.stdout)
         self.assertTrue(any(path == "/v1/animation" for path, _ in calls))
         self.assertTrue(any(path == "/v1/realtime" for path, _ in calls))
+        self.assertTrue(any(path == "/v1/jobs" for path, _ in calls))
 
 
 if __name__ == "__main__":

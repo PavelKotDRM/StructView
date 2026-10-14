@@ -17,7 +17,7 @@ use super::paths::{
 ///
 /// Возвращает сообщение для пользователя, если значение пустое или не
 /// является допустимым JSON-литералом.
-pub(in crate::app) fn apply_primitive_edit(
+pub fn apply_primitive_edit(
     node: &mut JsonNode,
     edited: &str,
     format: DataFormat,
@@ -72,7 +72,7 @@ pub(in crate::app) fn apply_primitive_edit(
 }
 
 /// Добавить поле или элемент с типом, выбранным в конструкторе значения.
-pub(in crate::app) fn add_typed_child_at_path(
+pub fn add_typed_child_at_path(
     root: &mut JsonNode,
     parent_path: &str,
     key: &str,
@@ -116,7 +116,7 @@ fn add_comment_child_at_path(
 }
 
 /// Изменить существующее поле или элемент через конструктор значения.
-pub(in crate::app) fn edit_child_at_path(
+pub fn edit_child_at_path(
     root: &mut JsonNode,
     path: &str,
     new_key: Option<&str>,
@@ -192,11 +192,7 @@ fn validated_new_key(
     Ok(new_key.map(str::to_string))
 }
 
-pub(in crate::app) fn rename_at_path(
-    root: &mut JsonNode,
-    path: &str,
-    new_key: &str,
-) -> Result<(), String> {
+pub fn rename_at_path(root: &mut JsonNode, path: &str, new_key: &str) -> Result<(), String> {
     if !is_object_child(root, path) {
         return Err("Имя можно изменить только у поля объекта".to_string());
     }
@@ -216,7 +212,7 @@ pub(in crate::app) fn rename_at_path(
 }
 
 /// Проверить, является ли узел полем объекта и поэтому допускает переименование.
-pub(in crate::app) fn is_object_child(root: &JsonNode, path: &str) -> bool {
+pub fn is_object_child(root: &JsonNode, path: &str) -> bool {
     find_parent(root, path).is_some_and(|parent| {
         parent.value_type == JsonValueType::Object
             && parent

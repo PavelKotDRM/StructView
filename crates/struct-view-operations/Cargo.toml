@@ -1,0 +1,15 @@
+[package]
+name = "struct-view-operations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared document editing and export operations"
+
+[dependencies]
+arboard.workspace = true
+serde_json.workspace = true
+struct-view-core = { path = "../struct-view-core" }
+
+# Native clipboard support without XWayland on Wayland.
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))'.dependencies]
+arboard = { workspace = true, features = ["wayland-data-control"] }

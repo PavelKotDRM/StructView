@@ -661,22 +661,31 @@ fn graph_routing_parallel_timing() {
 #[test]
 #[ignore = "Manual large-fixture routing benchmark; run with --release --ignored --nocapture"]
 fn graph_routing_large_fixture_timing() {
-    let (positions, endpoints) = large_routing_fixture_inputs();
-    assert_eq!(positions.len(), 240);
-    assert_eq!(endpoints.len(), 1320);
-    let ports = graph_edge_ports(&positions, &endpoints);
-    let grid = GraphRoutingGrid::new(&positions);
-    let workers = 4;
+    let graph = large_routing_fixture_graph();
+    assert_eq!(graph.nodes.len(), 240);
+    assert_eq!(graph.edges.len(), 1320);
     let started = std::time::Instant::now();
-    let routes = route_graph_edges(&grid, &endpoints, &ports, workers);
+    let layout = crate::app::views::graph::build_graph_routing_layout(&graph);
     println!(
-        "Large fixture routing: {workers} workers, {:?}, {} nodes, {} edges",
+        "Large fixture automatic layout and routing: {:?}, {} nodes, {} edges",
         started.elapsed(),
-        positions.len(),
-        routes.len()
+        graph.nodes.len(),
+        layout.edge_paths.len()
     );
-    assert_eq!(routes.len(), endpoints.len());
-    for (index, route) in routes.iter().enumerate() {
+    assert_eq!(layout.edge_paths.len(), graph.edges.len());
+    let endpoints = graph
+        .edges
+        .iter()
+        .map(|edge| (edge.source, edge.target))
+        .collect::<Vec<_>>();
+    let routed_nodes = (0..graph.nodes.len()).collect::<Vec<_>>();
+    let grid = GraphRoutingGrid::new_for_graph(
+        &layout.node_positions,
+        &layout.node_sizes,
+        &routed_nodes,
+        RoutingSearchBackend::Builtin,
+    );
+    for (index, route) in layout.edge_paths.iter().enumerate() {
         assert!(
             route
                 .iter()
@@ -694,6 +703,34 @@ fn graph_routing_large_fixture_timing() {
             }
         }
     }
+}
+
+fn large_routing_fixture_graph() -> RelationshipGraph {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/large-routing-graph.json"
+    ))
+    .unwrap();
+    let fixture: serde_json::Value = serde_json::from_str(&fixture).unwrap();
+    let entities = fixture["entities"].as_object().unwrap();
+    let nodes = entities
+        .iter()
+        .map(|(id, label)| serde_json::json!({"id": id, "label": label}))
+        .collect::<Vec<_>>();
+    let edges = fixture["relations"]["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|edge| serde_json::json!({"source": edge[0], "target": edge[1]}))
+        .collect::<Vec<_>>();
+    layout_graph(
+        &serde_json::json!({
+            "graph": {"type": "directed_multigraph"},
+            "nodes": nodes,
+            "edges": edges
+        })
+        .to_string(),
+    )
 }
 
 fn large_routing_fixture_inputs() -> (Vec<Pos2>, Vec<(usize, usize)>) {

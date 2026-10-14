@@ -4,7 +4,9 @@ members = [
     "crates/struct-view-build-info",
     "crates/struct-view-cli",
     "crates/struct-view-core",
+    "crates/struct-view-operations",
     "crates/struct-view-routing",
+    "crates/struct-view-animation-api",
     "crates/struct-view-ui",
 ]
 resolver = "3"
@@ -28,6 +30,8 @@ serde = "1"
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 serde_yaml_ng = "0.10"
 struct-view-routing = { path = "crates/struct-view-routing" }
+struct-view-animation-api = { path = "crates/struct-view-animation-api" }
+struct-view-operations = { path = "crates/struct-view-operations" }
 tempfile = "3"
 toml = "1"
 vergen = { version = "10", features = ["build", "cargo", "rustc"] }

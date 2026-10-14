@@ -219,11 +219,7 @@ pub(super) fn explicit_edge_label(edge: &JsonNode, weight_unit: &str) -> String 
     edge_label_with_id(edge, weight_unit, true)
 }
 
-pub(in crate::app::visualization::graph) fn edge_label_with_id(
-    edge: &JsonNode,
-    weight_unit: &str,
-    include_id: bool,
-) -> String {
+pub fn edge_label_with_id(edge: &JsonNode, weight_unit: &str, include_id: bool) -> String {
     let mut parts = Vec::new();
     if let Some(relation) =
         object_scalar(edge, &["label", "name", "relation"]).filter(|relation| !relation.is_empty())

@@ -1,0 +1,100 @@
+[graph]
+name = "Интернет-магазин: обработка заказа"
+directed = true
+description = "Краткий путь заказа от покупателя до оплаты и доставки"
+entity_count = 8
+relation_count = 9
+
+[[entities]]
+id = "customer"
+name = "Покупатель"
+attributes = ["id", "name", "email"]
+
+[[entities]]
+id = "order"
+name = "Заказ"
+attributes = ["id", "created_at", "status", "total"]
+
+[[entities]]
+id = "order_item"
+name = "Позиция заказа"
+attributes = ["id", "quantity", "unit_price"]
+
+[[entities]]
+id = "product"
+name = "Товар"
+attributes = ["id", "name", "price", "stock"]
+
+[[entities]]
+id = "payment"
+name = "Оплата"
+attributes = ["id", "amount", "method", "status"]
+
+[[entities]]
+id = "delivery"
+name = "Доставка"
+attributes = ["id", "address", "tracking_number", "status"]
+
+[[entities]]
+id = "warehouse"
+name = "Склад"
+attributes = ["id", "name", "address"]
+
+[[entities]]
+id = "support_ticket"
+name = "Обращение поддержки"
+attributes = ["id", "subject", "priority", "status"]
+
+[[relations]]
+id = "customer_orders"
+source = "customer"
+target = "order"
+name = "размещает"
+
+[[relations]]
+id = "order_items"
+source = "order"
+target = "order_item"
+name = "содержит"
+
+[[relations]]
+id = "item_product"
+source = "order_item"
+target = "product"
+name = "выбранный товар"
+
+[[relations]]
+id = "order_payments"
+source = "order"
+target = "payment"
+name = "оплачивается"
+
+[[relations]]
+id = "order_delivery"
+source = "order"
+target = "delivery"
+name = "доставляется"
+
+[[relations]]
+id = "product_warehouse"
+source = "product"
+target = "warehouse"
+name = "хранится"
+
+[[relations]]
+id = "warehouse_delivery"
+source = "warehouse"
+target = "delivery"
+name = "отправляет"
+
+[[relations]]
+id = "customer_support"
+source = "customer"
+target = "support_ticket"
+name = "обращается"
+
+[[relations]]
+id = "support_order"
+source = "support_ticket"
+target = "order"
+name = "по заказу"

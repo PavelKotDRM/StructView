@@ -31,7 +31,10 @@ fn main() -> ExitCode {
     match command {
         Command::Gui { file } => run_gui(file.into_iter().collect()),
         Command::GuiCompare { files } => run_gui(files),
-        other => match cli::run(&other) {
+        other => match cli::run_with_graph_image_renderer(
+            &other,
+            &struct_view::app::headless::GuiGraphImageRenderer,
+        ) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::FAILURE,
             Err(err) => {

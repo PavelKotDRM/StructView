@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use struct_view_core::graph::EdgeDirection;
 
 #[derive(Clone, Debug)]
-pub(in crate::app) struct GraphDocument {
+pub struct GraphDocument {
     pub metadata: Map<String, Value>,
     pub nodes: Vec<Value>,
     pub edges: Vec<Value>,

@@ -9,9 +9,17 @@
 //! | Crate | Responsibility |
 //! |-------|----------------|
 //! | `struct-view-core` | Parsing, document trees, search, and comparison |
+//! | `struct-view-operations` | Shared editing, clipboard, graph documents, and visualization models |
+//! | `struct-view-routing` | Graph algorithms and orthogonal routing |
+//! | `struct-view-animation-api` | Framework-independent authenticated HTTP/HTTPS transport |
 //! | `struct-view-cli` | Command-line parsing and headless commands |
-//! | `struct-view-ui` | Native GUI, views, editing, and clipboard |
+//! | `struct-view-ui` | Native GUI, editor windows, graph rendering, and animation/job state |
 //! | `struct-view-build-info` | Shared compile-time build metadata |
+//!
+//! The executable composes CLI and GUI; neither frontend depends on the other.
+//! Both use shared core/operations models. The GUI supplies graph image rendering
+//! through the renderer interface, while the transport crate delegates graph
+//! validation and animation state to its embedding application.
 
 #![deny(warnings)]
 

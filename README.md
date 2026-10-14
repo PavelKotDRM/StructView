@@ -28,6 +28,10 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 - graph links inferred from common entity identifiers and reference fields;
 - per-edge directed, undirected, bidirectional, and reverse links, mixed graphs,
   and self-loops in the GUI and graph exports;
+- optional authenticated graph animation API with scheduled camera/effects,
+  persistent realtime markers, and independently managed jobs;
+- named jobs with stage-local progress, status badges, hover details, and a
+  focusable job list; concurrent jobs can share the same nodes and routes;
 - CSV export of table rows, respecting the active search filter;
 - JSON Schema and OpenAPI schema views, including component and inline path
   schemas, with inferred sample structure for ordinary data documents;
@@ -371,9 +375,10 @@ show an error instead of an outdated preview.
 ### Graph animation API
 
 Open a graph in the relationship view and wait for its layout to finish.
-Choose **Settings -> Graph animation API -> Enable API server**. Port `0`
+Choose **Settings -> Graph animation API** to open the API settings window.
+The window can be detached and docked back into the main window. Port `0`
 selects an available port; alternatively set an explicit port before enabling.
-The submenu displays the actual `http://127.0.0.1:PORT` address and a selectable
+The window displays the actual `http://127.0.0.1:PORT` address and a selectable
 Bearer token. All requests require `Authorization: Bearer TOKEN`.
 The API is off by default, initially listens on IPv4 loopback, rejects browser
 `Origin` requests, and requires a configured `Host` header. Use a local or remote
@@ -381,12 +386,26 @@ script or another native application, not a browser page. Keep the token
 private. **Disable API** closes the listener and stops playback; enabling it
 again generates a new token. Neither the token nor enabled state is saved.
 
-The API menu includes **Copy token**, **Paste token**, **Apply token**, and
+The API window includes **Copy token**, **Paste token**, **Apply token**, and
 **Generate new token**. A custom token must contain 16–256 printable ASCII
 characters without spaces; use a long random secret. Applying or regenerating
 changes authentication immediately without restarting the listener or playback.
 Old credentials are rejected for new requests; already authorized requests may
 finish. Restart external controllers with the new token. No token is persisted.
+
+The server controls three independent visual layers:
+
+| Layer | Use | Lifetime and cleanup |
+| --- | --- | --- |
+| Scheduled (`/v1/animation`) | One timed scenario with camera, highlights, and flow | New scenarios replace playback; scheduled `clear` affects only this layer |
+| Realtime (`/v1/realtime`) | Low-level persistent marker and element effects | Explicit updates/removal; realtime `clear` affects only this layer |
+| Jobs (`/v1/jobs`) | Up to 64 independently identified task snapshots | Explicit updates/removal; jobs `clear` affects only this layer |
+
+Use jobs for concurrent processes with labels, stages, statuses, and progress.
+They are visual representations of externally running work, not a worker
+queue: the API does not execute tasks or provide per-job pause/resume.
+The scheduled player remains a single scenario; concurrency is represented
+by independent jobs or realtime IDs. Global stop clears all three layers.
 
 Commands animate the existing automatically laid-out graph without editing
 entities, attributes, routes, undo history, or saved files. Highlights and
@@ -397,19 +416,30 @@ required. It cannot move individual nodes or edit a document.
 
 | Method | Endpoint | JSON response / behavior |
 | --- | --- | --- |
+| GET | `/v1/capabilities` | API version, features, job commands, statuses, and limits; also works without an active graph |
 | GET | `/v1/graph` | `{graph_id, nodes:[{id,label}], edges:[{index,source,target,label,direction}]}` |
 | GET | `/v1/animation` | `{graph_id,running}` |
 | POST | `/v1/animation` | Accept a scenario, replacing playback; `{accepted:true,duration_ms}` |
-| POST | `/v1/animation/stop` | Empty body; stop the scenario and clear all realtime effects; `{stopped:true}`, also outside the graph view |
+| POST | `/v1/animation/stop` | Empty body; stop the scenario and clear realtime effects and jobs; `{stopped:true}`, also outside the graph view |
 | GET | `/v1/realtime` | `{graph_id,markers,elements}` — persistent visual state |
 | POST | `/v1/realtime` | Atomically apply realtime commands; `{accepted:true}` |
+| GET | `/v1/jobs` | `{graph_id,jobs:[...]}` — independent jobs, stages, targets, and progress |
+| POST | `/v1/jobs` | Atomically upsert/remove/clear jobs; `{accepted:true,job_count}` |
 
-For scenario requests, send `Content-Type: application/json` and a
+For JSON POST requests, send `Content-Type: application/json` and a
 `Content-Length` (standard Python/PowerShell clients do this automatically).
 Read `/v1/graph` first. Node targets use its string IDs; links use its zero-based
 **indexes**, not the document's link IDs, so parallel links are distinguishable.
 Send the returned `graph_id` unchanged; after graph changes fetch the descriptor
 again. Unknown or ambiguous node IDs and unknown link indexes are rejected.
+Hover over an entity or link to inspect each execution's label, current stage,
+status, and marker progress/target while smoothing is in progress. Multiple
+execution IDs may target the same entity or link simultaneously; their route
+markers are drawn in separate lanes. Node badges include a short label, ID,
+status, and stage; marker labels show the job and visible progress. Long badge
+text is shortened, and nodes show at most three badges with a remaining-count
+indicator. Full details remain in tooltips. For the jobs API, the expandable
+**Graph jobs** list shows all jobs; click a location button to focus its node.
 
 Scenario shape:
 
@@ -523,6 +553,58 @@ Invoke-RestMethod "$base/v1/animation" -Headers $headers
 # Invoke-RestMethod "$base/v1/animation/stop" -Method Post -Headers $headers
 ```
 
+#### Jobs: independent executions
+
+Use `/v1/jobs` for application-level tasks instead of manually coordinating
+marker and element IDs. The old scheduled and realtime APIs remain compatible
+and independent. Each job has a stable ID, display label, current stage,
+status, target nodes, an optional route, and stage-local progress.
+
+Read `/v1/capabilities` to discover support and limits, then `/v1/graph` to
+resolve node IDs and edge indexes. Submit a batch:
+
+```json
+{
+  "graph_id": "COPY_FROM_GET_GRAPH",
+  "commands": [
+    {"type": "upsert", "id": "order-42", "label": "Order #42", "stage": "Capturing payment",
+     "status": "running", "nodes": ["payment"], "edge": 0, "percent": 45,
+     "color": [40, 160, 255], "smoothing_ms": 300},
+    {"type": "upsert", "id": "risk-42", "label": "Risk review #42", "stage": "Checking payment",
+     "status": "running", "nodes": ["payment"], "edge": 0, "percent": 30,
+     "color": [255, 160, 40]}
+  ]
+}
+```
+
+- `upsert` is a **full snapshot**, not a partial patch. Required fields are
+  `id`, `label`, `stage`, and `status`; status is `waiting`, `running`, `success`,
+  or `error`. Supply `nodes` and/or an `edge`. Updating a job does not affect
+  other jobs, even when their targets overlap.
+- Optional fields: `nodes:[]`, `edge:null`, `percent:0`, `reverse:false`,
+  `smoothing_ms:300`, and RGB `color`. Missing color keeps the job's existing
+  color, or assigns a deterministic palette color to a new ID.
+- For the same stage, edge, and direction, progress targets increase
+  monotonically and marker position is preserved. Changing any of these starts
+  a new stage-local marker from zero. Use a **new stage name** for retry attempts.
+  Node-only jobs show the reported percentage in the job list.
+- `GET /v1/jobs` returns each full snapshot, resolved `color`, the accepted
+  target `percent`, and smoothed `current_percent`. Completed or failed jobs
+  remain visible until explicitly removed. The list shows target progress;
+  route labels and tooltips show current visible progress.
+- To stop one job, send `{"type":"remove","id":"risk-42"}`. To clear only jobs,
+  send `{"type":"clear"}` to `/v1/jobs`. Neither operation stops scheduled
+  animation or clears legacy realtime effects. Unknown job IDs return `400`.
+- Batches contain 1–64 commands, with at most 64 jobs in total. ID limit is
+  128 UTF-8 bytes; label and stage must be nonblank and at most 256 bytes each.
+  `percent` is `0..100`, smoothing is `16..10000` ms, and a job supports at most
+  1024 node/link targets. Invalid batches are atomic: they leave all prior
+  jobs unchanged. Stale graph IDs return `409`. Existing transport limits,
+  authentication, and TLS apply.
+- Graph invalidation/view changes, disabling the API, and global **Stop**
+  remove jobs along with both older layers. Jobs are visual-only: they never
+  edit the document and are not exported or persisted to disk.
+
 #### Real-time markers and element states
 
 Realtime updates run alongside a scenario; starting a new scenario or its
@@ -536,8 +618,9 @@ Send updates to `POST /v1/realtime`:
 {
   "graph_id": "COPY_FROM_GET_GRAPH",
   "commands": [
-    {"type": "marker", "id": "transfer-42", "edge": 0, "percent": 37.5, "smoothing_ms": 300, "color": [40, 200, 255]},
-    {"type": "element", "id": "worker-state", "nodes": ["a"], "edges": [0], "status": "running"}
+    {"type": "marker", "id": "transfer-42", "edge": 0, "percent": 37.5, "smoothing_ms": 300, "color": [40, 200, 255], "label": "Order fulfillment", "stage": "Reserving stock"},
+    {"type": "element", "id": "transfer-42", "nodes": ["a"], "edges": [0], "status": "running", "label": "Order fulfillment", "stage": "Reserving stock"},
+    {"type": "marker", "id": "risk-42", "edge": 0, "percent": 62, "label": "Risk review", "stage": "Checking payment"}
   ]
 }
 ```
@@ -545,7 +628,12 @@ Send updates to `POST /v1/realtime`:
 - A marker starts at `0%` and smoothly approaches the highest percentage
   received for its ID. Updating `37.5 -> 60 -> 100` changes its target without
   resetting position or restarting motion. A delayed lower value never moves
-  it backwards. Each ID is independent, so multiple jobs may share a link.
+  it backwards. Each ID is independent, so multiple jobs may share a link;
+  each marker is lane-offset so concurrent executions remain visible.
+- Optional `label` and `stage` metadata (up to 256 UTF-8 bytes each) is shown
+  when hovering the affected link or entity. Reuse the same ID across a marker
+  and element effect to associate their progress, status, and stage; different
+  IDs remain independent. Omitted marker metadata preserves the existing value.
 - `smoothing_ms` defaults to `300` and is the exponential smoothing time
   constant, **not a fixed travel duration**: about 63% of the remaining gap is
   covered per interval, about 95% after three intervals. The last gap below
@@ -562,6 +650,8 @@ Send updates to `POST /v1/realtime`:
 - `element` replaces the effect with the same ID. Supply `nodes` and/or `edges`.
   `status` may be `waiting` (gray), `running` (blue/pulsing), `success` (green),
   or `error` (red/pulsing). Nodes also display a localized status badge.
+  Optional `label` and `stage` identify the execution and current phase in
+  entity/link tooltips.
   Explicit `color:[r,g,b]` and `pulse:true/false` override status defaults.
   With no status, the default is a steady amber highlight.
 - Send `{"type":"remove_element","id":"worker-state"}` to remove an effect, or
@@ -622,8 +712,8 @@ Leave the application and graph view open. Before enabling the server:
 3. Set a fixed port for other machines. If listening on all interfaces, fill
    **Public IP or DNS host** with the IP/name clients will use, **without**
    scheme, port, or path. For a concrete listen IP this is optional, but use it
-   when clients connect by DNS. IPv6 URLs use brackets. The submenu displays
-   the client URL and the actual listen socket separately.
+   when clients connect by DNS. IPv6 URLs use brackets. The settings window
+   displays the client URL and the actual listen socket separately.
 4. Allow inbound traffic in the system firewall only for trusted clients.
    The application does not alter firewall rules or open router ports.
 
@@ -676,15 +766,21 @@ One slow client no longer blocks others. Excess HTTP clients receive `503`;
 excess TLS clients are disconnected before handshake. Disabling joins client
 workers and releases the listener; it may briefly wait for their I/O deadlines.
 
-#### Graph.toml demo server (Python)
+#### Compact graph animation demo (Python)
 
 The standard-library controller [tests/demo_graph_animation.py](tests/demo_graph_animation.py)
-demonstrates [tests/fixtures/Graph.toml](tests/fixtures/Graph.toml).
+demonstrates the compact, connected
+[tests/fixtures/GraphAnimationDemo.toml](tests/fixtures/GraphAnimationDemo.toml):
+8 entities and 9 relationships along a concise order/payment/delivery workflow.
 It requires **Python 3.11+**, no pip packages. StructView recognizes the fixture's
 `[[entities]]` and `[[relations]]` arrays as an explicit node/link graph.
-The fixture contains **100 entities and 250 unique relationships** spanning
-catalog, warehouse, delivery, finance, marketing, support and integrations.
-It can be reproduced with `python tests\generate_shop_graph.py`.
+See the [Russian](tests/README.md) or
+[English](tests/README.en.md) quick-start guide for step-by-step launch
+instructions.
+For the larger 100-entity, 250-relationship layout demo, open
+[tests/fixtures/Graph.toml](tests/fixtures/Graph.toml) and pass
+`--graph tests\fixtures\Graph.toml`; regenerate that stress fixture with
+`python tests\generate_shop_graph.py`.
 
 1. Open the fixture in StructView, select the relationship graph, and wait for
    layout/routing to finish.
@@ -700,14 +796,32 @@ Enter the token at the hidden prompt. Alternatively the script reads
 files or command-line arguments. For HTTPS, use the HTTPS address and, if
 needed, `--ca C:\certs\ca.pem`; certificate verification remains enabled.
 
-The demo starts **both** modes automatically and opens a local control server
-at `http://127.0.0.1:8765` (open that URL in your browser):
+The controller opens a local dashboard at `http://127.0.0.1:8765`. It stays
+idle until you choose a mode: **Both**, **Scheduled**, or **Realtime**.
+Use `--step-by-step` to wait for **Next chapter** at each checkpoint, or
+`--autoplay` to start immediately with timed pauses.
 
-- **Scheduled:** precomputed highlighting and percentage flow through all 250
-  relationships in waves of ten, split into three bounded scenarios, with camera fit.
-- **Realtime:** waiting/running/success/error badges, smooth percentage
-  updates including rapid bursts and a delayed lower value, failed payment
-  followed by retry. Scheduled highlighting runs alongside live progress.
+For the first run, rebuild/restart StructView and use:
+
+```powershell
+python tests\demo_graph_animation.py --api http://127.0.0.1:8088 --step-by-step
+```
+
+Then open the printed dashboard URL and click **Both**. Checkpoints wait
+between demonstrations; they do not freeze the scheduled player. Transient
+scheduled effects finish before the checkpoint, while jobs remain available
+for inspection.
+
+- **Scheduled (chapters 1–9):** camera fit/focus/zoom, static and pulsing
+  highlights, full flow, percentage segments, reverse flow, and scheduled clear.
+  Each feature is isolated instead of animating every link at once.
+- **Realtime/jobs (chapters 10–19):** one waiting job, smooth progress and a late
+  lower update, a second job on the same route/node, changing stage/location,
+  error, retry, individual stop, compatibility with legacy realtime, independent
+  clearing, and state inspection. At most two jobs run at once.
+- Every chapter includes an explanation in the dashboard and console. Keep
+  StructView visible beside the dashboard to inspect badges, hover details,
+  and the focusable job list.
 - Dashboard buttons **Both**, **Scheduled**, **Realtime**, **Stop / clear**
   allow replay and cleanup. Status and errors appear in the page and console.
   Only one demonstration may run at once.
@@ -715,9 +829,10 @@ at `http://127.0.0.1:8765` (open that URL in your browser):
   Select an entity/link, color, duration, pulse and reverse direction.
 - **Manual effects:** highlight/pulse, full flow, percentage segment, realtime
   percentage updates with configurable smoothing, all four element statuses
-  with optional custom color/pulse, removal of the named marker/element effect.
-  Clear scheduled or realtime layers independently, or stop/clear both.
-- **API inspection / JSON console:** read the graph descriptor and both animation
+  with optional custom color/pulse, named execution ID/label/stage, removal of
+  the named marker/element effect. Use a distinct ID for each concurrent run.
+  Create/update/remove jobs and clear any layer independently, or stop all.
+- **API inspection / JSON console:** read capabilities, jobs, and older animation
   states. Send arbitrary scheduled steps/timestamps or atomic realtime batches;
   `graph_id` is filled from the verified graph. API errors are displayed.
   Stop the automatic demonstration before manual mutations, so commands cannot
@@ -725,21 +840,28 @@ at `http://127.0.0.1:8765` (open that URL in your browser):
 
 The script resolves link indexes from `/v1/graph`, verifies entity IDs and
 relationships against the TOML fixture, and refuses a mismatched graph.
-Starting a demo stops existing animations. Completed wave markers/link effects
-are removed; final node statuses remain visible until cleared. Realtime never
-retains more than 120 effects for this fixture, within the server limit of 256.
-At speed 1, scheduled playback takes about 40 seconds and realtime about 100
-seconds plus request overhead. Keep the graph view active. Ctrl+C stops playback, clears
-effects, and closes the demo server.
+Starting a tour stops existing animations and jobs. A completed job remains
+visible after the realtime tour for inspection; **Stop / clear** removes it.
+At speed 1 the complete guided tour takes roughly 90 seconds plus request
+overhead; manual checkpoints can be held as long as needed. Keep the graph
+view active. Ctrl+C stops playback, clears all layers, and closes the dashboard.
+The tour requires jobs support; it checks capabilities and reports an explicit
+error if the running StructView API is too old.
 The browser talks only to the local controller, which forwards authenticated
 requests to StructView; the StructView token is never embedded in the page.
 
 Options: `--mode scenario|realtime|both`, `--speed 0.1..10`, `--port 0` for an
 available dashboard port, `--graph PATH` for a fixture in the same shop schema,
-and `--once` to run without a dashboard and exit after completion:
+`--autoplay` for immediate timed playback, `--step-by-step` for manual
+checkpoints, and `--once` to run without a dashboard and exit after completion
+(cannot be combined with `--step-by-step`).
+
+`--once` starts immediately and leaves the final completed job visible; unlike
+Ctrl+C, normal completion does not send a global stop.
 
 ```powershell
 python tests\demo_graph_animation.py --api http://127.0.0.1:8088 --mode both --once --speed 2
+python tests\demo_graph_animation.py --api http://127.0.0.1:8088 --step-by-step
 python -B -m unittest discover -s tests -p test_demo_graph_animation.py -v
 ```
 
@@ -1103,9 +1225,10 @@ Table, schema, and graph-model exports show activity spinners while reading,
 parsing, and calculating. Progress is written to stderr and is omitted when
 stderr is redirected, so machine-readable stdout stays unchanged.
 
-The CLI reuses a window-free API in the UI crate for editing, clipboard
-envelopes, and visualization models, and the existing in-memory graph renderer
-for SVG/PNG. It does not initialize the native GUI.
+The CLI and GUI share editing, clipboard-envelope, and visualization logic from
+`struct-view-operations`. The executable supplies the GUI's in-memory renderer
+to the CLI for SVG/PNG exports; the CLI crate itself has no UI dependency and
+does not initialize a native window.
 
 ### Common options
 
@@ -1133,6 +1256,12 @@ cargo test --locked --workspace --all-features --doc
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 ```
 
+Test the standard-library demo controller and dashboard separately:
+
+```powershell
+python -B -m unittest discover -s tests -p test_demo_graph_animation.py -v
+```
+
 GitHub Actions runs the `Quality checks` workflow on pushes and pull requests;
 it can also be started manually from the Actions tab. Checks cover every
 workspace crate, CLI integration tests, and documentation examples.
@@ -1144,14 +1273,30 @@ Cargo workspace crates:
 
 - [`struct-view-core`](crates/struct-view-core/README.md) — parsing, document
   trees, search, and comparison;
+- [`struct-view-operations`](crates/struct-view-operations/README.md) —
+  shared editing, clipboard, and visualization operations;
 - [`struct-view-routing`](crates/struct-view-routing/README.md) — reusable
   weighted-graph algorithms, orthogonal routing, and an adjacency-list graph;
+- [`struct-view-animation-api`](crates/struct-view-animation-api/README.md) —
+  authenticated HTTP/HTTPS transport for graph animation;
 - [`struct-view-cli`](crates/struct-view-cli/README.md) — command-line parsing
   and headless commands;
 - [`struct-view-ui`](crates/struct-view-ui/README.md) — native GUI, views,
-  editing, and clipboard;
+  editor windows, graph rendering, and animation/job state;
 - [`struct-view-build-info`](crates/struct-view-build-info/README.md) — shared
   compile-time build metadata.
+
+The executable composes the CLI and GUI crates; both share `struct-view-core`
+and `struct-view-operations`, without depending on each other. The GUI integrates
+graph routing and the animation HTTP server. The
+`struct-view-animation-api` crate is framework-independent: an embedding
+application provides an optional wake callback and handles domain-specific
+requests itself.
+Shared editing, clipboard envelopes, graph documents, and table/schema/graph
+models belong to `struct-view-operations`, not to the UI. Graph image rendering
+remains in the UI; the executable injects its adapter into the CLI through
+`GraphImageRenderer`. Thus window-free CLI commands do not depend on the UI
+crate, even though the desktop executable composes both.
 
 The root `struct_view` crate is the executable entry point and compatibility
 facade; its documentation is this README. Its source layout is:
@@ -1168,37 +1313,53 @@ responsibilities. The `struct-view-build-info` crate embeds the Rust version,
 target platform, build time, and optimization mode. This information is
 available through `--version` and the `Help` menu.
 
-## Planned development stages
+## Development stages
 
-The following stages are planned improvements, not completed features.
+The stages below describe completed work, not a list of unimplemented features.
 
 ### Stage 1 — API server refinement
 
-- [ ] Refine the graph animation API server and its configuration.
-- [ ] Move the API server into a separate crate.
-- [ ] Move API server settings into a separate window that can be detached and
+- [x] Refine the graph animation API server and its configuration.
+- [x] Move the API server into a separate crate.
+- [x] Move API server settings into a separate window that can be detached and
   docked back into the main window.
-- [ ] Improve request validation, error reporting, and connection reliability.
-- [ ] Update API documentation, demonstration scenarios, and related tests.
+- [x] Improve request validation, error reporting, and connection reliability.
+- [x] Update API documentation, demonstration scenarios, and related tests.
 
 ### Stage 2 — Status on hover
 
-- [ ] Display the current animation status when hovering over an entity or link.
-- [ ] Show waiting, running, success, and error states; include marker progress
+- [x] Display the current animation status when hovering over an entity or link.
+- [x] Show waiting, running, success, and error states; include marker progress
   where applicable.
-- [ ] Clearly distinguish elements without an assigned status.
+- [x] Clearly distinguish elements without an assigned status.
 
 ### Stage 3 — Graph visualization refinement
 
-- [ ] Improve the readability of entities, links, labels, and status indicators.
-- [ ] Refine highlighting, animation effects, and camera interaction.
-- [ ] Check visualization performance on large graphs while preserving automatic
+- [x] Improve the readability of entities, links, labels, and status indicators.
+- [x] Refine highlighting, animation effects, and camera interaction.
+- [x] Check visualization performance on large graphs while preserving automatic
   layout and routing.
 
 ### Stage 4 — Codebase refactoring
 
-- [ ] Refactor the codebase to improve its structure, maintainability, and
-  consistency while preserving existing behavior.
+- [x] Separate animation API transport from GUI state and graph rendering,
+  preserving existing behavior through regression tests.
+- [x] Split graph animation and graph editor UI into focused playback, API,
+  window, dialog, and test submodules.
+- [x] Extract shared document editing, clipboard, graph documents, and
+  visualization models into `struct-view-operations`; remove the CLI's UI dependency.
+
+### Stage 5 — Independent jobs and guided demonstration
+
+- [x] Add capabilities discovery and atomic job snapshots with independent
+  IDs, stages, progress, route changes, retries, and removal.
+- [x] Preserve scheduled/realtime compatibility and independent layer cleanup.
+- [x] Show readable job badges, labeled route markers, hover details, and
+  location buttons in a job list.
+- [x] Replace bulk playback with 19 narrated chapters on an 8-node, 9-edge
+  fixture; start idle by default and support manual checkpoints.
+- [x] Document current API contracts, crate boundaries, and demo launch in
+  English and Russian.
 
 ## License
 

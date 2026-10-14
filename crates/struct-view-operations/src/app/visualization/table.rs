@@ -5,22 +5,22 @@ use struct_view_core::search::SearchState;
 
 /// Строка развёрнутой таблицы значений.
 #[derive(Debug, Clone)]
-pub(in crate::app) struct TableRow {
-    pub(in crate::app) path: String,
-    pub(in crate::app) value: String,
-    pub(in crate::app) value_type: JsonValueType,
-    pub(in crate::app) child_count: usize,
+pub struct TableRow {
+    pub path: String,
+    pub value: String,
+    pub value_type: JsonValueType,
+    pub child_count: usize,
 }
 
 /// Данные таблицы вместе с индексом для быстрого применения поиска.
 #[derive(Debug, Default)]
-pub(in crate::app) struct TableData {
-    pub(in crate::app) rows: Vec<TableRow>,
+pub struct TableData {
+    pub rows: Vec<TableRow>,
     path_indices: HashMap<String, usize>,
 }
 
 /// Построить строки таблицы, включая контейнеры и пустые значения.
-pub(in crate::app) fn build_table(root: &JsonNode) -> TableData {
+pub fn build_table(root: &JsonNode) -> TableData {
     let mut table = TableData::default();
     collect_table_rows(root, "$".to_string(), &mut table);
     table
@@ -52,10 +52,7 @@ fn collect_table_rows(node: &JsonNode, path: String, table: &mut TableData) {
 }
 
 /// Вернуть индексы строк, совпавших с результатами поиска по дереву.
-pub(in crate::app) fn table_visible_indices(
-    table: &TableData,
-    search: &SearchState,
-) -> Option<Vec<usize>> {
+pub fn table_visible_indices(table: &TableData, search: &SearchState) -> Option<Vec<usize>> {
     if search.query.is_empty() {
         return None;
     }
@@ -70,7 +67,7 @@ pub(in crate::app) fn table_visible_indices(
 }
 
 /// Экспортировать текущие строки таблицы в CSV с учётом активного поиска.
-pub(in crate::app) fn table_to_csv(table: &TableData, search: &SearchState) -> String {
+pub fn table_to_csv(table: &TableData, search: &SearchState) -> String {
     let mut output = String::from("path,value,type\r\n");
     if let Some(indices) = table_visible_indices(table, search) {
         for index in indices {

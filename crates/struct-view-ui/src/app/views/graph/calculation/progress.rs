@@ -51,27 +51,27 @@ pub(in crate::app::views::graph) struct GraphProgress {
     pub(in crate::app::views::graph) finished: Option<Duration>,
 }
 
-impl GraphProgressSnapshot {
-    pub(in crate::app::views::graph) fn from(progress: &GraphProgress) -> Self {
-        Self {
-            stage: progress.stage.map(GraphStage::label),
-            completed: progress.completed,
-            total: progress.total,
-            workers: progress.workers,
-            elapsed: progress
-                .finished
-                .unwrap_or_else(|| progress.started.elapsed())
-                .as_secs_f64(),
-            stage_elapsed: progress
-                .stage
-                .map_or(0.0, |_| progress.stage_started.elapsed().as_secs_f64()),
-            timings: progress
-                .timings
-                .iter()
-                .map(|(stage, duration)| (stage.label(), duration.as_secs_f64()))
-                .collect(),
-            finished: progress.finished.is_some(),
-        }
+pub(in crate::app::views::graph) fn graph_progress_snapshot(
+    progress: &GraphProgress,
+) -> GraphProgressSnapshot {
+    GraphProgressSnapshot {
+        stage: progress.stage.map(GraphStage::label),
+        completed: progress.completed,
+        total: progress.total,
+        workers: progress.workers,
+        elapsed: progress
+            .finished
+            .unwrap_or_else(|| progress.started.elapsed())
+            .as_secs_f64(),
+        stage_elapsed: progress
+            .stage
+            .map_or(0.0, |_| progress.stage_started.elapsed().as_secs_f64()),
+        timings: progress
+            .timings
+            .iter()
+            .map(|(stage, duration)| (stage.label(), duration.as_secs_f64()))
+            .collect(),
+        finished: progress.finished.is_some(),
     }
 }
 

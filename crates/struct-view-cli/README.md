@@ -12,6 +12,7 @@ The `cli` module exports:
 
 - `parse_args` and `Command` for parsing invocations;
 - `run` for executing parsed headless commands;
+- `run_with_graph_image_renderer` for hosts that provide graph image rendering;
 - `Source` for file and standard-input inputs;
 - `HELP` for the command-line help text.
 
@@ -41,8 +42,9 @@ struct-view-cli/
                     └── progress.rs
 ```
 
-This crate uses `struct-view-core` for document operations and
-`struct-view-ui` when clipboard-backed operations are needed. The executable
-dispatches its parsed commands through this crate. See the
+This crate uses `struct-view-core` and `struct-view-operations`; it does not
+depend on the GUI crate. The executable provides a graph image renderer through
+`run_with_graph_image_renderer`, keeping rendering in the GUI layer while
+allowing CLI commands to reuse it. See the
 [main README](../../README.md) for installation, usage, and the full feature
 list.

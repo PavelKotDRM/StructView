@@ -1,14 +1,15 @@
 use super::i18n::{Locale, TextKey};
 use super::state::{AppMode, DocumentReplacement, FileState, StructViewApp};
-use super::visualization::{RelationshipGraph, VisualizationMode, try_build_relationship_graph};
-use struct_view_core::parser::{DataFormat, JsonNode, node_to_value, parse_data};
+use super::visualization::{VisualizationMode, try_build_relationship_graph};
+use struct_view_core::parser::{DataFormat, JsonNode};
+#[cfg(test)]
+use struct_view_core::parser::{node_to_value, parse_data};
 
-mod model;
 #[cfg(test)]
 mod tests;
 mod ui;
 
-pub(super) use model::GraphDocument;
+pub(super) use struct_view_operations::app::graph_editor::GraphDocument;
 pub(super) use ui::CanvasTarget;
 pub(super) use ui::GraphEditorState;
 

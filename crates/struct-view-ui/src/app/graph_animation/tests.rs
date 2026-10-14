@@ -1,8 +1,17 @@
 use super::super::visualization::try_build_relationship_graph;
+use super::super::visualization::{RelationshipGraph, VisualizationMode};
 use super::server::{ApiOperation, ApiReply};
 use super::*;
+use crate::app::StructViewApp;
+use crate::app::i18n::TextKey;
+use egui::{Color32, Pos2, Vec2};
+use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::thread;
 use std::time::{Duration, Instant};
 use struct_view_core::parser::parse_json;
@@ -19,6 +28,18 @@ fn graph() -> RelationshipGraph {
         .unwrap(),
     )
     .unwrap()
+}
+
+#[test]
+fn api_payloads_are_schema_validated_before_checking_active_graph_state() {
+    assert!(decode_api_operation(ApiOperation::Play(json!([]))).is_err());
+    assert!(decode_api_operation(ApiOperation::Realtime(json!({}))).is_err());
+    assert!(matches!(
+        decode_api_operation(ApiOperation::Play(
+            serde_json::to_value(scenario(AnimationCommand::Clear)).unwrap()
+        )),
+        Ok(GuiApiOperation::Play(_))
+    ));
 }
 
 #[test]
@@ -83,6 +104,28 @@ fn entity_relation_arrays_reject_unknown_endpoints_and_ambiguous_aliases() {
     ] {
         assert!(try_build_relationship_graph(&parse_json(input).unwrap()).is_err());
     }
+}
+
+#[test]
+fn compact_animation_demo_fixture_builds_the_expected_graph() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("fixtures")
+        .join("GraphAnimationDemo.toml");
+    let input = std::fs::read_to_string(path).unwrap();
+    let (root, _) = struct_view_core::parser::parse_data(
+        &input,
+        Some(struct_view_core::parser::DataFormat::Toml),
+    )
+    .unwrap();
+    let graph = try_build_relationship_graph(&root).unwrap();
+    assert_eq!(graph.nodes.len(), 8);
+    assert_eq!(graph.edges.len(), 9);
+    assert!(graph.edges.iter().any(|edge| {
+        graph.nodes[edge.source].id == "order" && graph.nodes[edge.target].id == "payment"
+    }));
 }
 
 fn scenario(command: AnimationCommand) -> AnimationScenario {
@@ -376,7 +419,7 @@ fn post_json(server: &AnimationApiServer, path: &str, value: Value) -> thread::J
 
 #[test]
 fn http_api_requires_auth_rejects_browser_requests_and_enforces_limits() {
-    let server = AnimationApiServer::start(0, egui::Context::default()).unwrap();
+    let server = AnimationApiServer::start(0).unwrap();
     assert!(server.address().ip().is_loopback());
     assert_eq!(server.token().len(), 64);
     for (headers, status) in [
@@ -415,7 +458,20 @@ fn http_api_requires_auth_rejects_browser_requests_and_enforces_limits() {
 
 #[test]
 fn http_api_round_trip_delivers_commands_and_returns_gui_errors() {
-    let server = AnimationApiServer::start(0, egui::Context::default()).unwrap();
+    use super::server::ServerOptions;
+
+    let wake_count = Arc::new(AtomicUsize::new(0));
+    let wake_signal = Arc::clone(&wake_count);
+    let server = AnimationApiServer::start_with_waker(
+        ServerOptions {
+            port: 0,
+            ..Default::default()
+        },
+        move || {
+            wake_signal.fetch_add(1, Ordering::Relaxed);
+        },
+    )
+    .unwrap();
     let body = serde_json::to_string(&scenario(AnimationCommand::Flow {
         edge: 0,
         color: default_color(),
@@ -440,6 +496,7 @@ fn http_api_round_trip_delivers_commands_and_returns_gui_errors() {
         assert!(Instant::now() < deadline);
         thread::sleep(Duration::from_millis(5));
     };
+    assert!(wake_count.load(Ordering::Relaxed) > 0);
     assert!(matches!(request.operation, ApiOperation::Play(_)));
     request
         .reply
@@ -455,7 +512,7 @@ fn http_api_round_trip_delivers_commands_and_returns_gui_errors() {
 
 #[test]
 fn api_token_rotation_revokes_old_credentials_without_restarting_listener() {
-    let mut server = AnimationApiServer::start(0, egui::Context::default()).unwrap();
+    let mut server = AnimationApiServer::start(0).unwrap();
     let address = server.address();
     let old_header = header(&server, "GET", "/unknown");
     let old_token = server.token().to_owned();
@@ -551,7 +608,116 @@ fn marker(id: &str, edge: usize, percent: f64) -> RealtimeCommand {
         smoothing_ms: 300,
         color: default_color(),
         reverse: false,
+        label: None,
+        stage: None,
     }
+}
+
+#[test]
+fn realtime_runs_keep_independent_metadata_and_separate_markers_on_shared_edges() {
+    let graph = graph();
+    let commands = vec![
+        RealtimeCommand::Marker {
+            id: "fulfillment".into(),
+            edge: 0,
+            percent: 50.0,
+            smoothing_ms: 16,
+            color: [255, 0, 0],
+            reverse: false,
+            label: Some("Order fulfillment".into()),
+            stage: Some("Reserving stock".into()),
+        },
+        RealtimeCommand::Marker {
+            id: "fraud-check".into(),
+            edge: 0,
+            percent: 50.0,
+            smoothing_ms: 16,
+            color: [0, 0, 255],
+            reverse: false,
+            label: Some("Fraud review".into()),
+            stage: Some("Checking payment".into()),
+        },
+        RealtimeCommand::Element {
+            id: "fulfillment".into(),
+            nodes: vec!["a".into()],
+            edges: vec![0],
+            status: Some(ElementStatus::Running),
+            color: None,
+            pulse: None,
+            label: Some("Order fulfillment".into()),
+            stage: Some("Reserving stock".into()),
+        },
+        RealtimeCommand::Element {
+            id: "fraud-check".into(),
+            nodes: vec!["a".into()],
+            edges: vec![0],
+            status: Some(ElementStatus::Running),
+            color: None,
+            pulse: None,
+            label: Some("Fraud review".into()),
+            stage: Some("Checking payment".into()),
+        },
+    ];
+    let mut state =
+        realtime::RealtimeState::apply(None, realtime_update(commands), &graph, 0.0).unwrap();
+    state.advance(1.0);
+    state = realtime::RealtimeState::apply(
+        Some(state),
+        realtime_update(vec![RealtimeCommand::Marker {
+            id: "fulfillment".into(),
+            edge: 0,
+            percent: 50.0,
+            smoothing_ms: 16,
+            color: [255, 0, 0],
+            reverse: false,
+            label: None,
+            stage: None,
+        }]),
+        &graph,
+        1.0,
+    )
+    .unwrap();
+    let (statuses, markers) = state.statuses_for_edge(0);
+    assert_eq!(statuses.len(), 2);
+    assert_eq!(statuses[0].1.as_deref(), Some("Fraud review"));
+    assert_eq!(statuses[0].2.as_deref(), Some("Checking payment"));
+    assert_eq!(statuses[1].1.as_deref(), Some("Order fulfillment"));
+    assert_eq!(statuses[1].2.as_deref(), Some("Reserving stock"));
+    assert_eq!(markers.len(), 2);
+    let descriptor = state.descriptor(1.0, &graph);
+    assert_eq!(descriptor["markers"][0]["label"], "Fraud review");
+    assert_eq!(descriptor["markers"][1]["stage"], "Reserving stock");
+
+    let ctx = egui::Context::default();
+    let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        state.paint(
+            ui.painter(),
+            1.0,
+            AnimationCanvas {
+                positions: &[Pos2::ZERO, Pos2::new(100.0, 0.0)],
+                sizes: &[Vec2::splat(20.0); 2],
+                paths: &[vec![Pos2::ZERO, Pos2::new(100.0, 0.0)]],
+                zoom: 1.0,
+                offset: Vec2::ZERO,
+            },
+            super::super::i18n::Locale::English,
+        );
+    });
+    let marker_centers = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Circle(circle)
+                if circle.fill == Color32::RED || circle.fill == Color32::BLUE =>
+            {
+                Some(circle.center)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(marker_centers.len(), 2);
+    assert!((marker_centers[0].distance(marker_centers[1]) - 16.0).abs() < 0.1);
+    output.drop_without_applying_deltas();
 }
 
 #[test]
@@ -645,6 +811,27 @@ fn realtime_percent_updates_preserve_position_follow_maximum_and_finish_exactly(
 
 #[test]
 fn realtime_protocol_validates_percent_limits_targets_and_resource_caps() {
+    let metadata: RealtimeUpdate = serde_json::from_value(json!({
+        "graph_id":"id",
+        "commands":[
+            {"type":"marker","id":"process-1","edge":0,"percent":50,
+             "label":"Order processing","stage":"Charging payment"},
+            {"type":"element","id":"process-1","nodes":["a"],"edges":[0],
+             "status":"running","label":"Order processing","stage":"Charging payment"}
+        ]
+    }))
+    .unwrap();
+    let mut metadata_state = realtime::RealtimeState::apply(None, metadata, &graph(), 0.0).unwrap();
+    let metadata_descriptor = metadata_state.descriptor(0.0, &graph());
+    assert_eq!(
+        metadata_descriptor["markers"][0]["label"],
+        "Order processing"
+    );
+    assert_eq!(
+        metadata_descriptor["elements"][0]["stage"],
+        "Charging payment"
+    );
+
     for value in ["0", "12.5", "100"] {
         let input: RealtimeUpdate = serde_json::from_str(&format!(
                 r#"{{"graph_id":"id","commands":[{{"type":"marker","id":"m","edge":0,"percent":{value}}}]}}"#
@@ -676,6 +863,28 @@ fn realtime_protocol_validates_percent_limits_targets_and_resource_caps() {
             status: None,
             color: None,
             pulse: None,
+            label: None,
+            stage: None,
+        },
+        RealtimeCommand::Element {
+            id: "s".into(),
+            nodes: vec!["a".into()],
+            edges: vec![],
+            status: None,
+            color: None,
+            pulse: None,
+            label: Some("  ".into()),
+            stage: None,
+        },
+        RealtimeCommand::Marker {
+            id: "m".into(),
+            edge: 0,
+            percent: 10.0,
+            smoothing_ms: 300,
+            color: default_color(),
+            reverse: false,
+            label: None,
+            stage: Some("x".repeat(257)),
         },
     ] {
         assert!(
@@ -691,6 +900,8 @@ fn realtime_protocol_validates_percent_limits_targets_and_resource_caps() {
             smoothing_ms,
             color: default_color(),
             reverse: false,
+            label: None,
+            stage: None,
         };
         assert!(
             realtime::RealtimeState::apply(None, realtime_update(vec![command]), &graph(), 0.0)
@@ -735,6 +946,18 @@ fn realtime_status_appearance_markers_and_persistent_clear_are_independent_of_sc
                 status: Some(ElementStatus::Running),
                 color: None,
                 pulse: None,
+                label: None,
+                stage: None,
+            },
+            RealtimeCommand::Element {
+                id: "waiting".into(),
+                nodes: vec!["a".into()],
+                edges: vec![],
+                status: Some(ElementStatus::Waiting),
+                color: None,
+                pulse: None,
+                label: None,
+                stage: None,
             },
             RealtimeCommand::Marker {
                 id: "reverse".into(),
@@ -743,12 +966,28 @@ fn realtime_status_appearance_markers_and_persistent_clear_are_independent_of_sc
                 smoothing_ms: 300,
                 color: [255, 0, 0],
                 reverse: true,
+                label: None,
+                stage: None,
             },
         ]),
         &graph,
         0.0,
     )
     .unwrap();
+    assert_eq!(
+        state.statuses_for_node(0),
+        vec![
+            ("status".into(), None, None, Some(ElementStatus::Running)),
+            ("waiting".into(), None, None, Some(ElementStatus::Waiting))
+        ]
+    );
+    assert!(state.statuses_for_node(2).is_empty());
+    let (edge_statuses, progress) = state.statuses_for_edge(0);
+    assert_eq!(
+        edge_statuses,
+        vec![("status".into(), None, None, Some(ElementStatus::Running))]
+    );
+    assert_eq!(progress, vec![("reverse".into(), None, None, 0.0, 25.0)]);
     let value = state.descriptor(4.0, &graph);
     assert_eq!(value["elements"][0]["status"], "running");
     assert_eq!(value["elements"][0]["nodes"][0], "a");
@@ -775,6 +1014,18 @@ fn realtime_status_appearance_markers_and_persistent_clear_are_independent_of_sc
     assert!(output.shapes.iter().any(|shape| matches!(
         &shape.shape,egui::Shape::Text(text) if text.galley.text() == "Running"
     )));
+    let badge_positions = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if matches!(text.galley.text(), "Running" | "Waiting") => {
+                Some(text.pos.y)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(badge_positions.len(), 2);
+    assert_ne!(badge_positions[0], badge_positions[1]);
     output.drop_without_applying_deltas();
     realtime::store(&ctx, state.clone());
     store_player(
@@ -807,6 +1058,8 @@ fn realtime_status_appearance_markers_and_persistent_clear_are_independent_of_sc
                 status: Some(status),
                 color: None,
                 pulse: Some(false),
+                label: None,
+                stage: None,
             }]),
             &graph,
             4.0,
@@ -842,26 +1095,19 @@ fn reply_to_next(server: &AnimationApiServer, status: u16, value: Value) {
 #[test]
 fn configured_http_host_network_opt_in_and_slow_clients_are_bounded() {
     use super::server::ServerOptions;
-    let ctx = egui::Context::default();
     assert!(
-        AnimationApiServer::start_with(
-            ServerOptions {
-                bind: "0.0.0.0".parse().unwrap(),
-                ..Default::default()
-            },
-            ctx.clone()
-        )
+        AnimationApiServer::start_with(ServerOptions {
+            bind: "0.0.0.0".parse().unwrap(),
+            ..Default::default()
+        })
         .is_err()
     );
     assert!(
-        AnimationApiServer::start_with(
-            ServerOptions {
-                bind: "0.0.0.0".parse().unwrap(),
-                allow_network: true,
-                ..Default::default()
-            },
-            ctx.clone()
-        )
+        AnimationApiServer::start_with(ServerOptions {
+            bind: "0.0.0.0".parse().unwrap(),
+            allow_network: true,
+            ..Default::default()
+        })
         .is_err()
     );
     for host in [
@@ -871,23 +1117,17 @@ fn configured_http_host_network_opt_in_and_slow_clients_are_bounded() {
         "0.0.0.0",
     ] {
         assert!(
-            AnimationApiServer::start_with(
-                ServerOptions {
-                    host: Some(host.into()),
-                    ..Default::default()
-                },
-                ctx.clone()
-            )
+            AnimationApiServer::start_with(ServerOptions {
+                host: Some(host.into()),
+                ..Default::default()
+            })
             .is_err()
         );
     }
-    let server = AnimationApiServer::start_with(
-        ServerOptions {
-            host: Some("api.example.test".into()),
-            ..Default::default()
-        },
-        ctx,
-    )
+    let server = AnimationApiServer::start_with(ServerOptions {
+        host: Some("api.example.test".into()),
+        ..Default::default()
+    })
     .unwrap();
     assert_eq!(
         server.url(),
@@ -927,7 +1167,7 @@ fn configured_http_host_network_opt_in_and_slow_clients_are_bounded() {
 
 #[test]
 fn api_client_limit_returns_explicit_error_and_shutdown_releases_listener() {
-    let server = AnimationApiServer::start(0, egui::Context::default()).unwrap();
+    let server = AnimationApiServer::start(0).unwrap();
     let address = server.address();
     let clients = (0..8)
         .map(|_| {
@@ -956,6 +1196,8 @@ fn api_settings_show_network_and_tls_fields_and_wire_selected_configuration() {
     ctx.enable_accesskit();
     let mut app = StructViewApp::default();
     app.locale = Locale::English;
+    app.visualization = VisualizationMode::Graph;
+    app.graph_animation_window_open = true;
     let render = |app: &mut StructViewApp, events| {
         ctx.run_ui(
             egui::RawInput {
@@ -966,7 +1208,7 @@ fn api_settings_show_network_and_tls_fields_and_wire_selected_configuration() {
                 events,
                 ..Default::default()
             },
-            |ui| app.show_graph_animation_settings(ui),
+            |_| app.show_graph_animation_window(&ctx),
         )
     };
     render(&mut app, vec![]).drop_without_applying_deltas();
@@ -1072,7 +1314,7 @@ fn https_validates_certificate_configuration_and_serves_authenticated_json() {
         }),
         ..Default::default()
     };
-    let server = AnimationApiServer::start_with(options(), egui::Context::default()).unwrap();
+    let server = AnimationApiServer::start_with(options()).unwrap();
     assert!(server.url().starts_with("https://"));
     let mut roots = rustls::RootCertStore::empty();
     roots.add(generated.cert.der().clone()).unwrap();
@@ -1120,14 +1362,16 @@ fn https_validates_certificate_configuration_and_serves_authenticated_json() {
     );
     drop(server);
     std::fs::write(&certificate, "not a certificate").unwrap();
-    assert!(AnimationApiServer::start_with(options(), egui::Context::default()).is_err());
+    assert!(AnimationApiServer::start_with(options()).is_err());
     std::fs::write(&certificate, generated.cert.pem()).unwrap();
     let wrong = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     std::fs::write(&private_key, wrong.signing_key.serialize_pem()).unwrap();
-    assert!(AnimationApiServer::start_with(options(), egui::Context::default()).is_err());
+    assert!(AnimationApiServer::start_with(options()).is_err());
 }
 #[test]
 fn application_http_commands_animate_without_editing_and_cancel_on_view_change() {
+    use super::server::ServerOptions;
+
     let ctx = egui::Context::default();
     let mut app = StructViewApp::default();
     let root =
@@ -1142,7 +1386,19 @@ fn application_http_commands_animate_without_editing_and_cancel_on_view_change()
         app.graph_routing_backend,
         &ctx,
     );
-    app.graph_animation.server = Some(AnimationApiServer::start(0, ctx.clone()).unwrap());
+    app.graph_animation.server = Some(
+        AnimationApiServer::start_with_waker(
+            ServerOptions {
+                port: 0,
+                ..Default::default()
+            },
+            {
+                let ctx = ctx.clone();
+                move || ctx.request_repaint()
+            },
+        )
+        .unwrap(),
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     while app.graph_calculation.result().is_none() {
         app.graph_calculation.poll(&ctx);
@@ -1160,6 +1416,44 @@ fn application_http_commands_animate_without_editing_and_cancel_on_view_change()
     assert_eq!(status, 200);
     assert_eq!(descriptor["nodes"].as_array().unwrap().len(), 2);
     assert_eq!(descriptor["edges"][0]["index"], 0);
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = raw(
+        server,
+        header(server, "GET", "/v1/capabilities"),
+        String::new(),
+    );
+    let (_, capabilities) = pump_reply(&mut app, &ctx, client);
+    assert_eq!(capabilities["limits"]["jobs"], 64);
+    let body = json!({"graph_id":descriptor["graph_id"],"commands":[
+        {"type":"upsert","id":"order-42","label":"Order #42","stage":"Charging",
+            "status":"running","nodes":["a"],"edge":0,"percent":45},
+        {"type":"upsert","id":"review-42","label":"Risk review #42","stage":"Checking",
+            "status":"waiting","nodes":["a"],"edge":0,"percent":20}
+    ]});
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = post_json(server, "/v1/jobs", body.clone());
+    let (status, reply) = pump_reply(&mut app, &ctx, client);
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["job_count"], 2);
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = raw(server, header(server, "GET", "/v1/jobs"), String::new());
+    let (_, job_list) = pump_reply(&mut app, &ctx, client);
+    assert_eq!(job_list["jobs"].as_array().unwrap().len(), 2);
+    let mut invalid = body.clone();
+    invalid["commands"][0]["stage"] = json!("Changed");
+    invalid["commands"][1]["edge"] = json!(999);
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = post_json(server, "/v1/jobs", invalid);
+    assert_eq!(pump_reply(&mut app, &ctx, client).0, 400);
+    assert_eq!(
+        jobs::state(&ctx).unwrap().jobs["order-42"].stage,
+        "Charging"
+    );
+    let mut stale_jobs = body;
+    stale_jobs["graph_id"] = json!("stale");
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = post_json(server, "/v1/jobs", stale_jobs);
+    assert_eq!(pump_reply(&mut app, &ctx, client).0, 409);
     let mut input = scenario(AnimationCommand::Flow {
         edge: 0,
         color: default_color(),
@@ -1288,12 +1582,54 @@ fn application_http_commands_animate_without_editing_and_cancel_on_view_change()
         )),
         "HTTP flow command must paint a marker on the real graph canvas"
     );
+    let painted_text = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(painted_text.contains("Order #42"));
+    assert!(painted_text.contains("Charging"));
+    assert!(painted_text.contains("Risk review #42"));
     output.drop_without_applying_deltas();
     assert!(
         player(&ctx).unwrap().camera.is_some(),
         "Canvas must persist camera interpolation state"
     );
     assert!(realtime::state(&ctx).is_some());
+    let mut legacy_state = realtime::state(&ctx).unwrap();
+    assert_eq!(
+        legacy_state.descriptor(10.5, &app.graph_calculation.result().unwrap().graph)["markers"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "Display merging must not persist jobs into the legacy layer"
+    );
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = post_json(
+        server,
+        "/v1/jobs",
+        json!({
+            "graph_id":descriptor["graph_id"],"commands":[{"type":"remove","id":"review-42"}]
+        }),
+    );
+    assert_eq!(pump_reply(&mut app, &ctx, client).1["job_count"], 1);
+    assert!(jobs::state(&ctx).unwrap().jobs.contains_key("order-42"));
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = post_json(
+        server,
+        "/v1/jobs",
+        json!({
+            "graph_id":descriptor["graph_id"],"commands":[{"type":"clear"}]
+        }),
+    );
+    assert_eq!(pump_reply(&mut app, &ctx, client).1["job_count"], 0);
+    assert!(realtime::state(&ctx).is_some());
+    assert!(player(&ctx).is_some());
     assert_eq!(
         struct_view_core::parser::node_to_value(app.root.as_ref().unwrap()).unwrap(),
         before
@@ -1302,6 +1638,14 @@ fn application_http_commands_animate_without_editing_and_cancel_on_view_change()
     app.poll_graph_animation_api(&ctx);
     assert!(player(&ctx).is_none());
     assert!(realtime::state(&ctx).is_none());
+    assert!(jobs::state(&ctx).is_none());
+    let server = app.graph_animation.server.as_ref().unwrap();
+    let client = raw(
+        server,
+        header(server, "GET", "/v1/capabilities"),
+        String::new(),
+    );
+    assert_eq!(pump_reply(&mut app, &ctx, client).0, 200);
     let server = app.graph_animation.server.as_ref().unwrap();
     let client = raw(server, header(server, "GET", "/v1/graph"), String::new());
     assert_eq!(pump_reply(&mut app, &ctx, client).0, 409);
@@ -1339,6 +1683,13 @@ fn application_http_commands_animate_without_editing_and_cancel_on_view_change()
     );
     app.graph_animation.server = None;
     assert!(TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_err());
-    let replacement = AnimationApiServer::start(0, ctx).unwrap();
+    let replacement = AnimationApiServer::start_with_waker(
+        ServerOptions {
+            port: 0,
+            ..Default::default()
+        },
+        move || ctx.request_repaint(),
+    )
+    .unwrap();
     assert_ne!(token, replacement.token());
 }

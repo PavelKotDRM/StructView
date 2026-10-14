@@ -1,7 +1,8 @@
 use super::super::*;
 use super::interaction::{GraphInteractionState, graph_keyboard};
 use super::tooltip::{
-    graph_edges_at_pointer, show_graph_attributes, show_graph_edge_information, show_graph_tooltip,
+    graph_edges_at_pointer, show_graph_attributes, show_graph_edge_information,
+    show_graph_realtime_status, show_graph_tooltip,
 };
 use crate::app::views::diagram::DiagramAction;
 use std::collections::HashSet;
@@ -55,7 +56,18 @@ pub(in crate::app) fn show_graph(
     if graph.edges.is_empty() {
         ui.label(RichText::new(locale.text(TextKey::GraphNoRelationships)).weak());
     }
+    let jobs = crate::app::graph_animation::jobs::state(ui.ctx())
+        .filter(|state| state.visuals.matches_graph(routing.graph_fingerprint));
+    let job_focus = jobs
+        .as_ref()
+        .and_then(|state| crate::app::graph_animation::jobs::show_jobs(ui, state, graph, locale));
     let (_, viewport) = ui.allocate_space(ui.available_size().max(Vec2::splat(1.0)));
+    if let Some(index) = job_focus {
+        interaction.cursor = index;
+        interaction.selected = HashSet::from([index]);
+        interaction.pan =
+            viewport.size() * 0.5 - routing.node_positions[index].to_vec2() * interaction.zoom;
+    }
     let canvas_response = ui.interact(
         viewport,
         ui.id().with("graph-canvas"),
@@ -161,6 +173,19 @@ pub(in crate::app) fn show_graph(
     let now = ui.input(|input| input.time);
     let mut realtime = crate::app::graph_animation::realtime::state(ui.ctx())
         .filter(|state| state.matches_graph(routing.graph_fingerprint));
+    if let Some(state) = &mut realtime {
+        state.advance(now);
+        crate::app::graph_animation::realtime::store(ui.ctx(), state.clone());
+    }
+    if let Some(jobs) = &jobs {
+        let mut jobs = jobs.clone();
+        jobs.visuals.advance(now);
+        crate::app::graph_animation::jobs::store(ui.ctx(), jobs.clone());
+        realtime = Some(realtime.map_or_else(
+            || jobs.visuals.clone(),
+            |state| state.with_jobs(&jobs.visuals),
+        ));
+    }
     if let Some(state) = &mut realtime {
         state.advance(now);
         if state.needs_repaint() {
@@ -291,6 +316,7 @@ pub(in crate::app) fn show_graph(
                 ui.monospace(&node.id);
                 ui.weak(&node.path);
                 show_graph_attributes(ui, ("graph-node-attributes", &node.path), &node.attributes);
+                show_graph_realtime_status(ui, realtime.as_ref(), Some(index), None, locale);
             });
             if response.hovered() {
                 hovered_node = Some(index);
@@ -499,7 +525,7 @@ pub(in crate::app) fn show_graph(
                     });
                 }
                 show_graph_tooltip(&response, false, |ui| {
-                    show_graph_edge_information(ui, graph, edge_index, locale)
+                    show_graph_edge_information(ui, graph, edge_index, locale, realtime.as_ref())
                 });
             }
         }
@@ -717,7 +743,13 @@ pub(in crate::app) fn show_graph(
                                 if index > 0 {
                                     ui.separator();
                                 }
-                                show_graph_edge_information(ui, graph, edge_index, locale);
+                                show_graph_edge_information(
+                                    ui,
+                                    graph,
+                                    edge_index,
+                                    locale,
+                                    realtime.as_ref(),
+                                );
                             }
                         });
                 });
@@ -735,8 +767,5 @@ pub(in crate::app) fn show_graph(
         } else {
             crate::app::graph_animation::stop_scenario(ui.ctx());
         }
-    }
-    if let Some(state) = realtime {
-        crate::app::graph_animation::realtime::store(ui.ctx(), state);
     }
 }

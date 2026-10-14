@@ -7,6 +7,7 @@ use struct_view_core::diff::{Difference, compare_values, format_value};
 use struct_view_core::files::write_text_atomic;
 use struct_view_core::parser::{DataFormat, node_to_value, parse_data, serialize_node};
 use struct_view_core::search::{SearchOptions, SearchState};
+use struct_view_operations::app::headless::GraphImageRenderer;
 
 use super::args::Command;
 use super::source::Source;
@@ -21,8 +22,23 @@ use super::source::Source;
 /// Возвращает описание ошибки ввода-вывода, сериализации или вызова GUI-команды
 /// из headless-режима.
 pub fn run(command: &Command) -> Result<bool, String> {
+    run_with_renderer(command, None)
+}
+
+/// Run a command with the host-provided graph image renderer.
+pub fn run_with_graph_image_renderer(
+    command: &Command,
+    renderer: &dyn GraphImageRenderer,
+) -> Result<bool, String> {
+    run_with_renderer(command, Some(renderer))
+}
+
+fn run_with_renderer(
+    command: &Command,
+    renderer: Option<&dyn GraphImageRenderer>,
+) -> Result<bool, String> {
     match command {
-        Command::Operation(options) => super::operations::run(options),
+        Command::Operation(options) => super::operations::run(options, renderer),
         Command::Help => {
             write_text(super::HELP)?;
             Ok(true)

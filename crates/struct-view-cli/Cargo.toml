@@ -8,7 +8,7 @@ description = "Headless commands and argument parsing for StructView"
 [dependencies]
 struct-view-build-info = { path = "../struct-view-build-info" }
 struct-view-core = { path = "../struct-view-core" }
-struct-view-ui = { path = "../struct-view-ui" }
+struct-view-operations = { path = "../struct-view-operations" }
 indicatif = "0.18"
 serde_json.workspace = true
 

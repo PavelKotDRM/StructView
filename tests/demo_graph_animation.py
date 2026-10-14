@@ -1,4 +1,4 @@
-"""Local demonstration controller for StructView and fixtures/Graph.toml (Python 3.11+)."""
+"""Local demonstration controller for StructView and a compact graph fixture (Python 3.11+)."""
 
 import argparse
 from collections import Counter
@@ -15,12 +15,11 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+import demo_graph_walkthrough as walkthrough
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "Graph.toml"
+FIXTURE = Path(__file__).parent / "fixtures" / "GraphAnimationDemo.toml"
 COLORS = ([40, 200, 255], [255, 180, 40], [170, 120, 255], [70, 210, 110])
-WAVE_SIZE = 10
-SCENARIO_EDGES = 100
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -74,12 +73,12 @@ def map_graph(fixture, descriptor):
     ids = [node["id"] for node in descriptor["nodes"]]
     expected = [node["id"] for node in fixture["entities"]]
     if Counter(ids) != Counter(expected) or len(set(ids)) != len(ids):
-        raise ValueError("Open the supplied Graph.toml in StructView: entity IDs do not match")
+        raise ValueError("Open the supplied demo fixture in StructView: entity IDs do not match")
     relations = fixture["relations"]
     actual = descriptor["edges"]
     pairs = lambda edges: Counter((edge["source"], edge["target"]) for edge in edges)
     if pairs(actual) != pairs(relations):
-        raise ValueError("Open the supplied Graph.toml: relationships do not match")
+        raise ValueError("Open the supplied demo fixture: relationships do not match")
     mapped = []
     for relation in relations:
         candidates = [edge for edge in actual
@@ -90,54 +89,31 @@ def map_graph(fixture, descriptor):
     return mapped
 
 
-def build_scenario(graph_id, relations, speed=1.0):
-    if len(relations) > SCENARIO_EDGES:
-        raise ValueError("Use build_scenarios for more than 100 relationships")
-    steps = [{"command": {"type": "camera", "fit": True, "duration_ms": 500}}]
-    for index, relation in enumerate(relations):
-        at_ms = round((index // WAVE_SIZE) * 1700 / speed)
-        duration = max(1, round(1400 / speed))
-        color = COLORS[index % len(COLORS)]
-        steps.extend([
-            {"at_ms": at_ms, "command": {
-                "type": "highlight", "nodes": [relation["source"], relation["target"]],
-                "edges": [relation["index"]], "color": color, "pulse": True,
-                "duration_ms": duration,
-            }},
-            {"at_ms": at_ms, "command": {
-                "type": "flow_percent", "edge": relation["index"], "from_percent": 0,
-                "to_percent": 100, "color": color, "duration_ms": duration,
-            }},
-        ])
-    return {"graph_id": graph_id, "steps": steps}
-
-
-def build_scenarios(graph_id, relations, speed=1.0):
-    return [build_scenario(graph_id, relations[start:start + SCENARIO_EDGES], speed)
-            for start in range(0, len(relations), SCENARIO_EDGES)]
-
-
 class Cancelled(Exception):
     pass
 
 
 class Demo:
-    def __init__(self, api, fixture, speed=1.0):
+    def __init__(self, api, fixture, speed=1.0, step_by_step=False):
         self.api, self.fixture, self.speed = api, fixture, speed
         self.cancel = threading.Event()
         self.lock = threading.Lock()
         self.operation_lock = threading.Lock()
         self.worker = None
-        self.status = {"running": False, "phase": "idle", "error": None}
+        self.step_by_step = step_by_step
+        self.next_chapter = threading.Event()
+        self.status = {"running": False, "phase": "idle", "instruction": "Choose a demo mode to start.",
+                       "waiting_for_next": False, "error": None}
 
     def snapshot(self):
         with self.lock:
             return dict(self.status)
 
-    def report(self, phase):
+    def report(self, phase, instruction=""):
         with self.lock:
             self.status["phase"] = phase
-        print(phase, flush=True)
+            self.status["instruction"] = instruction
+        print(phase + (": " + instruction if instruction else ""), flush=True)
 
     def wait(self, seconds):
         if self.cancel.wait(seconds / self.speed):
@@ -148,60 +124,55 @@ class Demo:
             raise Cancelled()
         self.api.request("/v1/realtime", {"graph_id": graph_id, "commands": commands})
 
+    def jobs(self, graph_id, commands):
+        if self.cancel.is_set():
+            raise Cancelled()
+        self.api.request("/v1/jobs", {"graph_id": graph_id, "commands": commands})
+
+    def pause(self, seconds):
+        if not self.step_by_step:
+            self.wait(seconds)
+            return
+        self.next_chapter.clear()
+        with self.lock:
+            self.status["waiting_for_next"] = True
+        try:
+            while not self.next_chapter.wait(0.1):
+                if self.cancel.is_set():
+                    raise Cancelled()
+            if self.cancel.is_set():
+                raise Cancelled()
+        finally:
+            with self.lock:
+                self.status["waiting_for_next"] = False
+
+    def advance(self):
+        with self.lock:
+            if not self.status.get("waiting_for_next"):
+                raise RuntimeError("The demo is not waiting for the next chapter")
+            self.next_chapter.set()
+
+    def play(self, graph_id, steps):
+        if self.cancel.is_set():
+            raise Cancelled()
+        result = self.api.request("/v1/animation", {"graph_id": graph_id, "steps": steps})
+        self.wait((result["duration_ms"] / 1000 + 0.2) * self.speed)
+        for _ in range(100):
+            state = self.api.request("/v1/animation")
+            if state["graph_id"] != graph_id:
+                raise RuntimeError("Graph changed during the demonstration")
+            if not state["running"]:
+                return
+            self.wait(0.1)
+        raise RuntimeError("Scheduled animation did not complete")
+
     def realtime(self, graph_id, relations):
-        self.live(graph_id, [{"type": "clear"}] + [
-            {"type": "element", "id": "node-" + node["id"], "nodes": [node["id"]], "status": "waiting"}
-            for node in self.fixture["entities"]
-        ])
-        # Scheduled camera/highlight coexist with live markers and status badges.
-        self.api.request("/v1/animation", {"graph_id": graph_id, "steps": [
-            {"command": {"type": "camera", "fit": True}},
-            {"command": {"type": "highlight", "nodes": ["customer"], "duration_ms": 5000}},
-        ]})
-        for start in range(0, len(relations), WAVE_SIZE):
-            wave = relations[start:start + WAVE_SIZE]
-            self.report(f"realtime: links {start + 1}–{start + len(wave)} / {len(relations)}")
-            for attempt in range(2 if any(link["id"] == "order_payments" for link in wave) else 1):
-                active = wave if attempt == 0 else [link for link in wave if link["id"] == "order_payments"]
-                if attempt:
-                    self.live(graph_id, [{"type": "remove_marker", "id": link["id"]} for link in active])
-                # A rapid burst and a delayed lower value demonstrate smooth max-target tracking.
-                for percent in (0, 8, 25, 65, 35, 85, 100):
-                    commands = []
-                    for relation in active:
-                        name, edge, target = relation["id"], relation["index"], relation["target"]
-                        commands.extend([
-                            {"type": "marker", "id": name, "edge": edge, "percent": percent,
-                             "smoothing_ms": max(16, round(300 / self.speed)),
-                             "color": [40, 200, 255]},
-                            {"type": "element", "id": "node-" + target,
-                             "nodes": [target], "status": "running"},
-                            {"type": "element", "id": "edge-" + name,
-                             "edges": [edge], "status": "running"},
-                        ])
-                    self.live(graph_id, commands)
-                    self.wait(0.12)
-                self.wait(2.8)
-                commands = []
-                for relation in active:
-                    name, edge, target = relation["id"], relation["index"], relation["target"]
-                    final_status = "error" if name == "order_payments" and attempt == 0 else "success"
-                    commands.extend([
-                        {"type": "element", "id": "node-" + target, "nodes": [target], "status": final_status},
-                        {"type": "element", "id": "edge-" + name, "edges": [edge], "status": final_status},
-                    ])
-                self.live(graph_id, commands)
-                if attempt == 0 and any(link["id"] == "order_payments" for link in active):
-                    self.report("realtime: payment failed; retrying")
-                    self.wait(1.5)
-            self.live(graph_id, [command for relation in wave for command in (
-                {"type": "remove_marker", "id": relation["id"]},
-                {"type": "remove_element", "id": "edge-" + relation["id"]},
-            )])
-        self.live(graph_id, [{"type": "element", "id": "node-customer",
-                             "nodes": ["customer"], "status": "success"}])
+        walkthrough.realtime(self, graph_id, relations)
 
     def execute(self, mode):
+        capabilities = self.api.request("/v1/capabilities")
+        if "jobs" not in capabilities.get("features", []):
+            raise RuntimeError("This guided demo requires a StructView API with jobs support")
         descriptor = self.api.request("/v1/graph")
         relations = map_graph(self.fixture, descriptor)
         graph_id = descriptor["graph_id"]
@@ -209,27 +180,10 @@ class Demo:
             raise Cancelled()
         self.api.stop()
         if mode in ("both", "scenario"):
-            self.report("scenario: precomputed walkthrough")
-            for scenario in build_scenarios(graph_id, relations, self.speed):
-                if self.cancel.is_set():
-                    raise Cancelled()
-                result = self.api.request("/v1/animation", scenario)
-                # The scenario duration already includes the speed multiplier.
-                self.wait((result["duration_ms"] / 1000 + 0.2) * self.speed)
-                deadline_checks = 0
-                while True:
-                    state = self.api.request("/v1/animation")
-                    if state["graph_id"] != graph_id:
-                        raise RuntimeError("Graph changed during the demonstration")
-                    if not state["running"]:
-                        break
-                    deadline_checks += 1
-                    if deadline_checks > 100:
-                        raise RuntimeError("Scheduled animation did not complete")
-                    self.wait(0.1)
+            walkthrough.scheduled(self, graph_id, relations)
         if mode in ("both", "realtime"):
             self.realtime(graph_id, relations)
-        self.report("finished: final realtime state remains visible; use Stop to clear")
+        self.report("finished", "The completed job remains visible after a realtime tour. Use Stop / clear to remove all layers.")
 
     def run(self, mode):
         error = None
@@ -257,7 +211,8 @@ class Demo:
             if self.worker is not None and self.worker.is_alive():
                 raise RuntimeError("Demo is already running")
             self.cancel.clear()
-            self.status = {"running": True, "phase": "starting", "error": None}
+            self.status = {"running": True, "phase": "starting", "instruction": "",
+                           "waiting_for_next": False, "error": None}
             self.worker = threading.Thread(target=self.run, args=(mode,), name="graph-demo")
             self.worker.start()
 
@@ -279,7 +234,8 @@ class Demo:
             if not isinstance(action, str):
                 raise ValueError("Control action must be a string")
             paths = {"graph": "/v1/graph", "scheduled_state": "/v1/animation",
-                     "live_state": "/v1/realtime"}
+                     "live_state": "/v1/realtime", "jobs_state": "/v1/jobs",
+                     "capabilities": "/v1/capabilities"}
             if action in paths:
                 return self.api.request(paths[action])
             if self.worker is not None and self.worker.is_alive():
@@ -289,8 +245,8 @@ class Demo:
             graph_id = descriptor["graph_id"]
             if action == "raw":
                 path = values.get("path")
-                if path not in ("/v1/animation", "/v1/realtime"):
-                    raise ValueError("Console path must be /v1/animation or /v1/realtime")
+                if path not in ("/v1/animation", "/v1/realtime", "/v1/jobs"):
+                    raise ValueError("Console path must be /v1/animation, /v1/realtime or /v1/jobs")
                 body = values.get("body")
                 if not isinstance(body, dict):
                     raise ValueError("Console body must be a JSON object")
@@ -302,7 +258,32 @@ class Demo:
                 "relation", "customer_orders")), None)
             if relation is None:
                 raise ValueError("Unknown relationship")
+            process_id = values.get("process_id", "manual")
+            label = values.get("label", "Manual execution")
+            stage = values.get("stage", "Working")
+            if action in ("marker", "element", "element_custom", "remove_marker", "remove_element",
+                          "job", "remove_job"):
+                if (not isinstance(process_id, str) or not process_id.strip()
+                        or len(process_id.encode("utf-8")) > 128):
+                    raise ValueError("process_id must be nonempty and at most 128 UTF-8 bytes")
+            if action in ("marker", "element", "element_custom", "job"):
+                for field_name, value in (("label", label), ("stage", stage)):
+                    if (not isinstance(value, str) or not value.strip()
+                            or len(value.encode("utf-8")) > 256):
+                        raise ValueError(f"{field_name} must be nonempty and at most 256 UTF-8 bytes")
             edge = relation["index"]
+            if action in ("job", "remove_job", "clear_jobs"):
+                if action == "job":
+                    command = {"type": "upsert", "id": process_id, "label": label, "stage": stage,
+                               "nodes": [node], "edge": edge, "status": values.get("status", "running"),
+                               "percent": values.get("percent", 50), "color": values.get("color", COLORS[0]),
+                               "reverse": values.get("reverse", False),
+                               "smoothing_ms": values.get("smoothing_ms", 300)}
+                elif action == "remove_job":
+                    command = {"type": "remove", "id": process_id}
+                else:
+                    command = {"type": "clear"}
+                return self.api.request("/v1/jobs", {"graph_id": graph_id, "commands": [command]})
             duration = values.get("duration_ms", 1500)
             if type(duration) is not int or not 1 <= duration <= 60000:
                 raise ValueError("Duration must be an integer in 1..60000")
@@ -337,16 +318,18 @@ class Demo:
             elif action == "clear_scheduled":
                 scheduled = {"type": "clear"}
             elif action == "marker":
-                live = {"type": "marker", "id": "manual-marker", "edge": edge,
+                live = {"type": "marker", "id": process_id, "edge": edge,
                         "percent": values.get("percent", 50), "reverse": reverse, "color": color,
-                        "smoothing_ms": values.get("smoothing_ms", 300)}
+                        "smoothing_ms": values.get("smoothing_ms", 300),
+                        "label": label, "stage": stage}
             elif action in ("element", "element_custom"):
-                live = {"type": "element", "id": "manual-element", "nodes": [node],
-                        "edges": [edge], "status": values.get("status", "running")}
+                live = {"type": "element", "id": process_id, "nodes": [node],
+                        "edges": [edge], "status": values.get("status", "running"),
+                        "label": label, "stage": stage}
                 if action == "element_custom":
                     live.update(color=color, pulse=pulse)
             elif action in ("remove_marker", "remove_element"):
-                live = {"type": action, "id": "manual-marker" if action == "remove_marker" else "manual-element"}
+                live = {"type": action, "id": process_id}
             elif action == "clear_live":
                 live = {"type": "clear"}
             else:
@@ -389,14 +372,20 @@ class Dashboard(BaseHTTPRequestHandler):
             self.respond(200, json.dumps(self.server.demo.snapshot()))
         elif self.path == "/":
             page = """<!doctype html><meta charset="utf-8"><title>StructView animation demo</title>
-<h1>Graph.toml animation demo</h1>
-<p>Open Graph.toml in StructView and keep the graph view active.</p>
+<h1>Compact graph animation demo</h1>
+<p>Keep the selected fixture open in StructView and the graph view active.</p>
 <button onclick="send('/run?mode=both')">Both</button>
 <button onclick="send('/run?mode=scenario')">Scheduled</button>
 <button onclick="send('/run?mode=realtime')">Realtime</button>
+<button id="next" onclick="send('/next')" disabled>Next chapter / Далее</button>
 <button onclick="send('/stop')">Stop / clear</button><pre id="status"></pre><pre id="error"></pre>
-<p>Stop the automatic demo before manual commands. Camera commands replace only the scheduled
-layer; live effects remain. Remove a marker before changing its link or direction.</p>
+<h2 id="chapter">Ready</h2><p id="instruction"></p>
+<p>Nothing starts until you choose a mode. Chapters isolate features one at a time.
+Use --step-by-step to wait for Next chapter at each checkpoint.</p>
+<p>Stop the guided demo before manual commands. Camera commands replace only the scheduled
+layer; live effects and jobs remain. Realtime introduces two labeled jobs on shared routes and entities.
+Give manual executions distinct IDs to show concurrent work; remove a marker before changing its
+link or direction.</p>
 <fieldset><legend>Targets and appearance</legend>
 <label>Entity <select id="node">NODE_OPTIONS</select></label>
 <label>Link <select id="relation">RELATION_OPTIONS</select></label><br>
@@ -420,7 +409,13 @@ layer; live effects remain. Remove a marker before changing its link or directio
 <button onclick="control('clear_scheduled')">Clear scheduled only</button>
 </fieldset>
 <fieldset><legend>Realtime animation</legend>
+<label>Execution ID <input id="process-id" value="manual"></label>
+<label>What runs <input id="process-label" value="Manual execution"></label>
+<label>Stage <input id="process-stage" value="Working"></label><br>
 <label>Smoothing, ms <input id="smoothing" type="number" min="16" max="10000" value="300"></label>
+<button onclick="control('job')">Create / update job</button>
+<button onclick="control('remove_job')">Stop this job</button>
+<button onclick="control('clear_jobs')">Clear jobs only</button><br>
 <button onclick="control('marker')">Update marker %</button>
 <button onclick="control('remove_marker')">Remove marker</button><br>
 <label>Status <select id="element-status">
@@ -435,7 +430,9 @@ layer; live effects remain. Remove a marker before changing its link or directio
 <button onclick="control('graph')">GET graph descriptor</button>
 <button onclick="control('scheduled_state')">GET scheduled state</button>
 <button onclick="control('live_state')">GET realtime state</button><br>
-<select id="api-path"><option>/v1/animation</option><option>/v1/realtime</option></select>
+<button onclick="control('jobs_state')">GET jobs</button>
+<button onclick="control('capabilities')">GET capabilities</button><br>
+<select id="api-path"><option>/v1/animation</option><option>/v1/realtime</option><option>/v1/jobs</option></select>
 <p>POST JSON body; graph_id is supplied automatically. Use arbitrary steps, timestamps,
 targets or atomic realtime batches. API validation errors are shown below.</p>
 <textarea id="json-body" rows="6" cols="80">{"steps":[{"command":{"type":"camera","fit":true}}]}</textarea><br>
@@ -460,6 +457,8 @@ function control(action) {
     zoom:Number(field('zoom').value), duration_ms:Number(field('duration').value),
     percent:Number(field('percent').value), from_percent:Number(field('from').value),
     smoothing_ms:Number(field('smoothing').value), status:field('element-status').value,
+    process_id:field('process-id').value, label:field('process-label').value,
+    stage:field('process-stage').value,
     reverse:field('reverse').checked, pulse:field('pulse').checked,
     color:[1,3,5].map(index => parseInt(hex.slice(index,index+2),16))});
 }
@@ -471,7 +470,11 @@ function raw() {
 async function refresh() {
   try {
     const response = await fetch('/status');
-    document.getElementById('status').textContent = JSON.stringify(await response.json(),null,2);
+    const status = await response.json();
+    field('status').textContent = JSON.stringify(status,null,2);
+    field('chapter').textContent = status.phase;
+    field('instruction').textContent = status.instruction || '';
+    field('next').disabled = !status.waiting_for_next;
   } catch (error) { document.getElementById('error').textContent = String(error); }
 }
 setInterval(refresh,500); refresh();
@@ -507,6 +510,8 @@ setInterval(refresh,500); refresh();
                 self.server.demo.start(mode[0])
             elif parsed.path == "/stop":
                 self.server.demo.stop()
+            elif parsed.path == "/next":
+                self.server.demo.advance()
             elif parsed.path == "/control":
                 if self.headers.get_content_type() != "application/json" or not length:
                     raise ValueError("Send application/json control parameters")
@@ -538,9 +543,13 @@ def main():
     parser.add_argument("--mode", choices=("both", "scenario", "realtime"), default="both")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback multiplier, 0.1..10")
     parser.add_argument("--once", action="store_true", help="Run without dashboard, then exit")
+    parser.add_argument("--autoplay", action="store_true", help="Start the guided tour immediately")
+    parser.add_argument("--step-by-step", action="store_true", help="Wait for Next chapter in the dashboard")
     args = parser.parse_args()
     if not 0.1 <= args.speed <= 10 or not 0 <= args.port <= 65535:
         parser.error("speed must be 0.1..10 and port must be 0..65535")
+    if args.once and args.step_by_step:
+        parser.error("--step-by-step requires the dashboard; do not combine it with --once")
     demo = None
     server = None
     try:
@@ -549,11 +558,12 @@ def main():
             fixture = tomllib.load(source)
         api = Api(args.api, token, args.ca)
         map_graph(fixture, api.request("/v1/graph"))
-        demo = Demo(api, fixture, args.speed)
+        demo = Demo(api, fixture, args.speed, args.step_by_step)
         if not args.once:
             server = DemoServer(args.port, demo)
             print(f"Demo dashboard: {server.origin} (Ctrl+C to stop)", flush=True)
-        demo.start(args.mode)
+        if args.once or args.autoplay:
+            demo.start(args.mode)
         if args.once:
             demo.worker.join()
             return 1 if demo.snapshot()["error"] else 0

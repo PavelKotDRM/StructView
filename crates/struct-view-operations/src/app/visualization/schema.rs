@@ -4,11 +4,11 @@ mod explicit;
 mod filter;
 mod inferred;
 
-pub(in crate::app) use filter::schema_visible_indices;
+pub use filter::schema_visible_indices;
 
 /// Источник сведений, показанный в диаграмме схемы.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::app) enum SchemaSource {
+pub enum SchemaSource {
     JsonSchema,
     OpenApi,
     Inferred,
@@ -16,24 +16,24 @@ pub(in crate::app) enum SchemaSource {
 
 /// Описание одного поля в ожидаемой или выведенной структуре.
 #[derive(Debug, Clone)]
-pub(in crate::app) struct SchemaRow {
-    pub(in crate::app) key: Option<String>,
-    pub(in crate::app) path: String,
-    pub(in crate::app) type_name: String,
-    pub(in crate::app) required: Option<bool>,
-    pub(in crate::app) constraints: String,
-    pub(in crate::app) reference: Option<String>,
+pub struct SchemaRow {
+    pub key: Option<String>,
+    pub path: String,
+    pub type_name: String,
+    pub required: Option<bool>,
+    pub constraints: String,
+    pub reference: Option<String>,
 }
 
 /// Строковая схема, построенная из JSON Schema/OpenAPI или примера данных.
 #[derive(Debug, Clone)]
-pub(in crate::app) struct SchemaDiagram {
-    pub(in crate::app) source: SchemaSource,
-    pub(in crate::app) title: Option<String>,
-    pub(in crate::app) rows: Vec<SchemaRow>,
+pub struct SchemaDiagram {
+    pub source: SchemaSource,
+    pub title: Option<String>,
+    pub rows: Vec<SchemaRow>,
 }
 
-pub(in crate::app) fn build_schema_diagram(root: &JsonNode) -> Result<SchemaDiagram, String> {
+pub fn build_schema_diagram(root: &JsonNode) -> Result<SchemaDiagram, String> {
     // Detection needs keywords and scalar types, not a lossy conversion of native numbers.
     if !explicit::is_schema_document(&schema_probe(root)?) {
         return Ok(inferred::inferred_schema(root));

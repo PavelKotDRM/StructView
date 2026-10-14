@@ -12,6 +12,7 @@ impl StructViewApp {
     pub(in crate::app) fn show_top_panel(&mut self, ui: &mut Ui) {
         self.handle_shortcuts(ui.ctx());
         self.show_search_window(ui.ctx());
+        self.show_graph_animation_window(ui.ctx());
         let locale = self.locale;
         let search_shortcut = if cfg!(target_os = "macos") {
             "Cmd+F"

@@ -8,6 +8,23 @@ use std::collections::BTreeMap;
 
 const STATE_ID: &str = "graph-realtime-animation";
 const MAX_ITEMS: usize = 256;
+
+fn short_text(text: &str, limit: usize) -> String {
+    if text.chars().count() > limit {
+        format!("{}…", text.chars().take(limit).collect::<String>())
+    } else {
+        text.to_owned()
+    }
+}
+
+type StatusAssignments = Vec<(
+    String,
+    Option<String>,
+    Option<String>,
+    Option<ElementStatus>,
+)>;
+type MarkerProgress = Vec<(String, Option<String>, Option<String>, f64, f64)>;
+
 fn default_smoothing() -> u64 {
     300
 }
@@ -22,7 +39,7 @@ pub(super) fn deserialize_percent<'de, D: serde::Deserializer<'de>>(
         .ok_or_else(|| serde::de::Error::custom("percent must be a finite number in 0..=100"))
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ElementStatus {
     Waiting,
@@ -39,6 +56,15 @@ impl ElementStatus {
             Self::Success => ([60, 200, 110], false, TextKey::GraphStatusSuccess),
             Self::Error => ([240, 70, 70], true, TextKey::GraphStatusError),
         }
+    }
+
+    pub(in crate::app) fn text_key(self) -> TextKey {
+        self.appearance().2
+    }
+
+    pub(in crate::app) fn color(self) -> Color32 {
+        let [r, g, b] = self.appearance().0;
+        Color32::from_rgb(r, g, b)
     }
 }
 
@@ -57,6 +83,10 @@ pub enum RealtimeCommand {
         color: [u8; 3],
         #[serde(default)]
         reverse: bool,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        stage: Option<String>,
     },
     Element {
         id: String,
@@ -70,6 +100,10 @@ pub enum RealtimeCommand {
         color: Option<[u8; 3]>,
         #[serde(default)]
         pulse: Option<bool>,
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        stage: Option<String>,
     },
     RemoveMarker {
         id: String,
@@ -96,6 +130,8 @@ struct Marker {
     smoothing_ms: u64,
     color: [u8; 3],
     reverse: bool,
+    label: Option<String>,
+    stage: Option<String>,
 }
 
 impl Marker {
@@ -118,6 +154,8 @@ struct Element {
     status: Option<ElementStatus>,
     color: [u8; 3],
     pulse: bool,
+    label: Option<String>,
+    stage: Option<String>,
 }
 
 #[derive(Clone)]
@@ -151,7 +189,7 @@ pub(super) fn edge_index(graph: &RelationshipGraph, index: usize) -> Result<usiz
     }
 }
 
-fn validate_id(id: &str) -> Result<(), String> {
+pub(super) fn validate_id(id: &str) -> Result<(), String> {
     if id.trim().is_empty() || id.len() > 128 {
         Err("Visual ID must be nonempty and at most 128 UTF-8 bytes".into())
     } else {
@@ -159,8 +197,45 @@ fn validate_id(id: &str) -> Result<(), String> {
     }
 }
 
+pub(super) fn validate_metadata(
+    label: &Option<String>,
+    stage: &Option<String>,
+) -> Result<(), String> {
+    for (name, value) in [("label", label), ("stage", stage)] {
+        if value
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty() || value.len() > 256)
+        {
+            return Err(format!(
+                "{name} must be nonempty and at most 256 UTF-8 bytes"
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl RealtimeState {
-    pub(super) fn apply(
+    pub(in crate::app) fn with_jobs(mut self, jobs: &Self) -> Self {
+        self.markers = self
+            .markers
+            .into_iter()
+            .map(|(id, marker)| (format!("realtime/{id}"), marker))
+            .collect();
+        self.elements = self
+            .elements
+            .into_iter()
+            .map(|(id, element)| (format!("realtime/{id}"), element))
+            .collect();
+        for (id, marker) in &jobs.markers {
+            self.markers.insert(format!("job/{id}"), marker.clone());
+        }
+        for (id, element) in &jobs.elements {
+            self.elements.insert(format!("job/{id}"), element.clone());
+        }
+        self
+    }
+
+    pub(in crate::app) fn apply(
         previous: Option<Self>,
         update: RealtimeUpdate,
         graph: &RelationshipGraph,
@@ -186,8 +261,11 @@ impl RealtimeState {
                     smoothing_ms,
                     color,
                     reverse,
+                    label,
+                    stage,
                 } => {
                     validate_id(&id)?;
+                    validate_metadata(&label, &stage)?;
                     edge_index(graph, edge)?;
                     if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
                         return Err("percent must be a finite number in 0..=100".into());
@@ -204,6 +282,12 @@ impl RealtimeState {
                         marker.target = marker.target.max(percent);
                         marker.smoothing_ms = smoothing_ms;
                         marker.color = color;
+                        if label.is_some() {
+                            marker.label = label;
+                        }
+                        if stage.is_some() {
+                            marker.stage = stage;
+                        }
                     } else {
                         state.markers.insert(
                             id,
@@ -215,6 +299,8 @@ impl RealtimeState {
                                 smoothing_ms,
                                 color,
                                 reverse,
+                                label,
+                                stage,
                             },
                         );
                     }
@@ -226,8 +312,11 @@ impl RealtimeState {
                     status,
                     color,
                     pulse,
+                    label,
+                    stage,
                 } => {
                     validate_id(&id)?;
+                    validate_metadata(&label, &stage)?;
                     if nodes.is_empty() && edges.is_empty() || nodes.len() + edges.len() > 1024 {
                         return Err("element needs 1..=1024 targets".into());
                     }
@@ -253,6 +342,8 @@ impl RealtimeState {
                             status,
                             color: color.unwrap_or(status_color),
                             pulse: pulse.unwrap_or(status_pulse),
+                            label,
+                            stage,
                         },
                     );
                 }
@@ -300,17 +391,72 @@ impl RealtimeState {
             || self.elements.values().any(|element| element.pulse)
     }
 
+    pub(super) fn marker_percent(&self, id: &str) -> Option<f64> {
+        self.markers.get(id).map(|marker| marker.current)
+    }
+
+    pub(in crate::app) fn statuses_for_node(&self, index: usize) -> StatusAssignments {
+        self.elements
+            .iter()
+            .filter(|(_, element)| element.nodes.contains(&index))
+            .map(|(id, element)| {
+                (
+                    id.clone(),
+                    element.label.clone(),
+                    element.stage.clone(),
+                    element.status,
+                )
+            })
+            .collect()
+    }
+
+    pub(in crate::app) fn statuses_for_edge(
+        &self,
+        index: usize,
+    ) -> (StatusAssignments, MarkerProgress) {
+        let statuses = self
+            .elements
+            .iter()
+            .filter(|(_, element)| element.edges.contains(&index))
+            .map(|(id, element)| {
+                (
+                    id.clone(),
+                    element.label.clone(),
+                    element.stage.clone(),
+                    element.status,
+                )
+            })
+            .collect();
+        let markers = self
+            .markers
+            .iter()
+            .filter(|(_, marker)| marker.edge == index)
+            .map(|(id, marker)| {
+                (
+                    id.clone(),
+                    marker.label.clone(),
+                    marker.stage.clone(),
+                    marker.current,
+                    marker.target,
+                )
+            })
+            .collect();
+        (statuses, markers)
+    }
+
     pub(super) fn descriptor(&mut self, now: f64, graph: &RelationshipGraph) -> Value {
         self.advance(now);
         json!({"graph_id":self.graph_id,
             "markers":self.markers.iter().map(|(id, marker)| json!({
                 "id":id,"edge":marker.edge,"percent":marker.current,"target_percent":marker.target,
-                "color":marker.color,"reverse":marker.reverse,"smoothing_ms":marker.smoothing_ms
+                "color":marker.color,"reverse":marker.reverse,"smoothing_ms":marker.smoothing_ms,
+                "label":marker.label,"stage":marker.stage
             })).collect::<Vec<_>>(),
             "elements":self.elements.iter().map(|(id, element)| json!({
                 "id":id,"nodes":element.nodes.iter().map(|&index| &graph.nodes[index].id).collect::<Vec<_>>(),
                 "edges":element.edges,"status":element.status,
-                "color":element.color,"pulse":element.pulse
+                "color":element.color,"pulse":element.pulse,
+                "label":element.label,"stage":element.stage
             })).collect::<Vec<_>>()
         })
     }
@@ -323,7 +469,19 @@ impl RealtimeState {
         locale: Locale,
     ) {
         let zoom = canvas.zoom;
-        for element in self.elements.values() {
+        let mut status_badge_heights = vec![0.0; canvas.positions.len()];
+        let mut status_badge_counts = vec![0usize; canvas.positions.len()];
+        let mut totals = vec![0usize; canvas.positions.len()];
+        for element in self
+            .elements
+            .values()
+            .filter(|element| element.status.is_some())
+        {
+            for &node in &element.nodes {
+                totals[node] += 1;
+            }
+        }
+        for (id, element) in &self.elements {
             let color = Color32::from_rgb(element.color[0], element.color[1], element.color[2]);
             super::paint_highlight(
                 painter,
@@ -335,36 +493,135 @@ impl RealtimeState {
                 element.pulse,
             );
             if let Some(status) = element.status {
-                let text = locale.text(status.appearance().2);
+                let text = if let Some(label) = &element.label {
+                    format!(
+                        "{} [{}] · {}\n{}",
+                        short_text(label, 24),
+                        short_text(id, 16),
+                        locale.text(status.appearance().2),
+                        short_text(element.stage.as_deref().unwrap_or(id), 32)
+                    )
+                } else {
+                    locale.text(status.appearance().2).into()
+                };
                 for &node in &element.nodes {
-                    let top_right = canvas.transform(canvas.positions[node])
+                    if status_badge_counts[node] >= 3 {
+                        continue;
+                    }
+                    status_badge_counts[node] += 1;
+                    let mut top_right = canvas.transform(canvas.positions[node])
                         + canvas.sizes[node] * zoom * Vec2::new(0.5, -0.5);
-                    let font = egui::FontId::proportional(11.0 * zoom);
-                    let galley = painter.layout_no_wrap(text.into(), font, Color32::WHITE);
+                    let font = egui::FontId::proportional((11.0 * zoom).max(10.0));
+                    let text = if status_badge_counts[node] == 3 && totals[node] > 3 {
+                        format!(
+                            "{text}\n+{} ({})",
+                            totals[node] - 3,
+                            locale.text(TextKey::GraphJobs)
+                        )
+                    } else {
+                        text.clone()
+                    };
+                    let galley = painter.layout(text, font, Color32::WHITE, 200.0);
+                    top_right.y -= status_badge_heights[node];
+                    status_badge_heights[node] += galley.size().y + 8.0;
                     let rect = egui::Rect::from_min_size(
                         top_right - Vec2::new(galley.size().x, galley.size().y + 6.0 * zoom),
                         galley.size(),
                     )
                     .expand(2.0 * zoom);
                     painter.rect_filled(rect, 3, color.gamma_multiply(0.85));
+                    painter.rect_stroke(
+                        rect,
+                        3,
+                        egui::Stroke::new(2.0, status.color()),
+                        egui::StrokeKind::Outside,
+                    );
                     painter.galley(rect.min + Vec2::splat(2.0 * zoom), galley, Color32::WHITE);
                 }
             }
         }
+        let mut markers_per_edge = BTreeMap::<usize, usize>::new();
         for marker in self.markers.values() {
+            *markers_per_edge.entry(marker.edge).or_default() += 1;
+        }
+        let mut marker_lanes = BTreeMap::<usize, usize>::new();
+        for (id, marker) in &self.markers {
             let progress = marker.current as f32 / 100.0;
             let progress = if marker.reverse {
                 1.0 - progress
             } else {
                 progress
             };
-            if let Some(point) = point_on_path(&canvas.paths[marker.edge], progress) {
+            let lane = marker_lanes.entry(marker.edge).or_default();
+            let lane_count = markers_per_edge[&marker.edge];
+            let offset = (*lane as f32 - (lane_count - 1) as f32 * 0.5) * 16.0;
+            *lane += 1;
+            if let Some(point) =
+                point_on_path_with_offset(&canvas.paths[marker.edge], progress, offset)
+            {
                 super::paint_marker(
                     painter,
                     canvas.transform(point),
                     zoom,
                     Color32::from_rgb(marker.color[0], marker.color[1], marker.color[2]),
                 );
+                if let Some(label) = &marker.label {
+                    let text = format!(
+                        "{} [{}] · {:.0}%",
+                        short_text(label, 24),
+                        short_text(id, 16),
+                        marker.current
+                    );
+                    let font = egui::FontId::proportional((11.0 * zoom).max(10.0));
+                    let color =
+                        Color32::from_rgb(marker.color[0], marker.color[1], marker.color[2]);
+                    let galley = painter.layout(text, font, color, 180.0);
+                    let anchor = canvas.transform(point)
+                        + Vec2::new(10.0 * zoom, (*lane - 1) as f32 * (galley.size().y + 4.0));
+                    let rect = egui::Rect::from_min_size(anchor, galley.size()).expand(3.0);
+                    painter.rect_filled(
+                        rect,
+                        3,
+                        painter
+                            .ctx()
+                            .style_of(painter.ctx().theme())
+                            .visuals
+                            .panel_fill,
+                    );
+                    painter.rect_stroke(
+                        rect,
+                        3,
+                        egui::Stroke::new(1.0, color),
+                        egui::StrokeKind::Outside,
+                    );
+                    painter.galley(anchor, galley, color);
+                }
+            }
+
+            fn point_on_path_with_offset(
+                path: &[egui::Pos2],
+                progress: f32,
+                offset: f32,
+            ) -> Option<egui::Pos2> {
+                if offset == 0.0 {
+                    return point_on_path(path, progress);
+                }
+                let mut distance = path
+                    .windows(2)
+                    .map(|pair| pair[0].distance(pair[1]))
+                    .sum::<f32>()
+                    * progress;
+                for pair in path.windows(2) {
+                    let delta = pair[1] - pair[0];
+                    let length = delta.length();
+                    if length > 0.0 && distance <= length {
+                        let tangent = delta / length;
+                        let normal = egui::Vec2::new(-tangent.y, tangent.x);
+                        return Some(pair[0] + delta * (distance / length) + normal * offset);
+                    }
+                    distance -= length;
+                }
+                path.last().copied()
             }
         }
     }

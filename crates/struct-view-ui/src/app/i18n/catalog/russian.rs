@@ -95,6 +95,13 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphStatusRunning => "Выполнение",
         TextKey::GraphStatusSuccess => "Успех",
         TextKey::GraphStatusError => "Ошибка",
+        TextKey::GraphStatusTitle => "Статус анимации",
+        TextKey::GraphStatusNoAssignment => "Статус не назначен",
+        TextKey::GraphStatusProgress => "Прогресс",
+        TextKey::GraphStatusTargetProgress => "Цель",
+        TextKey::GraphStatusStage => "Этап",
+        TextKey::GraphJobs => "Задания графа",
+        TextKey::GraphJobFocus => "Перейти к месту выполнения задания",
         TextKey::GraphAnimationStop => "Остановить анимацию",
         TextKey::GraphApiHint => {
             "По умолчанию только 127.0.0.1. HTTP/HTTPS, обязательный токен. Данные и размещение графа не изменяются."

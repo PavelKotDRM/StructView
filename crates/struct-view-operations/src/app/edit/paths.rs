@@ -1,9 +1,6 @@
 use struct_view_core::parser::{JsonNode, JsonValueType, build_path, plural_ru};
 
-pub(in crate::app) fn find_node_mut<'a>(
-    node: &'a mut JsonNode,
-    path: &str,
-) -> Option<&'a mut JsonNode> {
+pub fn find_node_mut<'a>(node: &'a mut JsonNode, path: &str) -> Option<&'a mut JsonNode> {
     if node.path == path {
         return Some(node);
     }
@@ -21,7 +18,7 @@ pub(super) fn find_parent<'a>(node: &'a JsonNode, path: &str) -> Option<&'a Json
         .find_map(|child| find_parent(child, path))
 }
 
-pub(in crate::app) fn find_node<'a>(node: &'a JsonNode, path: &str) -> Option<&'a JsonNode> {
+pub fn find_node<'a>(node: &'a JsonNode, path: &str) -> Option<&'a JsonNode> {
     if node.path == path {
         return Some(node);
     }

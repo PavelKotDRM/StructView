@@ -11,7 +11,7 @@ use super::paths::{find_node_mut, update_child_paths, update_container_label, up
 ///
 /// Если одновременно выбраны контейнер и его потомок, в буфер попадает
 /// только контейнер: его значение уже содержит всю вложенную иерархию.
-pub(in crate::app) fn selected_structures(
+pub fn selected_structures(
     root: &JsonNode,
     selected_paths: &BTreeSet<String>,
 ) -> Result<Vec<ClipboardEntry>, String> {
@@ -24,7 +24,7 @@ pub(in crate::app) fn selected_structures(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::app) enum DeleteError {
+pub enum DeleteError {
     EmptySelection,
     RootSelected,
     MetadataValueSelected,
@@ -32,7 +32,7 @@ pub(in crate::app) enum DeleteError {
 }
 
 /// Удалить выбранные узлы дерева, не удаляя потомков выбранного узла повторно.
-pub(in crate::app) fn delete_selected_structures(
+pub fn delete_selected_structures(
     root: &mut JsonNode,
     selected_paths: &BTreeSet<String>,
 ) -> Result<usize, DeleteError> {
@@ -130,7 +130,7 @@ fn collect_selected_structures(
 /// с новыми индексами. Неключевой объект (например, скопированный корень)
 /// разворачивается в целевой объект своими полями; неключевой массив
 /// разворачивается в целевой массив своими элементами.
-pub(in crate::app) fn paste_structures_at_path(
+pub fn paste_structures_at_path(
     root: &mut JsonNode,
     target_path: &str,
     entries: &[ClipboardEntry],

@@ -28,7 +28,7 @@ mod operations;
 mod source;
 
 pub use args::{Command, parse_args};
-pub use exec::run;
+pub use exec::{run, run_with_graph_image_renderer};
 pub use operations::{ImageFormat, NodePart, Operation, OperationOptions};
 pub use source::Source;
 

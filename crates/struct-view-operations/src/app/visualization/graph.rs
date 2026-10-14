@@ -8,17 +8,17 @@ mod shapes;
 
 /// Узел графа сущностей, найденный по идентификатору или определению схемы.
 #[derive(Debug, Clone)]
-pub(in crate::app) struct GraphNode {
-    pub(in crate::app) id: String,
-    pub(in crate::app) label: String,
-    pub(in crate::app) path: String,
-    pub(in crate::app) search_paths: Vec<String>,
-    pub(in crate::app) partition: Option<usize>,
-    pub(in crate::app) attributes: Vec<(String, String)>,
+pub struct GraphNode {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+    pub search_paths: Vec<String>,
+    pub partition: Option<usize>,
+    pub attributes: Vec<(String, String)>,
 }
 
 impl GraphNode {
-    pub(in crate::app) fn hover_text(&self) -> String {
+    pub fn hover_text(&self) -> String {
         let mut text = format!("{}\n{}\n{}", self.label, self.id, self.path);
         for (key, value) in &self.attributes {
             text.push_str(&format!("\n{key}: {value}"));
@@ -56,16 +56,16 @@ fn record_attributes(record: &JsonNode) -> Vec<(String, String)> {
 
 /// Направленное ребро от сущности, содержащей ссылку, к её целевой сущности.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::app) struct GraphEdge {
-    pub(in crate::app) source: usize,
-    pub(in crate::app) target: usize,
-    pub(in crate::app) label: String,
-    pub(in crate::app) direction: EdgeDirection,
-    pub(in crate::app) attributes: Vec<(String, String)>,
+pub struct GraphEdge {
+    pub source: usize,
+    pub target: usize,
+    pub label: String,
+    pub direction: EdgeDirection,
+    pub attributes: Vec<(String, String)>,
 }
 
 impl GraphEdge {
-    pub(in crate::app) fn hover_text(&self) -> String {
+    pub fn hover_text(&self) -> String {
         let mut text = format!("{}\ndirection: {}", self.label, self.direction.as_str());
         for (key, value) in &self.attributes {
             text.push_str(&format!("\n{key}: {value}"));
@@ -76,11 +76,11 @@ impl GraphEdge {
 
 /// Граф идентифицированных сущностей и распознанных ссылок между ними.
 #[derive(Debug)]
-pub(in crate::app) struct RelationshipGraph {
-    pub(in crate::app) nodes: Vec<GraphNode>,
-    pub(in crate::app) edges: Vec<GraphEdge>,
-    pub(in crate::app) directed: bool,
-    pub(in crate::app) partition_names: Option<Vec<String>>,
+pub struct RelationshipGraph {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+    pub directed: bool,
+    pub partition_names: Option<Vec<String>>,
 }
 
 impl Default for RelationshipGraph {
@@ -95,7 +95,7 @@ impl Default for RelationshipGraph {
 }
 
 impl RelationshipGraph {
-    pub(in crate::app) fn direction_name(&self) -> &'static str {
+    pub fn direction_name(&self) -> &'static str {
         match self.edges.first().map(|edge| edge.direction) {
             Some(direction) if self.edges.iter().all(|edge| edge.direction == direction) => {
                 direction.as_str()
@@ -107,14 +107,11 @@ impl RelationshipGraph {
 }
 
 /// Построить граф по полям `id`, `_id`, `$id`, `$ref` и именам зависимостей.
-#[cfg(test)]
-pub(in crate::app) fn build_relationship_graph(root: &JsonNode) -> RelationshipGraph {
+pub fn build_relationship_graph(root: &JsonNode) -> RelationshipGraph {
     try_build_relationship_graph(root).expect("valid graph fixture")
 }
 
-pub(in crate::app) fn try_build_relationship_graph(
-    root: &JsonNode,
-) -> Result<RelationshipGraph, String> {
+pub fn try_build_relationship_graph(root: &JsonNode) -> Result<RelationshipGraph, String> {
     let editable = crate::app::graph_editor::GraphDocument::read(root)?;
     let explicit_graph = match shapes::build(root)? {
         Some(graph) => Some(graph),

@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use struct_view_ui::app::headless::GraphProgressSnapshot;
+use struct_view_operations::app::headless::GraphProgressSnapshot;
 
 pub(super) struct CliGraphProgress {
     current: Mutex<Option<(&'static str, ProgressBar)>>,

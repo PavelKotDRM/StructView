@@ -17,6 +17,10 @@ integration.
   exposes serializable visual-animation protocol types;
 - `app::graph_animation::{RealtimeCommand, RealtimeUpdate, ElementStatus}`
   exposes persistent marker and element-state protocol types;
+- `app::graph_animation::{JobCommand, JobUpdate}` exposes independent
+  job snapshots and atomic lifecycle commands;
+- `struct-view-animation-api` supplies the bounded authenticated HTTP/HTTPS
+  transport consumed by graph animation;
 - `clipboard` provides clipboard support.
 
 ## Crate structure
@@ -31,14 +35,20 @@ struct-view-ui/
         ├── mod.rs             application composition
         ├── state.rs           application and document state
         ├── docking.rs         panel layout
-        ├── edit.rs            edit actions
-        ├── graph_animation.rs visual animation protocol and GUI dispatch
-        ├── graph_animation/   authenticated loopback HTTP transport and tests
+        ├── edit.rs            shared editing facade
+        ├── graph_animation.rs animation module facade
+        ├── graph_animation/   animation API, playback, realtime/jobs state, tests
+        │   ├── api/           settings, window, request dispatch, graph descriptor
+        │   ├── player.rs      scheduled effects and camera playback
+        │   ├── realtime.rs    low-level persistent markers and element effects
+        │   ├── jobs.rs        independent job snapshots and lifecycle
+        │   └── jobs/          job list UI and job lifecycle tests
         ├── graph_editor.rs    semantic graph editor
-        ├── graph_editor/      editable model, forms, and tests
+        ├── graph_editor/      graph editor tests and UI
+        │   └── ui/            editor state, window, dialog/forms
         ├── tree.rs            document tree rendering
         ├── views.rs           view selection and shared view behavior
-        ├── visualization.rs   data-to-view models
+        ├── visualization.rs   shared data-model facade
         ├── widgets.rs         reusable UI widgets
         ├── theme.rs           theme support
         ├── i18n.rs            localization
@@ -50,23 +60,25 @@ struct-view-ui/
         │   │   ├── canvas/    interaction, rendering, and tooltips
         │   │   └── routing/   egui geometry adapter, route workers, and tests
         │   └── structure/     layout, navigation, search, source, and export
-        ├── visualization/     table, schema, and graph view models
-        └── edit/              field, path, and structure editing helpers
 ```
 
-The GUI uses `struct-view-core` for document parsing and shared operations,
+The GUI uses `struct-view-operations` for the document editing operations,
+clipboard envelope, and graph/table/schema models shared with the CLI. Its
+headless module adapts the GUI graph-image renderer to the CLI's renderer
+interface. The GUI also uses `struct-view-core` for document parsing,
 `struct-view-routing` for weighted pathfinding and obstacle-aware orthogonal
 routing, and
 `struct-view-build-info` for build metadata. The
 [main README](../../README.md) documents the interface and its features.
 
-## Relationship graph routing
+## Relationship graph editing and animation
 
 The relationship view also provides a semantic graph editor. It creates
 untitled graphs or independent editable copies of any supported graph, with
 entity/link/group CRUD, directions, weights, typed attributes, and shared
-document undo/redo and saving. `app/graph_editor` owns the canonical editable
-model and UI, including a dockable editor window using the same docking
+document undo/redo and saving. `struct-view-operations::app::graph_editor`
+owns the canonical editable model; `app/graph_editor` provides the GUI
+integration and UI, including a dockable editor window using the same docking
 helpers as search. Creation/copy commands live in File, mutation commands in
 Edit, and the editor-window toggle in View; graph-specific commands are
 hidden in unrelated views. `graph.editor_version: 1` distinguishes its mixed-multigraph
@@ -83,14 +95,26 @@ playback in the egui context. The GUI thread handles requests; the canvas
 paints highlights and arc-length flow markers over existing routes and smoothly
 updates the camera. Its independent realtime layer tracks percentage targets
 monotonically with elapsed-time exponential smoothing and paints persistent
-status highlights and badges. Realtime batches validate atomically before
-replacing state. Commands never mutate document data or layout.
-The bounded concurrent server starts only through Settings, defaults to
-loopback, requires explicit network opt-in, and supports a configurable
-listen IP/public host and PEM-backed rustls TLS. It stops all workers when
-disabled or the application closes. See the
+status highlights and non-overlapping badges. Multiple realtime execution IDs
+can share entities and links; markers on a shared route are lane-offset.
+Hovering an entity or link shows each execution's optional label and stage with
+its status, while link tooltips also include marker progress and target.
+Realtime batches
+validate atomically before replacing state. Commands never mutate document data
+or layout. The jobs API adds independent labeled task snapshots with stage-local
+progress, route changes, retries, and individual removal. Job state is separate
+from legacy realtime effects; the canvas merges copies for display only.
+Node badges and labeled markers identify work without hovering, and the
+expandable job list can focus a task's location. `GET /v1/capabilities` exposes
+supported features and limits. The `struct-view-animation-api` crate owns the bounded concurrent
+HTTP/HTTPS server; it defaults to loopback, requires explicit network opt-in,
+supports configurable listen IP/public host and PEM-backed rustls TLS, and
+stops all workers when disabled or the application closes. Its settings use a
+detachable window. See the
 [animation API guide](../../README.md#graph-animation-api) for endpoints,
 limits, lifecycle, and Python/PowerShell examples.
+
+## Relationship graph routing
 
 The relationship graph draws each edge as a routed path between node borders.
 Routing is performed after node layout and follows these steps:
