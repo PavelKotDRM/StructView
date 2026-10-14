@@ -1175,6 +1175,9 @@ The following stages are planned improvements, not completed features.
 ### Stage 1 — API server refinement
 
 - [ ] Refine the graph animation API server and its configuration.
+- [ ] Move the API server into a separate crate.
+- [ ] Move API server settings into a separate window that can be detached and
+  docked back into the main window.
 - [ ] Improve request validation, error reporting, and connection reliability.
 - [ ] Update API documentation, demonstration scenarios, and related tests.
 
@@ -1191,6 +1194,11 @@ The following stages are planned improvements, not completed features.
 - [ ] Refine highlighting, animation effects, and camera interaction.
 - [ ] Check visualization performance on large graphs while preserving automatic
   layout and routing.
+
+### Stage 4 — Codebase refactoring
+
+- [ ] Refactor the codebase to improve its structure, maintainability, and
+  consistency while preserving existing behavior.
 
 ## License
 
