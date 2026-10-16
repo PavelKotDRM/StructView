@@ -12,14 +12,14 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
 arboard = "3"
 eframe = { version = "0.37", default-features = false }
-egui = "0.37"
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
 graphviz-rust = { version = "0.9", default-features = false }
 json5 = "1"
 num-bigint = "0.5"

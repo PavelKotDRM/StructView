@@ -24,3 +24,26 @@ pub fn run_native_gui(files: Vec<PathBuf>) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bundled_fonts_include_emoji_fallbacks() {
+        let fonts = egui::FontDefinitions::default();
+
+        let proportional_fonts = fonts
+            .families
+            .get(&egui::FontFamily::Proportional)
+            .expect("proportional fonts are configured");
+        assert!(
+            proportional_fonts
+                .iter()
+                .any(|name| name == "NotoEmoji-Regular")
+        );
+        assert!(
+            proportional_fonts
+                .iter()
+                .any(|name| name == "emoji-icon-font")
+        );
+    }
+}
