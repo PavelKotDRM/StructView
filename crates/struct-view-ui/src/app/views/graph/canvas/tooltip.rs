@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::app::colors::{color_swatch, parse_color};
 
 pub(in crate::app::views::graph) fn graph_edges_at_pointer(
     routes: &[Vec<Pos2>],
@@ -156,11 +157,19 @@ pub(super) fn show_graph_attributes(
         .auto_shrink([false, true])
         .show(ui, |ui| {
             for (key, value) in attributes {
-                ui.add(
-                    egui::Label::new(format!("{key}: {value}"))
-                        .wrap()
-                        .selectable(true),
-                );
+                if let Some(color) = parse_color(value) {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!("{key}:"));
+                        color_swatch(ui, color);
+                        ui.add(egui::Label::new(value).wrap().selectable(true));
+                    });
+                } else {
+                    ui.add(
+                        egui::Label::new(format!("{key}: {value}"))
+                            .wrap()
+                            .selectable(true),
+                    );
+                }
             }
         });
 }

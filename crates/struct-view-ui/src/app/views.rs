@@ -14,7 +14,9 @@ use super::visualization::{
     RelationshipGraph, SchemaDiagram, SchemaSource, TableData, schema_visible_indices,
     table_to_csv, table_visible_indices, try_build_relationship_graph,
 };
-use super::widgets::{Column, column_label, show_virtualized_columns, single_line_text};
+use super::widgets::{
+    Column, column_color_label, column_label, show_virtualized_columns, single_line_text,
+};
 
 const MIN_TABLE_WIDTH: f32 = 760.0;
 const GRAPH_NODE_SIZE: Vec2 = Vec2::new(208.0, 70.0);

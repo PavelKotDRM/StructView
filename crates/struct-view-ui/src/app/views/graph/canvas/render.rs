@@ -4,6 +4,7 @@ use super::tooltip::{
     graph_edges_at_pointer, show_graph_attributes, show_graph_edge_information,
     show_graph_realtime_status, show_graph_tooltip,
 };
+use crate::app::colors::attribute_color;
 use crate::app::views::diagram::DiagramAction;
 use std::collections::HashSet;
 
@@ -393,7 +394,10 @@ pub(in crate::app) fn show_graph(
         let edge_colors = graph
             .edges
             .iter()
-            .map(|edge| graph_edge_color(&edge.label, colors))
+            .map(|edge| {
+                attribute_color(&edge.attributes, &["color"])
+                    .unwrap_or_else(|| graph_edge_color(&edge.label, colors))
+            })
             .collect::<Vec<_>>();
         let mut neighbor_colors = vec![None; graph.nodes.len()];
         if has_focus {
@@ -542,10 +546,13 @@ pub(in crate::app) fn show_graph(
             let is_focused = focused(index);
             let neighbor_color = neighbor_colors[index];
             let is_dimmed = has_focus && !is_focused && neighbor_color.is_none() && !is_selected;
+            let attribute_stroke = attribute_color(&node.attributes, &["color"]);
             let base_stroke = if active_match {
                 Stroke::new(2.5, colors.active_match)
             } else if is_match {
                 Stroke::new(2.0, colors.matched)
+            } else if let Some(color) = attribute_stroke {
+                Stroke::new(1.5, color)
             } else {
                 ui.visuals().widgets.noninteractive.bg_stroke
             };
@@ -572,6 +579,12 @@ pub(in crate::app) fn show_graph(
             };
             let node_fill = if is_focused || is_selected {
                 ui.visuals().selection.bg_fill
+            } else if let Some(color) = attribute_color(&node.attributes, &["fillcolor"]) {
+                if is_dimmed {
+                    color.gamma_multiply(GRAPH_DIM_FACTOR)
+                } else {
+                    color
+                }
             } else if is_dimmed {
                 ui.visuals().faint_bg_color.gamma_multiply(GRAPH_DIM_FACTOR)
             } else {

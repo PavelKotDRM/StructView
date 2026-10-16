@@ -22,6 +22,8 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
   whole-word matching, and regular expressions;
 - a regex builder for escaped literal text and common pattern fragments;
 - switchable tree, relationship graph, flattened table, and schema views;
+- CSS color recognition and swatches in value views, including named colors,
+  hexadecimal, RGB/HSL/HWB, Lab/LCH, OKLab/OKLCH, and CSS `color()` formats;
 - a separate JSON/JSON5/YAML/TOML data-structure diagram with source-ordered
   nodes, comment nodes for supported formats, collapse/expand, three layouts,
   search, zoom/pan, and SVG/PNG export;
@@ -37,6 +39,9 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
   schemas, with inferred sample structure for ordinary data documents;
 - native TOML date/time editing and round-tripping;
 - editing mode for field values and primitive values;
+- color picker controls for string values and graph color attributes, with a
+  screen eyedropper, immediately applied output notation, or the existing
+  notation; the saturation marker stays compact until hovered or dragged;
 - creating a new empty JSON, YAML, TOML, or JSON5 file directly in edit mode;
 - adding object fields and array elements;
 - a field constructor with explicit string, number, boolean, null, object, and

@@ -1,4 +1,7 @@
 use super::*;
+use crate::app::colors::{
+    color_edit_button_srgba, format_color_as, parse_color, show_color_format_picker,
+};
 use crate::app::edit::{
     DeleteError, add_typed_child_at_path, delete_selected_structures, edit_child_at_path,
     paste_structures_at_path, rename_at_path, selected_structures,
@@ -463,6 +466,18 @@ impl StructureView {
                             text = text.hint_text(locale.text(TextKey::MetadataHint));
                         }
                         ui.add(text);
+                        if dialog.value_type == JsonValueType::String {
+                            let original_color = parse_color(&dialog.value);
+                            let mut color = original_color.unwrap_or(Color32::WHITE);
+                            let color_format =
+                                show_color_format_picker(ui, locale, "structure-edit-dialog");
+                            let picker_changed = color_edit_button_srgba(ui, &mut color, locale);
+                            if picker_changed || (color_format.changed && original_color.is_some())
+                            {
+                                dialog.value =
+                                    format_color_as(&dialog.value, color, color_format.format);
+                            }
+                        }
                     }
                     JsonValueType::DateTime | JsonValueType::Number | JsonValueType::Float => {
                         ui.label(locale.text(TextKey::Value));

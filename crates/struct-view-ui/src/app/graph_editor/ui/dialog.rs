@@ -115,6 +115,23 @@ impl StructViewApp {
                                 .desired_rows(6)
                                 .desired_width(f32::INFINITY),
                         );
+                        if matches!(draft.target, Target::Node(_) | Target::Edge(_)) {
+                            if let Err(error) =
+                                color_attribute_editor(ui, &mut draft.attributes, "color", locale)
+                            {
+                                draft.error = Some(error);
+                            }
+                            if matches!(draft.target, Target::Node(_))
+                                && let Err(error) = color_attribute_editor(
+                                    ui,
+                                    &mut draft.attributes,
+                                    "fillcolor",
+                                    locale,
+                                )
+                            {
+                                draft.error = Some(error);
+                            }
+                        }
                         ui.collapsing(locale.text(TextKey::GraphElementJson), |ui| {
                             match draft.build_record().and_then(|record| {
                                 serde_json::to_string_pretty(&record)
@@ -373,4 +390,48 @@ fn direction_choice(ui: &mut egui::Ui, value: &mut String, locale: Locale) {
                 ui.selectable_value(value, direction.as_str().to_string(), locale.text(key));
             }
         });
+}
+
+fn color_attribute_editor(
+    ui: &mut egui::Ui,
+    attributes: &mut String,
+    key: &str,
+    locale: Locale,
+) -> Result<(), String> {
+    let Ok(Value::Object(mut values)) = serde_json::from_str::<Value>(attributes) else {
+        return Ok(());
+    };
+    let original = values
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let original_color = crate::app::colors::parse_color(&original);
+    let mut color = original_color.unwrap_or(egui::Color32::WHITE);
+    let color_format = crate::app::colors::show_color_format_picker(ui, locale, key);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(key);
+        if crate::app::colors::color_edit_button_srgba(ui, &mut color, locale) {
+            changed = true;
+        }
+        if color_format.changed && original_color.is_some() {
+            changed = true;
+        }
+        if changed {
+            values.insert(
+                key.to_string(),
+                json!(crate::app::colors::format_color_as(
+                    &original,
+                    color,
+                    color_format.format
+                )),
+            );
+        }
+    });
+    if changed {
+        *attributes = serde_json::to_string_pretty(&Value::Object(values))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }

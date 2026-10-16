@@ -66,6 +66,10 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphWeight => "Weight (JSON number, optional)",
         TextKey::GraphWeightUnit => "Weight unit",
         TextKey::GraphAttributes => "Attributes (JSON object)",
+        TextKey::ColorFormat => "Color format",
+        TextKey::ColorFormatOriginal => "Same as original",
+        TextKey::ChooseColor => "Choose color",
+        TextKey::PickColorFromScreen => "Pick color from screen",
         TextKey::GraphAttributesHint => {
             "Additional data. ID and label are separate core fields, included in the full JSON below."
         }

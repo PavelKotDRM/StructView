@@ -1,4 +1,7 @@
 use super::*;
+use crate::app::colors::{
+    color_swatch, parse_color, quoted_color_for_edit, show_color_format_picker,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Highlight {
@@ -84,6 +87,9 @@ pub(super) fn render_leaf(
         if is_editable(node, options.mode) {
             render_value_editor(ui, node, options, outcome);
         } else {
+            if let Some(color) = parse_color(&node.display_value) {
+                color_swatch(ui, color);
+            }
             let value_text = highlight.apply(
                 RichText::new(single_line_text(&node.display_value)),
                 colors.value_color(&node.value_type),
@@ -130,6 +136,18 @@ fn render_value_editor(
             .font(egui::TextStyle::Monospace)
             .text_color(SyntaxColors::new(ui.visuals()).value_color(&node.value_type)),
     );
+    let mut selected_color = parse_color(&node.display_value).unwrap_or(egui::Color32::WHITE);
+    let picker_changed = node.value_type == JsonValueType::String
+        && crate::app::colors::color_edit_button_srgba(ui, &mut selected_color, options.locale);
+    let color_format = if node.value_type == JsonValueType::String {
+        show_color_format_picker(ui, options.locale, &node.path)
+    } else {
+        crate::app::colors::ColorFormatSelection {
+            format: crate::app::colors::ColorFormat::Original,
+            changed: false,
+        }
+    };
+    let format_changed = color_format.changed && parse_color(&before_display_value).is_some();
 
     if edit_resp.changed() {
         outcome.tree_changed = true;
@@ -155,13 +173,33 @@ fn render_value_editor(
         }
     }
 
-    if edit_resp.changed() || edit_resp.lost_focus() {
+    if picker_changed || format_changed {
+        match quoted_color_for_edit(&before_display_value, selected_color, color_format.format) {
+            Ok(selected) => match apply_primitive_edit(node, &selected, options.format) {
+                Ok(()) => outcome.tree_changed = true,
+                Err(error) => {
+                    node.value_type = before_value_type.clone();
+                    node.display_value = before_display_value.clone();
+                    outcome.edit_error = Some(error);
+                    valid = false;
+                }
+            },
+            Err(error) => {
+                node.value_type = before_value_type.clone();
+                node.display_value = before_display_value.clone();
+                outcome.edit_error = Some(error);
+                valid = false;
+            }
+        }
+    }
+
+    if edit_resp.changed() || edit_resp.lost_focus() || picker_changed || format_changed {
         outcome.inline_edit_events.push(InlineEditEvent {
             path: node.path.clone(),
             before_value_type,
             before_display_value,
-            changed: edit_resp.changed(),
-            finished: edit_resp.lost_focus(),
+            changed: edit_resp.changed() || picker_changed || format_changed,
+            finished: edit_resp.lost_focus() || picker_changed || format_changed,
             valid,
         });
     }

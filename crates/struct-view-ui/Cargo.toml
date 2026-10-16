@@ -7,6 +7,7 @@ description = "Native graphical interface for StructView"
 
 [dependencies]
 arboard.workspace = true
+csscolorparser.workspace = true
 egui.workspace = true
 rfd.workspace = true
 resvg = "0.48"
@@ -17,6 +18,7 @@ struct-view-animation-api.workspace = true
 struct-view-operations.workspace = true
 struct-view-build-info = { path = "../struct-view-build-info" }
 struct-view-core = { path = "../struct-view-core" }
+xcap = "0.9.8"
 
 [dev-dependencies]
 # Tests build `scroll_area::State` with a preset offset, which is only possible via serde since egui 0.37.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::colors::parse_color;
 
 impl StructureView {
     pub(super) fn canvas(&mut self, ui: &mut Ui, locale: Locale) {
@@ -151,6 +152,26 @@ impl StructureView {
                 FontId::proportional(12.0 * self.zoom),
                 color,
             );
+            if let Some(color) = parse_color(&node.value) {
+                let size = 9.0 * self.zoom;
+                let swatch = Rect::from_center_size(
+                    Pos2::new(
+                        rect.left() + 12.0 * self.zoom,
+                        rect.bottom() - 10.0 * self.zoom,
+                    ),
+                    Vec2::splat(size),
+                );
+                painter.rect_filled(swatch, 1.0 * self.zoom, color);
+                painter.rect_stroke(
+                    swatch,
+                    1.0 * self.zoom,
+                    Stroke::new(
+                        self.zoom,
+                        ui.visuals().widgets.noninteractive.bg_stroke.color,
+                    ),
+                    StrokeKind::Inside,
+                );
+            }
             let hit = ui.interact(
                 rect.intersect(viewport),
                 ui.scope_id().with(("structure-node", id)),

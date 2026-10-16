@@ -2,6 +2,7 @@ use std::fmt::Write;
 use std::io;
 
 use super::*;
+use crate::app::colors::attribute_color;
 
 mod png;
 
@@ -226,7 +227,8 @@ fn graph_svg_localized(
             }
         }
         for (index, edge) in graph.edges.iter().enumerate() {
-            let fill = graph_edge_color(&edge.label, colors);
+            let fill = attribute_color(&edge.attributes, &["color"])
+                .unwrap_or_else(|| graph_edge_color(&edge.label, colors));
             let points = &routing.edge_paths[index];
             let coordinates = points.iter().map(|point| format!("{},{}", point.x, point.y)).collect::<Vec<_>>().join(" ");
             let source = &graph.nodes[edge.source];
@@ -254,7 +256,9 @@ fn graph_svg_localized(
         }
         for (index, label) in labels.iter().enumerate() {
             let Some(label) = label else { continue };
-            let fill = graph_edge_color(&graph.edges[index].label, colors);
+            let edge = &graph.edges[index];
+            let fill = attribute_color(&edge.attributes, &["color"])
+                .unwrap_or_else(|| graph_edge_color(&edge.label, colors));
             if let Some([start, end]) = label.leader {
                 writeln!(svg, r#"<path d="M {} {} L {} {}" fill="none" stroke="{}" stroke-width="1" stroke-dasharray="3 3"/>"#,
                     start.x, start.y, end.x, end.y, color(fill)).unwrap();
@@ -263,7 +267,9 @@ fn graph_svg_localized(
         // Draw labels after all routes and leaders so subsequent lines cannot obscure text.
         for (index, label) in labels.iter().enumerate() {
             let Some(label) = label else { continue };
-            let fill = graph_edge_color(&graph.edges[index].label, colors);
+            let edge = &graph.edges[index];
+            let fill = attribute_color(&edge.attributes, &["color"])
+                .unwrap_or_else(|| graph_edge_color(&edge.label, colors));
             let rect = label.background;
             writeln!(svg, r#"<rect x="{}" y="{}" width="{}" height="{}" rx="3" fill="{}"/>"#,
                 rect.left(), rect.top(), rect.width(), rect.height(), color(visuals.panel_fill)).unwrap();
@@ -281,11 +287,15 @@ fn graph_svg_localized(
         for (index, (node, &center)) in graph.nodes.iter().zip(&routing.node_positions).enumerate() {
             let size = routing.node_sizes[index];
             let rect = egui::Rect::from_center_size(center, size);
+            let node_fill = attribute_color(&node.attributes, &["fillcolor"])
+                .unwrap_or(visuals.faint_bg_color);
+            let node_stroke = attribute_color(&node.attributes, &["color"])
+                .unwrap_or(visuals.widgets.noninteractive.bg_stroke.color);
             writeln!(svg, r#"<g><title>{}</title><rect x="{}" y="{}" width="{}" height="{}" rx="6" fill="{}" stroke="{}" stroke-width="{}"/>"#,
                 xml_text(&node.hover_text()),
                 rect.left(), rect.top(), rect.width(), rect.height(),
-                opaque_color(visuals.faint_bg_color, visuals.panel_fill),
-                opaque_color(visuals.widgets.noninteractive.bg_stroke.color, visuals.panel_fill),
+                opaque_color(node_fill, visuals.panel_fill),
+                opaque_color(node_stroke, visuals.panel_fill),
                 visuals.widgets.noninteractive.bg_stroke.width).unwrap();
             let label = shortened_label(painter, &node.label, 24, 15.0, egui::FontFamily::Proportional, colors.key, size.x);
             text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_LABEL_OFFSET), &label, 15.0, colors.key, "middle", "sans-serif");
@@ -547,6 +557,20 @@ mod tests {
             u32::from_be_bytes(png[20..24].try_into().unwrap()),
             routing.content_size.y.ceil() as u32
         );
+    }
+
+    #[test]
+    fn graph_export_renders_css_colors_from_string_attributes() {
+        let root = struct_view_core::parser::parse_json(
+            r##"{"graph":{"type":"directed"},"nodes":[{"id":"a","color":"rebeccapurple","fillcolor":"hsl(120 100% 50%)"},{"id":"b"}],"edges":[{"source":"a","target":"b","color":"#ff0000"}]}"##,
+        )
+        .unwrap();
+        let graph = build_relationship_graph(&root);
+        let routing = build_graph_routing_layout(&graph);
+        let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
+        assert!(svg.contains(r##"fill="#00ff00""##), "{svg}");
+        assert!(svg.contains(r##"stroke="#663399""##), "{svg}");
+        assert!(svg.contains(r##"stroke="#ff0000""##), "{svg}");
     }
 
     #[test]

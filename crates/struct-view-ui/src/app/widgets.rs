@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use egui::{Response, RichText, Ui};
+use egui::{Color32, Response, RichText, Ui};
+
+use super::colors::color_swatch;
 
 pub(super) fn single_line_text(text: &str) -> Cow<'_, str> {
     let needs_escape =
@@ -29,6 +31,25 @@ pub(super) fn column_label(ui: &mut Ui, width: f32, text: RichText) -> Response 
         [width, ui.spacing().interact_size.y],
         egui::Label::new(text).truncate(),
     )
+}
+
+pub(super) fn column_color_label(
+    ui: &mut Ui,
+    width: f32,
+    text: RichText,
+    color: Color32,
+) -> Response {
+    let height = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, height),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            color_swatch(ui, color);
+            let text_width = (width - ui.spacing().item_spacing.x - height.min(14.0)).max(1.0);
+            ui.add_sized([text_width, height], egui::Label::new(text).truncate())
+        },
+    )
+    .inner
 }
 
 pub(super) fn show_virtualized_columns(

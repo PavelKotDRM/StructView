@@ -66,6 +66,10 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphWeight => "Вес (число JSON, необязательно)",
         TextKey::GraphWeightUnit => "Единица веса",
         TextKey::GraphAttributes => "Атрибуты (объект JSON)",
+        TextKey::ColorFormat => "Формат цвета",
+        TextKey::ColorFormatOriginal => "Как исходный",
+        TextKey::ChooseColor => "Выбрать цвет",
+        TextKey::PickColorFromScreen => "Пипетка",
         TextKey::GraphAttributesHint => {
             "Дополнительные данные. ID и подпись — отдельные основные поля, показанные в полном JSON ниже."
         }

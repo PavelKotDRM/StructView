@@ -3,6 +3,7 @@ use std::fmt::Write;
 use std::io;
 use std::path::Path;
 
+use crate::app::colors::parse_color;
 use struct_view_core::structure::Document;
 
 use super::{kind_color, layout::Layout, node_label, shorten};
@@ -76,9 +77,20 @@ pub(super) fn styled_svg(
             collapsed.contains(&id),
             limits.get(&id).copied().unwrap_or(100),
         ));
+        let swatch = parse_color(&node.value).map_or_else(String::new, |color| {
+            format!(
+                r##"<rect x="{}" y="{}" width="8" height="8" rx="1" fill="#{:02x}{:02x}{:02x}" fill-opacity="{}"/>"##,
+                rect.min.x + 8.0,
+                rect.max.y - 14.0,
+                color.r(),
+                color.g(),
+                color.b(),
+                f32::from(color.a()) / 255.0
+            )
+        });
         let _ = write!(
             svg,
-            r#"<g><title>{title}</title><rect x="{}" y="{}" width="{}" height="{}" rx="6" fill="{node_fill}" stroke="{color}" stroke-width="1.5"/><text x="{}" y="{}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="{key_color}">{key}</text><text x="{}" y="{}" text-anchor="middle" font-family="sans-serif" font-size="12" fill="{color}">{value}</text></g>"#,
+            r#"<g><title>{title}</title><rect x="{}" y="{}" width="{}" height="{}" rx="6" fill="{node_fill}" stroke="{color}" stroke-width="1.5"/><text x="{}" y="{}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="{key_color}">{key}</text>{swatch}<text x="{}" y="{}" text-anchor="middle" font-family="sans-serif" font-size="12" fill="{color}">{value}</text></g>"#,
             rect.min.x,
             rect.min.y,
             rect.width(),

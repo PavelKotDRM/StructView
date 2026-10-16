@@ -1,5 +1,6 @@
 use super::super::state::PairDifferenceCache;
 use super::*;
+use crate::app::colors::parse_color;
 use struct_view_core::diff::{compare_pair_at_path, values_equal};
 
 /// Отрисовать парный diff с выбором сравниваемых файлов.
@@ -187,12 +188,17 @@ pub(in crate::app) fn show_diff(
                                     .unwrap_or_else(|| {
                                         locale.text(TextKey::MissingValue).to_string()
                                     });
-                                column_label(
-                                    ui,
-                                    column_width,
-                                    RichText::new(single_line_text(&text)).color(color),
-                                )
-                                .on_hover_text(value.map_or_else(
+                                let value_text =
+                                    RichText::new(single_line_text(&text)).color(color);
+                                let color = value.and_then(|value| {
+                                    parse_color(&display_diff_value(value, locale))
+                                });
+                                let response = if let Some(color) = color {
+                                    column_color_label(ui, column_width, value_text, color)
+                                } else {
+                                    column_label(ui, column_width, value_text)
+                                };
+                                response.on_hover_text(value.map_or_else(
                                     || locale.text(TextKey::MissingValue).to_string(),
                                     |value| format_value(Some(value)),
                                 ));

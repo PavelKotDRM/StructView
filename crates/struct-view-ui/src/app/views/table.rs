@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::colors::parse_color;
 
 /// Отрисовать таблицу и вернуть `true`, если был запрошен экспорт CSV.
 pub(in crate::app) fn show_table(
@@ -72,14 +73,14 @@ pub(in crate::app) fn show_table(
                     RichText::new(single_line_text(&row.path)).monospace(),
                 )
                 .on_hover_text(&row.path);
-                column_label(
-                    ui,
-                    value_width,
-                    RichText::new(single_line_text(&value))
-                        .color(colors.value_color(&row.value_type))
-                        .monospace(),
-                )
-                .on_hover_text(&value);
+                let value_text = RichText::new(single_line_text(&value))
+                    .color(colors.value_color(&row.value_type))
+                    .monospace();
+                if let Some(color) = parse_color(&value) {
+                    column_color_label(ui, value_width, value_text, color).on_hover_text(&value);
+                } else {
+                    column_label(ui, value_width, value_text).on_hover_text(&value);
+                }
                 column_label(
                     ui,
                     type_width,
