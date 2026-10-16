@@ -30,7 +30,7 @@ impl StructViewApp {
             TextKey::ContinueWithoutSaving
         };
         let mut action = None;
-        egui::Modal::new(egui::Id::new("close-file-confirmation")).show(ctx, |ui| {
+        egui::Modal::new(egui::Id::unique("close-file-confirmation")).show(ctx, |ui| {
             ui.set_min_width(540.0);
             ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
             ui.horizontal(|ui| {

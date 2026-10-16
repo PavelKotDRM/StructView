@@ -284,6 +284,7 @@ fn long_graph_tooltips_allow_scrolling_to_the_last_field() {
                     unit: egui::MouseWheelUnit::Point,
                     delta: Vec2::new(0.0, -1000.0),
                     phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Wheel,
                     modifiers: egui::Modifiers::NONE,
                 },
             ];

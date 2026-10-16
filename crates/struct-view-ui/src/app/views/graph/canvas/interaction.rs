@@ -52,7 +52,7 @@ pub(in crate::app) fn graph_view_menu(
     routing: &GraphRoutingLayout,
     locale: Locale,
 ) {
-    let id = egui::Id::new(("graph-interaction", routing.graph_fingerprint));
+    let id = egui::Id::unique(("graph-interaction", routing.graph_fingerprint));
     let interaction = ui
         .ctx()
         .data(|data| data.get_temp::<GraphInteractionState>(id))
@@ -65,7 +65,7 @@ pub(in crate::app) fn graph_view_menu(
     ));
     ui.ctx().data_mut(|data| {
         data.insert_temp(
-            egui::Id::new(("graph-menu-actions", routing.graph_fingerprint)),
+            egui::Id::unique(("graph-menu-actions", routing.graph_fingerprint)),
             actions,
         )
     });

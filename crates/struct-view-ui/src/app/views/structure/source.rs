@@ -10,7 +10,7 @@ impl StructureView {
         let mut open = self.source_open;
         let format = self.source_format();
         egui::Window::new(locale.text(TextKey::StructureSource))
-            .id(egui::Id::new("structure-source-window"))
+            .id(egui::Id::unique("structure-source-window"))
             .open(&mut open)
             .default_size([600.0, 240.0])
             .show(ctx, |ui| {

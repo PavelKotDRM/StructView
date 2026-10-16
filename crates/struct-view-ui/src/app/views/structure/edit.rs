@@ -425,7 +425,7 @@ impl StructureView {
         let mut submit = false;
         let mut cancel = false;
         egui::Window::new(title)
-            .id(egui::Id::new("structure-edit-dialog"))
+            .id(egui::Id::unique("structure-edit-dialog"))
             .collapsible(false)
             .resizable(true)
             .show(ctx, |ui| {

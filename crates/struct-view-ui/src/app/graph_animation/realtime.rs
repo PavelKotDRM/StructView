@@ -628,11 +628,11 @@ impl RealtimeState {
 }
 
 pub(in crate::app) fn state(ctx: &egui::Context) -> Option<RealtimeState> {
-    ctx.data(|data| data.get_temp(egui::Id::new(STATE_ID)))
+    ctx.data(|data| data.get_temp(egui::Id::unique(STATE_ID)))
 }
 pub(in crate::app) fn store(ctx: &egui::Context, state: RealtimeState) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new(STATE_ID), state));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(STATE_ID), state));
 }
 pub(in crate::app) fn clear(ctx: &egui::Context) {
-    ctx.data_mut(|data| data.remove::<RealtimeState>(egui::Id::new(STATE_ID)));
+    ctx.data_mut(|data| data.remove::<RealtimeState>(egui::Id::unique(STATE_ID)));
 }

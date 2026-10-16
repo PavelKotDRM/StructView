@@ -17,10 +17,10 @@ pub(in crate::app) fn show_graph(
 ) {
     let colors = SyntaxColors::new(ui.visuals());
     let editable = ui.ctx().data(|data| {
-        data.get_temp::<bool>(egui::Id::new("graph-editor-enabled"))
+        data.get_temp::<bool>(egui::Id::unique("graph-editor-enabled"))
             .unwrap_or(false)
     });
-    let interaction_id = egui::Id::new(("graph-interaction", routing.graph_fingerprint));
+    let interaction_id = egui::Id::unique(("graph-interaction", routing.graph_fingerprint));
     let mut interaction = ui
         .ctx()
         .data(|data| data.get_temp::<GraphInteractionState>(interaction_id))
@@ -70,15 +70,11 @@ pub(in crate::app) fn show_graph(
     }
     let canvas_response = ui.interact(
         viewport,
-        ui.id().with("graph-canvas"),
+        ui.scope_id().with("graph-canvas"),
         Sense::click_and_drag(),
     );
     canvas_response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            true,
-            locale.text(TextKey::GraphView),
-        )
+        egui::WidgetInfo::labeled(egui::Role::Button, true, locale.text(TextKey::GraphView))
     });
     if canvas_response.clicked() || canvas_response.drag_started() {
         canvas_response.request_focus();
@@ -87,7 +83,7 @@ pub(in crate::app) fn show_graph(
     let actions = ui
         .ctx()
         .data_mut(|data| {
-            data.remove_temp::<Vec<DiagramAction>>(egui::Id::new((
+            data.remove_temp::<Vec<DiagramAction>>(egui::Id::unique((
                 "graph-menu-actions",
                 routing.graph_fingerprint,
             )))
@@ -263,7 +259,7 @@ pub(in crate::app) fn show_graph(
             );
             response.widget_info(|| {
                 egui::WidgetInfo::selected(
-                    egui::WidgetType::Button,
+                    egui::Role::Button,
                     true,
                     interaction.selected.contains(&index),
                     format!("{}: {} ({})", node.label, node.id, node.path),
@@ -324,7 +320,7 @@ pub(in crate::app) fn show_graph(
             if editable && response.double_clicked() {
                 ui.ctx().data_mut(|data| {
                     data.insert_temp(
-                        egui::Id::new("graph-editor-canvas-request"),
+                        egui::Id::unique("graph-editor-canvas-request"),
                         crate::app::graph_editor::CanvasTarget::Node(index),
                     )
                 });
@@ -519,7 +515,7 @@ pub(in crate::app) fn show_graph(
                 if editable && response.double_clicked() {
                     ui.ctx().data_mut(|data| {
                         data.insert_temp(
-                            egui::Id::new("graph-editor-canvas-request"),
+                            egui::Id::unique("graph-editor-canvas-request"),
                             crate::app::graph_editor::CanvasTarget::Edge(edge_index),
                         )
                     });

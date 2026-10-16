@@ -106,7 +106,7 @@ fn render_png(svg: &str) -> io::Result<Vec<u8>> {
     let mut options = resvg::usvg::Options::default();
     options.fontdb_mut().load_system_fonts();
     for font in egui::FontDefinitions::default().font_data.values() {
-        options.fontdb_mut().load_font_data(font.font.to_vec());
+        options.fontdb_mut().load_font_data(font.bytes().to_vec());
     }
     options.fontdb_mut().set_sans_serif_family("Ubuntu");
     let tree = resvg::usvg::Tree::from_str(svg, &options).map_err(io::Error::other)?;

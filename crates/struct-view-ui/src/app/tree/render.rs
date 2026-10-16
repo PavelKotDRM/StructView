@@ -46,7 +46,7 @@ pub(in crate::app) fn render_visible_rows(
         let Some(node) = node_at_path_mut(root, path) else {
             break;
         };
-        let id = egui::Id::new(("tree-row", &node.path));
+        let id = egui::Id::unique(("tree-row", &node.path));
         ui.push_id(id, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             render_node_row(ui, node, depth, options, outcome);

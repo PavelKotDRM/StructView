@@ -19,6 +19,8 @@ struct-view-build-info = { path = "../struct-view-build-info" }
 struct-view-core = { path = "../struct-view-core" }
 
 [dev-dependencies]
+# Tests build `scroll_area::State` with a preset offset, which is only possible via serde since egui 0.37.
+egui = { workspace = true, features = ["serde"] }
 tempfile.workspace = true
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

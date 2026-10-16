@@ -62,7 +62,7 @@ impl StructViewApp {
                 VisualizationMode::Graph => {
                     let editable = self.can_edit_graph();
                     ui.ctx().data_mut(|data| {
-                        data.insert_temp(egui::Id::new("graph-editor-enabled"), editable);
+                        data.insert_temp(egui::Id::unique("graph-editor-enabled"), editable);
                     });
                     if let Some(root) = &self.root {
                         self.graph_calculation.ensure_started(

@@ -302,10 +302,7 @@ fn graph_editor_commands_are_in_menus_and_hidden_in_other_modes() {
                 TextKey::ViewMenu => {
                     assert_eq!(has_label(&output, "Graph editor"), graph);
                     assert_eq!(
-                        has_label(
-                            &output,
-                            &format!("{} \u{23f5}", app.locale.text(TextKey::TreeActions))
-                        ),
+                        has_label(&output, app.locale.text(TextKey::TreeActions)),
                         mode == VisualizationMode::Tree,
                         "Mode {mode:?}, labels: {:?}",
                         output
@@ -333,6 +330,8 @@ fn graph_editor_window_is_toggleable_and_supports_detach_and_dock() {
     let mut app = StructViewApp::default();
     app.locale = Locale::English;
     app.open_graph_document(sample().to_root().unwrap());
+    // Since egui 0.37 a newly shown window is excluded from the AccessKit tree during its sizing pass.
+    render(&ctx, &mut app, vec![]).drop_without_applying_deltas();
     let output = render(&ctx, &mut app, vec![]);
     assert!(has_label(&output, "Graph editor"));
     assert!(has_label(&output, "Add entity"));
@@ -362,6 +361,7 @@ fn graph_editor_window_is_toggleable_and_supports_detach_and_dock() {
     assert!(!has_label(&output, "Graph editor"));
     output.drop_without_applying_deltas();
     app.visualization = VisualizationMode::Graph;
+    render(&ctx, &mut app, vec![]).drop_without_applying_deltas();
     let output = render(&ctx, &mut app, vec![]);
     assert!(has_label(&output, "Graph editor"));
     assert!(!app.graph_editor.docking.detached);

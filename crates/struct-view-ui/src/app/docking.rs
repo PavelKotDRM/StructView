@@ -61,7 +61,7 @@ impl DockingState {
     }
 
     pub(super) fn area_id(&self, id_salt: &'static str) -> egui::Id {
-        egui::Id::new((id_salt, self.generation))
+        egui::Id::unique((id_salt, self.generation))
     }
 
     pub(super) fn take_embedded_position(&mut self) -> Option<egui::Pos2> {

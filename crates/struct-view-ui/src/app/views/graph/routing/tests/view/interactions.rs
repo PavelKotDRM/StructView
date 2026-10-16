@@ -58,7 +58,7 @@ fn graph_menu_zoom_multi_selection_and_marquee_work_together() {
                 ..Default::default()
             },
             |ui| {
-                let id = egui::Id::new(("graph-interaction", routing.graph_fingerprint));
+                let id = egui::Id::unique(("graph-interaction", routing.graph_fingerprint));
                 egui::Panel::top("test-graph-menu").show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         crate::app::views::graph::graph_view_menu(ui, &routing, Locale::English)

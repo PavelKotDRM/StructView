@@ -189,7 +189,7 @@ impl StructViewApp {
 
     pub(in crate::app) fn handle_graph_canvas_edit(&mut self, ctx: &egui::Context) {
         let request = ctx.data_mut(|data| {
-            let id = egui::Id::new("graph-editor-canvas-request");
+            let id = egui::Id::unique("graph-editor-canvas-request");
             let request = data.get_temp::<CanvasTarget>(id);
             data.remove::<CanvasTarget>(id);
             request

@@ -183,5 +183,5 @@ fn render_value_editor(
 
 /// Сформировать текст заголовка для объекта/массива с учётом подсветки поиска.
 fn value_editor_id(path: &str) -> egui::Id {
-    egui::Id::new(("tree-value", path))
+    egui::Id::unique(("tree-value", path))
 }

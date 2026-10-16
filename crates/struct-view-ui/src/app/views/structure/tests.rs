@@ -864,6 +864,8 @@ fn both_diagrams_use_identical_menu_controls_and_shared_search_window() {
         output.drop_without_applying_deltas();
         egui::Popup::close_all(&context);
         app.search_window_open = true;
+        // A newly opened window is excluded from the AccessKit tree during its sizing pass.
+        app_frame(&mut app, &context, 1000.0, Vec::new()).drop_without_applying_deltas();
         let output = app_frame(&mut app, &context, 1000.0, Vec::new());
         for key in [
             TextKey::SearchWindow,

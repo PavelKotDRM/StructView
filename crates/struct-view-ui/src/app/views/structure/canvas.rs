@@ -5,13 +5,13 @@ impl StructureView {
         let (_, viewport) = ui.allocate_space(ui.available_size().max(Vec2::splat(1.0)));
         let response = ui.interact(
             viewport,
-            ui.id().with("structure-canvas"),
+            ui.scope_id().with("structure-canvas"),
             Sense::click_and_drag(),
         );
         self.canvas_size = viewport.size();
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
-                egui::WidgetType::Button,
+                egui::Role::Button,
                 true,
                 locale.text(TextKey::StructureView),
             )
@@ -153,12 +153,12 @@ impl StructureView {
             );
             let hit = ui.interact(
                 rect.intersect(viewport),
-                ui.id().with(("structure-node", id)),
+                ui.scope_id().with(("structure-node", id)),
                 Sense::click(),
             );
             hit.widget_info(|| {
                 egui::WidgetInfo::selected(
-                    egui::WidgetType::Button,
+                    egui::Role::Button,
                     true,
                     self.all_selected || self.selected_nodes.contains(&id),
                     format!(
@@ -250,12 +250,12 @@ impl StructureView {
                 }
                 let expand = ui.interact(
                     button_rect.intersect(viewport),
-                    ui.id().with(("structure-expand-node", id)),
+                    ui.scope_id().with(("structure-expand-node", id)),
                     Sense::click(),
                 );
                 expand.widget_info(|| {
                     egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
+                        egui::Role::Button,
                         true,
                         locale.text(TextKey::StructureToggle),
                     )
@@ -286,12 +286,12 @@ impl StructureView {
                 painter.line_segment([center - Vec2::Y * arm, center + Vec2::Y * arm], stroke);
                 let add = ui.interact(
                     button_rect.intersect(viewport),
-                    ui.id().with(("structure-add-node", id)),
+                    ui.scope_id().with(("structure-add-node", id)),
                     Sense::click(),
                 );
                 add.widget_info(|| {
                     egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
+                        egui::Role::Button,
                         true,
                         locale.text(if node.kind == Kind::Object {
                             TextKey::AddField

@@ -521,6 +521,15 @@ fn text_color(output: &egui::FullOutput, text: &str) -> Option<egui::Color32> {
         .map(|shape| shape.fallback_color)
 }
 
+fn set_scroll_offset_x(ctx: &egui::Context, id: egui::Id, x: f32) {
+    let state = egui::scroll_area::State::load(ctx, id).unwrap_or_default();
+    let mut value = serde_json::to_value(state).unwrap();
+    value["offset"]["x"] = serde_json::json!(x);
+    serde_json::from_value::<egui::scroll_area::State>(value)
+        .unwrap()
+        .store(ctx, id);
+}
+
 #[test]
 fn rendering_table_headers_scroll_with_their_columns() {
     let root = struct_view_core::parser::parse_json(r#"{"value":42}"#).unwrap();
@@ -534,15 +543,11 @@ fn rendering_table_headers_scroll_with_their_columns() {
     let first = context.run_ui(window_input(), |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
             scroll_id = ui.make_persistent_id(egui::IdSalt::new("table_horizontal"));
-            let mut state = egui::scroll_area::State::default();
-            state.offset.x = 250.0;
-            state.store(ui.ctx(), scroll_id);
+            set_scroll_offset_x(ui.ctx(), scroll_id, 250.0);
             render(ui);
         });
     });
-    let mut state = egui::scroll_area::State::load(&context, scroll_id).unwrap_or_default();
-    state.offset.x = 300.0;
-    state.store(&context, scroll_id);
+    set_scroll_offset_x(&context, scroll_id, 300.0);
     let second = context.run_ui(window_input(), |ui| {
         egui::CentralPanel::default().show(ui, render);
     });

@@ -27,7 +27,7 @@ impl StructViewApp {
         let mut delete = false;
         let mut duplicate = false;
         let mut spawn = false;
-        egui::Modal::new(egui::Id::new("graph-editor-dialog")).show(ctx, |ui| {
+        egui::Modal::new(egui::Id::unique("graph-editor-dialog")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading(locale.text(match draft.target {
                 Target::Node(_) => TextKey::GraphNodes,

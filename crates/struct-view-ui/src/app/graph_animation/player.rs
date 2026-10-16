@@ -498,11 +498,11 @@ pub(super) fn point_on_path(path: &[Pos2], progress: f32) -> Option<Pos2> {
 }
 
 pub(in crate::app) fn player(ctx: &egui::Context) -> Option<AnimationPlayer> {
-    ctx.data(|data| data.get_temp(egui::Id::new(PLAYER_ID)))
+    ctx.data(|data| data.get_temp(egui::Id::unique(PLAYER_ID)))
 }
 
 pub(in crate::app) fn store_player(ctx: &egui::Context, player: AnimationPlayer) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new(PLAYER_ID), player));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(PLAYER_ID), player));
 }
 
 pub(in crate::app) fn stop(ctx: &egui::Context) {
@@ -512,5 +512,5 @@ pub(in crate::app) fn stop(ctx: &egui::Context) {
 }
 
 pub(in crate::app) fn stop_scenario(ctx: &egui::Context) {
-    ctx.data_mut(|data| data.remove::<AnimationPlayer>(egui::Id::new(PLAYER_ID)));
+    ctx.data_mut(|data| data.remove::<AnimationPlayer>(egui::Id::unique(PLAYER_ID)));
 }

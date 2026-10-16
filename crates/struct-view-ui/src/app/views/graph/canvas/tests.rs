@@ -90,7 +90,7 @@ fn render(
 
 fn state(ctx: &egui::Context, routing: &GraphRoutingLayout) -> GraphInteractionState {
     ctx.data(|data| {
-        data.get_temp(egui::Id::new((
+        data.get_temp(egui::Id::unique((
             "graph-interaction",
             routing.graph_fingerprint,
         )))
@@ -165,7 +165,7 @@ fn graph_canvas_keyboard_uses_shared_zoom_fit_and_connected_node_navigation() {
     interaction.cursor = source;
     ctx.data_mut(|data| {
         data.insert_temp(
-            egui::Id::new(("graph-interaction", routing.graph_fingerprint)),
+            egui::Id::unique(("graph-interaction", routing.graph_fingerprint)),
             interaction,
         );
     });
@@ -223,6 +223,7 @@ fn wheel_zooms_about_pointer_and_unmodified_drag_pans_without_marquee() {
                 unit: egui::MouseWheelUnit::Point,
                 delta: Vec2::new(0.0, 60.0),
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
                 modifiers: egui::Modifiers::NONE,
             },
         ],

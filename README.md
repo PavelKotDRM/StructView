@@ -1313,54 +1313,6 @@ responsibilities. The `struct-view-build-info` crate embeds the Rust version,
 target platform, build time, and optimization mode. This information is
 available through `--version` and the `Help` menu.
 
-## Development stages
-
-The stages below describe completed work, not a list of unimplemented features.
-
-### Stage 1 — API server refinement
-
-- [x] Refine the graph animation API server and its configuration.
-- [x] Move the API server into a separate crate.
-- [x] Move API server settings into a separate window that can be detached and
-  docked back into the main window.
-- [x] Improve request validation, error reporting, and connection reliability.
-- [x] Update API documentation, demonstration scenarios, and related tests.
-
-### Stage 2 — Status on hover
-
-- [x] Display the current animation status when hovering over an entity or link.
-- [x] Show waiting, running, success, and error states; include marker progress
-  where applicable.
-- [x] Clearly distinguish elements without an assigned status.
-
-### Stage 3 — Graph visualization refinement
-
-- [x] Improve the readability of entities, links, labels, and status indicators.
-- [x] Refine highlighting, animation effects, and camera interaction.
-- [x] Check visualization performance on large graphs while preserving automatic
-  layout and routing.
-
-### Stage 4 — Codebase refactoring
-
-- [x] Separate animation API transport from GUI state and graph rendering,
-  preserving existing behavior through regression tests.
-- [x] Split graph animation and graph editor UI into focused playback, API,
-  window, dialog, and test submodules.
-- [x] Extract shared document editing, clipboard, graph documents, and
-  visualization models into `struct-view-operations`; remove the CLI's UI dependency.
-
-### Stage 5 — Independent jobs and guided demonstration
-
-- [x] Add capabilities discovery and atomic job snapshots with independent
-  IDs, stages, progress, route changes, retries, and removal.
-- [x] Preserve scheduled/realtime compatibility and independent layer cleanup.
-- [x] Show readable job badges, labeled route markers, hover details, and
-  location buttons in a job list.
-- [x] Replace bulk playback with 19 narrated chapters on an 8-node, 9-edge
-  fixture; start idle by default and support manual checkpoints.
-- [x] Document current API contracts, crate boundaries, and demo launch in
-  English and Russian.
-
 ## License
 
 This project is distributed under the [MIT License](LICENSE).
