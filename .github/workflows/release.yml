@@ -60,6 +60,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes \
             pkg-config \
+            libclang-dev \
+            libdbus-1-dev \
+            libegl-dev \
+            libpipewire-0.3-dev \
             libwayland-dev \
             libx11-dev \
             libx11-xcb-dev \
@@ -71,7 +75,8 @@ jobs:
             libxcb-xinput-dev \
             libxcb-xinerama0-dev \
             libxkbcommon-dev \
-            libxkbcommon-x11-dev
+            libxkbcommon-x11-dev \
+            libxrandr-dev
 
       - name: Build release binary
         run: cargo build --locked --release
