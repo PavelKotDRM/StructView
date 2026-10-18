@@ -312,14 +312,15 @@ impl CapturedScreen {
 }
 
 #[cfg(not(windows))]
+type ScreenCaptureReceiver = std::sync::Arc<
+    std::sync::Mutex<std::sync::mpsc::Receiver<Result<Vec<CapturedScreen>, String>>>,
+>;
+
+#[cfg(not(windows))]
 #[derive(Clone, Default)]
 struct ScreenPickerState {
     screens: Vec<CapturedScreen>,
-    capture: Option<
-        std::sync::Arc<
-            std::sync::Mutex<std::sync::mpsc::Receiver<Result<Vec<CapturedScreen>, String>>>,
-        >,
-    >,
+    capture: Option<ScreenCaptureReceiver>,
     error: Option<String>,
 }
 
@@ -378,42 +379,43 @@ fn start_screen_capture(ctx: &egui::Context, id: egui::Id) -> ScreenPickerState 
 #[cfg(not(windows))]
 fn show_eyedropper(ctx: &egui::Context, id: egui::Id) -> Option<Option<Color32>> {
     let mut state = ctx.data(|data| data.get_temp::<ScreenPickerState>(id))?;
-    if state.screens.is_empty() && state.error.is_none() {
-        if let Some(capture) = state.capture.clone() {
-            let result = match capture.lock() {
-                Ok(receiver) => receiver.try_recv(),
-                Err(_) => {
-                    state.error = Some("Screen capture worker failed".to_string());
-                    state.capture = None;
-                    ctx.data_mut(|data| data.insert_temp(id, state));
-                    ctx.request_repaint();
-                    return None;
-                }
-            };
-            match result {
-                Ok(Ok(screens)) => {
-                    state.screens = screens;
-                    state.capture = None;
-                    ctx.data_mut(|data| data.insert_temp(id, state.clone()));
-                }
-                Ok(Err(error)) => {
-                    state.error = Some(error);
-                    state.capture = None;
-                    ctx.data_mut(|data| data.insert_temp(id, state));
-                    ctx.request_repaint();
-                    return None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
-                    return None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    state.error = Some("Screen capture worker stopped unexpectedly".to_string());
-                    state.capture = None;
-                    ctx.data_mut(|data| data.insert_temp(id, state));
-                    ctx.request_repaint();
-                    return None;
-                }
+    if state.screens.is_empty()
+        && state.error.is_none()
+        && let Some(capture) = state.capture.clone()
+    {
+        let result = match capture.lock() {
+            Ok(receiver) => receiver.try_recv(),
+            Err(_) => {
+                state.error = Some("Screen capture worker failed".to_string());
+                state.capture = None;
+                ctx.data_mut(|data| data.insert_temp(id, state));
+                ctx.request_repaint();
+                return None;
+            }
+        };
+        match result {
+            Ok(Ok(screens)) => {
+                state.screens = screens;
+                state.capture = None;
+                ctx.data_mut(|data| data.insert_temp(id, state.clone()));
+            }
+            Ok(Err(error)) => {
+                state.error = Some(error);
+                state.capture = None;
+                ctx.data_mut(|data| data.insert_temp(id, state));
+                ctx.request_repaint();
+                return None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                return None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                state.error = Some("Screen capture worker stopped unexpectedly".to_string());
+                state.capture = None;
+                ctx.data_mut(|data| data.insert_temp(id, state));
+                ctx.request_repaint();
+                return None;
             }
         }
     }
