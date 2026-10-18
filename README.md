@@ -41,7 +41,11 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 - editing mode for field values and primitive values;
 - color picker controls for string values and graph color attributes, with a
   screen eyedropper, immediately applied output notation, or the existing
-  notation; the saturation marker stays compact until hovered or dragged;
+  notation; the saturation marker stays compact until hovered or dragged.
+  The eyedropper captures screens in the background. On Windows it uses a native
+  GDI snapshot overlay without additional OpenGL windows or fullscreen mode,
+  avoiding graphics-surface transitions that can trigger G-Sync display flicker.
+  Click to select a color, or press Escape to cancel;
 - creating a new empty JSON, YAML, TOML, or JSON5 file directly in edit mode;
 - adding object fields and array elements;
 - a field constructor with explicit string, number, boolean, null, object, and

@@ -1,6 +1,11 @@
 use super::i18n::{Locale, TextKey};
 use egui::{Color32, Sense, StrokeKind, Ui, Vec2};
 
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows::{ScreenPickerState, show_eyedropper, start_screen_capture};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum ColorFormat {
     #[default]
@@ -124,8 +129,10 @@ pub(super) fn color_edit_button_srgba(ui: &mut Ui, color: &mut Color32, locale: 
         });
 
     if start_eyedropper {
-        let state = capture_screens(ui.ctx(), picker_id);
+        let state = start_screen_capture(ui.ctx(), picker_id);
         ui.ctx().data_mut(|data| data.insert_temp(picker_id, state));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(50));
     }
     if let Some(selected) = show_eyedropper(ui.ctx(), picker_id) {
         ui.ctx()
@@ -279,79 +286,144 @@ struct PickerHsvaState {
     hsva: egui::ecolor::Hsva,
 }
 
+#[cfg(not(windows))]
 #[derive(Clone)]
 struct CapturedScreen {
     width: usize,
     height: usize,
     pixels: std::sync::Arc<[u8]>,
     texture: egui::TextureHandle,
+    prepared: bool,
 }
 
+#[cfg(not(windows))]
+impl CapturedScreen {
+    fn viewport_builder(&self, index: usize) -> egui::ViewportBuilder {
+        egui::ViewportBuilder::default()
+            .with_title("Screen color picker")
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_visible(false)
+            .with_taskbar(false)
+            .with_always_on_top()
+            .with_fullscreen(true)
+            .with_monitor(index)
+    }
+}
+
+#[cfg(not(windows))]
 #[derive(Clone, Default)]
 struct ScreenPickerState {
     screens: Vec<CapturedScreen>,
+    capture: Option<
+        std::sync::Arc<
+            std::sync::Mutex<std::sync::mpsc::Receiver<Result<Vec<CapturedScreen>, String>>>,
+        >,
+    >,
     error: Option<String>,
 }
 
-fn capture_screens(ctx: &egui::Context, id: egui::Id) -> ScreenPickerState {
+#[cfg(not(windows))]
+fn capture_screens(ctx: &egui::Context, id: egui::Id) -> Result<Vec<CapturedScreen>, String> {
     let monitors = match xcap::Monitor::all() {
         Ok(monitors) => monitors,
-        Err(error) => {
-            return ScreenPickerState {
-                error: Some(error.to_string()),
-                ..Default::default()
-            };
-        }
+        Err(error) => return Err(error.to_string()),
     };
-    let mut state = ScreenPickerState::default();
+    let mut screens = Vec::with_capacity(monitors.len());
     for (index, monitor) in monitors.into_iter().enumerate() {
-        let result = (|| {
-            let image = monitor.capture_image()?;
-            let width = image.width() as usize;
-            let height = image.height() as usize;
-            let pixels: std::sync::Arc<[u8]> = image.as_raw().clone().into();
-            let texture = ctx.load_texture(
-                format!("screen-color-picker-{id:?}-{index}"),
-                egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels),
-                egui::TextureOptions::NEAREST,
-            );
-            Ok::<_, xcap::XCapError>(CapturedScreen {
-                width,
-                height,
-                pixels,
-                texture,
-            })
-        })();
-        match result {
-            Ok(screen) => state.screens.push(screen),
-            Err(error) => {
-                state.error = Some(error.to_string());
-                state.screens.clear();
-                break;
+        let image = monitor.capture_image().map_err(|error| error.to_string())?;
+        let width = image.width() as usize;
+        let height = image.height() as usize;
+        let pixels: std::sync::Arc<[u8]> = image.into_raw().into();
+        let texture = ctx.load_texture(
+            format!("screen-color-picker-{id:?}-{index}"),
+            egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels),
+            egui::TextureOptions::NEAREST,
+        );
+        screens.push(CapturedScreen {
+            width,
+            height,
+            pixels,
+            texture,
+            prepared: false,
+        });
+    }
+    if screens.is_empty() {
+        return Err("No screens are available".to_string());
+    }
+    Ok(screens)
+}
+
+#[cfg(not(windows))]
+fn start_screen_capture(ctx: &egui::Context, id: egui::Id) -> ScreenPickerState {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let ctx = ctx.clone();
+    let capture = std::thread::Builder::new()
+        .name("screen-color-picker-capture".to_string())
+        .spawn(move || {
+            let _ = sender.send(capture_screens(&ctx, id));
+        });
+    match capture {
+        Ok(_) => ScreenPickerState {
+            capture: Some(std::sync::Arc::new(std::sync::Mutex::new(receiver))),
+            ..Default::default()
+        },
+        Err(error) => ScreenPickerState {
+            error: Some(error.to_string()),
+            ..Default::default()
+        },
+    }
+}
+
+#[cfg(not(windows))]
+fn show_eyedropper(ctx: &egui::Context, id: egui::Id) -> Option<Option<Color32>> {
+    let mut state = ctx.data(|data| data.get_temp::<ScreenPickerState>(id))?;
+    if state.screens.is_empty() && state.error.is_none() {
+        if let Some(capture) = state.capture.clone() {
+            let result = match capture.lock() {
+                Ok(receiver) => receiver.try_recv(),
+                Err(_) => {
+                    state.error = Some("Screen capture worker failed".to_string());
+                    state.capture = None;
+                    ctx.data_mut(|data| data.insert_temp(id, state));
+                    ctx.request_repaint();
+                    return None;
+                }
+            };
+            match result {
+                Ok(Ok(screens)) => {
+                    state.screens = screens;
+                    state.capture = None;
+                    ctx.data_mut(|data| data.insert_temp(id, state.clone()));
+                }
+                Ok(Err(error)) => {
+                    state.error = Some(error);
+                    state.capture = None;
+                    ctx.data_mut(|data| data.insert_temp(id, state));
+                    ctx.request_repaint();
+                    return None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                    return None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    state.error = Some("Screen capture worker stopped unexpectedly".to_string());
+                    state.capture = None;
+                    ctx.data_mut(|data| data.insert_temp(id, state));
+                    ctx.request_repaint();
+                    return None;
+                }
             }
         }
     }
-    if state.screens.is_empty() && state.error.is_none() {
-        state.error = Some("No screens are available".to_string());
-    }
-    state
-}
-
-fn show_eyedropper(ctx: &egui::Context, id: egui::Id) -> Option<Option<Color32>> {
-    let state = ctx.data(|data| data.get_temp::<ScreenPickerState>(id))?;
     if state.screens.is_empty() {
         return None;
     }
     let mut outcome = None;
-    for (index, screen) in state.screens.iter().enumerate() {
+    for (index, screen) in state.screens.iter_mut().enumerate() {
         let viewport_id = egui::ViewportId::from_hash_of((id, "screen-eyedropper", index));
-        let builder = egui::ViewportBuilder::default()
-            .with_title("Screen color picker")
-            .with_decorations(false)
-            .with_resizable(false)
-            .with_fullscreen(true)
-            .with_monitor(index)
-            .with_always_on_top();
+        let builder = screen.viewport_builder(index);
         ctx.show_viewport_immediate(viewport_id, builder, |viewport_ui, _class| {
             let viewport_ctx = viewport_ui.ctx().clone();
             viewport_ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -359,7 +431,7 @@ fn show_eyedropper(ctx: &egui::Context, id: egui::Id) -> Option<Option<Color32>>
                 input.key_pressed(egui::Key::Escape) || input.viewport().close_requested()
             });
             let mut selection = None;
-            if !escape_pressed {
+            {
                 let draw_image = |ui: &mut Ui| {
                     let rect = ui.available_rect_before_wrap();
                     let size = rect.size();
@@ -395,12 +467,19 @@ fn show_eyedropper(ctx: &egui::Context, id: egui::Id) -> Option<Option<Color32>>
             if escape_pressed || selection.is_some() {
                 viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 outcome = Some(selection);
+            } else if screen.prepared {
+                // Immediate viewport commands are applied after the frame is presented.
+                viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            } else {
+                screen.prepared = true;
+                ctx.request_repaint();
             }
         });
         if outcome.is_some() {
             break;
         }
     }
+    ctx.data_mut(|data| data.insert_temp(id, state));
     outcome
 }
 
@@ -674,6 +753,80 @@ pub(super) fn color_swatch(ui: &mut Ui, color: Color32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    fn captured_screen(ctx: &egui::Context) -> CapturedScreen {
+        CapturedScreen {
+            width: 1920,
+            height: 1080,
+            pixels: vec![255; 1920 * 1080 * 4].into(),
+            texture: ctx.load_texture(
+                "test-screen",
+                egui::ColorImage::filled([1, 1], Color32::WHITE),
+                egui::TextureOptions::NEAREST,
+            ),
+            prepared: false,
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn eyedropper_window_starts_hidden() {
+        let screen = captured_screen(&egui::Context::default());
+        let builder = screen.viewport_builder(0);
+        assert_eq!(builder.visible, Some(false));
+        assert_eq!(builder.decorations, Some(false));
+        assert_eq!(builder.resizable, Some(false));
+        assert_eq!(builder.taskbar, Some(false));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn cancelling_eyedropper_keeps_screen_image_in_last_frame() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("test-screen-picker");
+        let screen = captured_screen(&ctx);
+        let texture_id = screen.texture.id();
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                id,
+                ScreenPickerState {
+                    screens: vec![screen],
+                    ..Default::default()
+                },
+            );
+        });
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let mut initial = ctx.run_ui(input(), |ui| {
+            show_eyedropper(ui.ctx(), id);
+        });
+        initial.textures_delta.clear();
+        let mut cancel_input = input();
+        cancel_input.events.push(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        let mut output = ctx.run_ui(cancel_input, |ui| {
+            assert_eq!(show_eyedropper(ui.ctx(), id), Some(None));
+        });
+        output.textures_delta.clear();
+        let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        assert!(primitives.iter().any(|primitive| {
+            matches!(
+                &primitive.primitive,
+                egui::epaint::Primitive::Mesh(mesh) if mesh.texture_id == texture_id
+            )
+        }));
+    }
 
     #[test]
     fn parses_css_and_extended_color_notations() {
