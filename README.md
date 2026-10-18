@@ -97,7 +97,7 @@ On Debian/Ubuntu, install the native build dependencies first:
 ```sh
 sudo apt-get update
 sudo apt-get install --yes \
-  build-essential pkg-config libclang-dev libdbus-1-dev libegl-dev \
+  build-essential pkg-config libclang-dev libdbus-1-dev libegl-dev libgbm-dev \
   libpipewire-0.3-dev libwayland-dev libx11-dev libx11-xcb-dev \
   libxcb1-dev libxcb-randr0-dev libxcb-render0-dev libxcb-shape0-dev \
   libxcb-xfixes0-dev libxcb-xinput-dev libxcb-xinerama0-dev \
@@ -105,8 +105,9 @@ sudo apt-get install --yes \
 ```
 
 `libegl-dev` provides `egl.pc`, which `khronos-egl` requires through
-`pkg-config`. These native dependencies are required at build time even if
-you only intend to use command-line mode.
+`pkg-config`. `libgbm-dev` provides `libgbm.so` for linking with `-lgbm`.
+These native dependencies are required at build time even if you only
+intend to use command-line mode.
 
 ```sh
 git clone https://github.com/PavelKotDRM/structview.git
