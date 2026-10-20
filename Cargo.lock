@@ -4212,7 +4212,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "struct-view-animation-api"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "getrandom 0.4.3",
  "rustls",
@@ -4222,14 +4222,14 @@ dependencies = [
 
 [[package]]
 name = "struct-view-build-info"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "vergen",
 ]
 
 [[package]]
 name = "struct-view-cli"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "indicatif",
  "serde_json",
@@ -4240,7 +4240,7 @@ dependencies = [
 
 [[package]]
 name = "struct-view-core"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "graphviz-rust",
  "json5",
@@ -4258,7 +4258,7 @@ dependencies = [
 
 [[package]]
 name = "struct-view-operations"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "arboard",
  "serde_json",
@@ -4267,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "struct-view-routing"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "ordered-float",
  "pathfinding",
@@ -4276,7 +4276,7 @@ dependencies = [
 
 [[package]]
 name = "struct-view-ui"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "arboard",
  "csscolorparser",
@@ -4300,7 +4300,7 @@ dependencies = [
 
 [[package]]
 name = "struct_view"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "roxmltree 0.21.1",
  "serde_json",
