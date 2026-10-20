@@ -34,6 +34,7 @@ arboard = { workspace = true, features = ["wayland-data-control"] }
 [target.'cfg(windows)'.dependencies]
 eframe = { workspace = true, features = [
     "accesskit",
+    "clipboard",
     "default_fonts",
     "glow",
     "links",
@@ -42,6 +43,7 @@ eframe = { workspace = true, features = [
 [target.'cfg(not(windows))'.dependencies]
 eframe = { workspace = true, features = [
     "accesskit",
+    "clipboard",
     "default_fonts",
     "glow",
     "links",
