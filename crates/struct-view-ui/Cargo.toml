@@ -18,7 +18,6 @@ struct-view-animation-api.workspace = true
 struct-view-operations.workspace = true
 struct-view-build-info = { path = "../struct-view-build-info" }
 struct-view-core = { path = "../struct-view-core" }
-xcap = "0.9.8"
 
 [dev-dependencies]
 # Tests build `scroll_area::State` with a preset offset, which is only possible via serde since egui 0.37.
@@ -32,6 +31,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 arboard = { workspace = true, features = ["wayland-data-control"] }
 
 [target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
 eframe = { workspace = true, features = [
     "accesskit",
     "clipboard",
@@ -41,6 +47,7 @@ eframe = { workspace = true, features = [
 ] }
 
 [target.'cfg(not(windows))'.dependencies]
+xcap = "0.9.8"
 eframe = { workspace = true, features = [
     "accesskit",
     "clipboard",

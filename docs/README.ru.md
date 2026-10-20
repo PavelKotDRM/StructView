@@ -95,6 +95,23 @@ DOT, GraphML и GEXF преобразуются в граф с полями `gra
 
 Для сборки требуется Rust с поддержкой `edition 2024` и Cargo.
 
+На Debian/Ubuntu сначала установите системные зависимости для сборки:
+
+```sh
+sudo apt-get update
+sudo apt-get install --yes \
+  build-essential pkg-config libclang-dev libdbus-1-dev libegl-dev libgbm-dev \
+  libpipewire-0.3-dev libwayland-dev libx11-dev libx11-xcb-dev \
+  libxcb1-dev libxcb-randr0-dev libxcb-render0-dev libxcb-shape0-dev \
+  libxcb-xfixes0-dev libxcb-xinput-dev libxcb-xinerama0-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev
+```
+
+Пакет `libegl-dev` предоставляет файл `egl.pc`, который `khronos-egl` ищет
+через `pkg-config`. Пакет `libgbm-dev` предоставляет `libgbm.so` для линковки
+с `-lgbm`. Эти системные зависимости нужны при сборке, даже если планируется
+использовать только командный режим.
+
 ```sh
 git clone https://github.com/PavelKotDRM/structview.git
 cd structview
