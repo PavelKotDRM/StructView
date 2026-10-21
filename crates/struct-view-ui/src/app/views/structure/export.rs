@@ -50,7 +50,7 @@ pub(super) fn styled_svg(
     let edge_color = if dark { "#d2d7e1" } else { "#475569" };
     let node_fill = if dark { "#171d28" } else { "#ffffff" };
     let key_color = if dark { "#ffda73" } else { "#624200" };
-    for &(_, _, points) in &layout.edges {
+    for (_, _, points) in &layout.edges {
         let points = points
             .iter()
             .map(|p| format!("{},{}", p.x, p.y))
@@ -163,5 +163,21 @@ mod tests {
         assert!(light.contains(r##"fill="#ffffff""##));
         assert!(resvg::usvg::Tree::from_str(&light, &resvg::usvg::Options::default()).is_ok());
         assert_eq!(&render_png(&light).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn compact_grid_export_preserves_all_nodes_and_bent_tree_edges() {
+        let source = format!("[{}]", vec![r#"{"value":1}"#; 12].join(","));
+        let doc = struct_view_core::structure::parse(&source, None).unwrap();
+        let collapsed = doc.nodes[0].children.iter().copied().collect();
+        let layout = build(&doc, &collapsed, &HashMap::new(), Direction::Compact);
+        let svg = svg(&doc, &layout, &collapsed, &HashMap::new());
+        assert_eq!(svg.matches("<g>").count(), 13);
+        assert_eq!(svg.matches("<polyline").count(), 12);
+        assert!(layout.edges.iter().all(|(_, _, points)| points.len() == 5));
+        let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).unwrap();
+        assert_eq!(tree.size().width(), layout.size.x.ceil());
+        assert_eq!(tree.size().height(), layout.size.y.ceil());
+        assert_eq!(&render_png(&svg).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
     }
 }

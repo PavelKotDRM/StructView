@@ -1,5 +1,135 @@
 use super::*;
 
+fn key(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn command_shortcuts_help_lists_all_commands_in_both_locales() {
+    for locale in Locale::ALL {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 3000.0))),
+                ..Default::default()
+            },
+            |ui| {
+                crate::app::views::diagram::show_command_shortcuts(ui, locale);
+            },
+        );
+        let update = output.platform_output.accesskit_update.as_ref().unwrap();
+        for key in [
+            TextKey::KeyboardShortcuts,
+            TextKey::NewFile,
+            TextKey::Open,
+            TextKey::Save,
+            TextKey::SaveAs,
+            TextKey::CloseFile,
+            TextKey::SearchWindow,
+            TextKey::HelpNextMatch,
+            TextKey::HelpPreviousMatch,
+            TextKey::HelpCloseSearch,
+            TextKey::CopySelectedStructures,
+            TextKey::PasteSelectedContainer,
+            TextKey::DeleteSelectedStructures,
+            TextKey::Undo,
+            TextKey::Redo,
+            TextKey::HelpEditShortcutsScope,
+        ] {
+            assert!(
+                update
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.value() == Some(locale.text(key)))
+            );
+        }
+        for key in [
+            "F1", "F3", "Esc", "N", "O", "S", "W", "F", "C", "V", "Z", "Y", "Shift", "Delete",
+        ] {
+            assert!(
+                update
+                    .nodes
+                    .iter()
+                    .any(|(_, node)| node.value() == Some(key)),
+                "Missing {key}"
+            );
+        }
+        output.drop_without_applying_deltas();
+    }
+}
+
+#[test]
+fn f1_opens_help_in_every_view_with_keyboard_focus_and_escape_closes_only_help() {
+    use crate::app::visualization::VisualizationMode;
+    for mode in [
+        VisualizationMode::Tree,
+        VisualizationMode::Structure,
+        VisualizationMode::Graph,
+        VisualizationMode::Table,
+        VisualizationMode::Schema,
+        VisualizationMode::Comparison,
+        VisualizationMode::Diff,
+    ] {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut app = crate::app::StructViewApp::default();
+        app.visualization = mode;
+        let mut text = String::new();
+        context
+            .run_ui(egui::RawInput::default(), |ui| {
+                ui.text_edit_singleline(&mut text).request_focus();
+            })
+            .drop_without_applying_deltas();
+        assert!(context.egui_wants_keyboard_input());
+        let output = app_frame(&mut app, &context, 400.0, vec![key(egui::Key::F1)]);
+        assert!(app.shortcuts_help_open, "{mode:?}");
+        output.drop_without_applying_deltas();
+        let output = app_frame(&mut app, &context, 400.0, Vec::new());
+        label_center(&output, app.locale.text(TextKey::KeyboardShortcuts));
+        output.drop_without_applying_deltas();
+        app_frame(&mut app, &context, 400.0, vec![key(egui::Key::F1)])
+            .drop_without_applying_deltas();
+        assert!(app.shortcuts_help_open);
+        app.search_window_open = true;
+        app_frame(&mut app, &context, 400.0, vec![key(egui::Key::Escape)])
+            .drop_without_applying_deltas();
+        assert!(!app.shortcuts_help_open);
+        assert!(app.search_window_open);
+    }
+}
+
+#[test]
+fn help_menu_opens_the_same_shortcuts_window_as_f1() {
+    for locale in Locale::ALL {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut app = crate::app::StructViewApp::default();
+        app.locale = locale;
+        let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+        let position = label_center(&output, locale.text(TextKey::HelpMenu));
+        output.drop_without_applying_deltas();
+        app_frame(&mut app, &context, 1000.0, click_at(position)).drop_without_applying_deltas();
+        let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+        let position = label_center(
+            &output,
+            &format!("{} F1", locale.text(TextKey::KeyboardShortcuts)),
+        );
+        output.drop_without_applying_deltas();
+        app_frame(&mut app, &context, 1000.0, click_at(position)).drop_without_applying_deltas();
+        assert!(app.shortcuts_help_open);
+        let output = app_frame(&mut app, &context, 1000.0, Vec::new());
+        label_center(&output, locale.text(TextKey::KeyboardShortcuts));
+        output.drop_without_applying_deltas();
+    }
+}
+
 #[test]
 fn legend_displays_matching_color_swatches_with_accessible_labels() {
     for locale in Locale::ALL {

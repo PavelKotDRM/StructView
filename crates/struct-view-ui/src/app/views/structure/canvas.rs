@@ -62,25 +62,37 @@ impl StructureView {
         }
         let painter = ui.painter_at(viewport);
         let transform = |point: Pos2| viewport.min + self.pan + point.to_vec2() * self.zoom;
-        for &(parent, child, points) in &self.layout.edges {
-            let points = points.map(transform);
-            if !Rect::from_points(&points).expand(3.0).intersects(viewport) {
-                continue;
-            }
+        let mut painted_segments = HashSet::new();
+        for (parent, child, points) in &self.layout.edges {
             let highlighted = self.all_selected
-                || (self.path.contains(&parent) && self.path.contains(&child))
-                || (self.matched_paths.contains(&parent) && self.matched_paths.contains(&child));
-            painter.add(egui::Shape::line(
-                points.to_vec(),
-                Stroke::new(
-                    if highlighted { 2.5 } else { 1.3 },
-                    if highlighted {
-                        Color32::from_rgb(240, 170, 40)
-                    } else {
-                        ui.visuals().text_color()
-                    },
-                ),
-            ));
+                || (self.path.contains(parent) && self.path.contains(child))
+                || (self.matched_paths.contains(parent) && self.matched_paths.contains(child));
+            for segment in points.windows(2) {
+                let bounds = Rect::from_two_pos(transform(segment[0]), transform(segment[1]));
+                let clipped = bounds.intersect(viewport.expand(3.0));
+                if clipped.is_negative()
+                    || !painted_segments.insert((
+                        clipped.min.x.to_bits(),
+                        clipped.min.y.to_bits(),
+                        clipped.max.x.to_bits(),
+                        clipped.max.y.to_bits(),
+                        highlighted,
+                    ))
+                {
+                    continue;
+                }
+                painter.line_segment(
+                    [clipped.min, clipped.max],
+                    Stroke::new(
+                        if highlighted { 2.5 } else { 1.3 },
+                        if highlighted {
+                            Color32::from_rgb(240, 170, 40)
+                        } else {
+                            ui.visuals().text_color()
+                        },
+                    ),
+                );
+            }
         }
         let Some(doc) = &self.document else {
             return;

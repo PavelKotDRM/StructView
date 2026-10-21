@@ -134,8 +134,13 @@ Prebuilt archives for tagged versions are available on
 
 ### Keyboard shortcuts
 
+Open **Help -> Keyboard shortcuts** or press **F1** in any view, including
+while typing, to see all command shortcuts and diagram navigation/gestures
+in a scrollable help window. Press Esc to close it; F1 keeps it open.
+
 | Shortcut | Action |
 | --- | --- |
+| F1 | Open keyboard shortcuts help |
 | Ctrl+N / Ctrl+O | New / open file |
 | Ctrl+S / Ctrl+Shift+S | Save / save as (including structure source text) |
 | Ctrl+W | Close file, confirming unsaved changes |
@@ -196,7 +201,13 @@ The interface provides:
   Source text can be saved verbatim, including an empty file, but saving is
   disabled while a load or rebuild is pending.
   Choose top-to-bottom, left-to-right, or compact layout under
-  **View -> Structure layout**. Zoom, 100%, fit, select-all, clear-selection, selected-node toggle,
+  **View -> Structure layout**. The default compact layout packs consecutive
+  collapsed containers and leaf nodes into balanced grids in source order
+  (left to right, then top to bottom), instead of one long column.
+  Expanded branches reserve their own space and continue as trees, without
+  overlapping neighboring groups. Collapsing them restores compact grouping.
+  Top-to-bottom and left-to-right layouts retain their single-axis arrangement.
+  Zoom, 100%, fit, select-all, clear-selection, selected-node toggle,
   and **Show next 100 children** also live in **View**. Click a container
   to select it; use its expand/collapse button to toggle its children and
   select and center that container. Large containers and deeper branches start collapsed.

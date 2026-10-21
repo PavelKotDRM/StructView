@@ -44,12 +44,14 @@ impl StructViewApp {
                             }
                         }
                     });
+                    self.show_shortcuts_help(ui.ctx());
                 });
         });
     }
 
     /// Обработать горячие клавиши команд редактирования и работы со структурами.
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        self.handle_help_shortcuts(ctx);
         self.handle_search_shortcuts(ctx);
         let (new, open, save_as, save, close) = ctx.input_mut(|input| {
             (

@@ -99,6 +99,7 @@ pub struct StructViewApp {
     /// Открыто ли расширенное окно поиска.
     pub(super) search_window_open: bool,
     pub(super) search_focus_requested: bool,
+    pub(super) shortcuts_help_open: bool,
     /// Размещение окна поиска внутри или вне главного окна.
     pub(super) search_window_docking: DockingState,
     /// Путь совпадения, к которому нужно прокрутить дерево в следующем кадре.
@@ -180,6 +181,7 @@ impl Default for StructViewApp {
             regex_builder_literal: String::new(),
             search_window_open: false,
             search_focus_requested: false,
+            shortcuts_help_open: false,
             search_window_docking: DockingState::default(),
             search_scroll_target: None,
             save_requested: false,

@@ -49,6 +49,7 @@ impl StructViewApp {
         let mut docking = std::mem::take(&mut self.search_window_docking);
         docking.begin();
         let mut show_content = |ui: &mut egui::Ui| {
+            self.handle_help_shortcuts(ui.ctx());
             self.handle_search_shortcuts(ui.ctx());
             if !self.search_window_open {
                 return;

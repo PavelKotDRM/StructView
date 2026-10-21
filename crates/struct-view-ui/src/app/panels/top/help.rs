@@ -1,9 +1,48 @@
 use super::*;
 
 impl StructViewApp {
+    pub(in crate::app::panels::top) fn handle_help_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
+            self.shortcuts_help_open = true;
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+        }
+        if self.shortcuts_help_open
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.shortcuts_help_open = false;
+        }
+    }
+
+    pub(in crate::app::panels::top) fn show_shortcuts_help(&mut self, ctx: &egui::Context) {
+        if !self.shortcuts_help_open {
+            return;
+        }
+        let locale = self.locale;
+        egui::Window::new(locale.text(TextKey::KeyboardShortcuts))
+            .id(egui::Id::unique("keyboard-shortcuts-help"))
+            .open(&mut self.shortcuts_help_open)
+            .default_width(620.0)
+            .default_height(600.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    crate::app::views::diagram::show_command_shortcuts(ui, locale);
+                    ui.separator();
+                    crate::app::views::diagram::show_controls_help(ui, locale);
+                });
+            });
+    }
+
     pub(super) fn show_help_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::HelpMenu), |ui| {
+            if ui
+                .add(egui::Button::new(locale.text(TextKey::KeyboardShortcuts)).shortcut_text("F1"))
+                .clicked()
+            {
+                self.shortcuts_help_open = true;
+                ui.close();
+            }
             ui.menu_button(locale.text(TextKey::DiagramLegend), |ui| {
                 ui.set_max_width(480.0);
                 egui::ScrollArea::vertical()

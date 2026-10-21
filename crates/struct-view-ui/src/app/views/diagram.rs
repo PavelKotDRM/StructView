@@ -18,6 +18,66 @@ pub(in crate::app) enum DiagramAction {
 
 pub(in crate::app) const ZOOM_STEP: f32 = 1.2;
 
+pub(in crate::app) fn show_command_shortcuts(ui: &mut Ui, locale: Locale) {
+    let command = if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
+    help_rows(
+        ui,
+        locale,
+        "help-shortcuts",
+        &[
+            (&["F1"], TextKey::KeyboardShortcuts),
+            (&["Esc"], TextKey::HelpCloseHelp),
+        ],
+    );
+    ui.separator();
+    ui.strong(locale.text(TextKey::HelpFileCommands));
+    help_rows(
+        ui,
+        locale,
+        "file-shortcuts",
+        &[
+            (&[command, "N"], TextKey::NewFile),
+            (&[command, "O"], TextKey::Open),
+            (&[command, "S"], TextKey::Save),
+            (&[command, "Shift", "S"], TextKey::SaveAs),
+            (&[command, "W"], TextKey::CloseFile),
+        ],
+    );
+    ui.separator();
+    ui.strong(locale.text(TextKey::HelpSearchCommands));
+    help_rows(
+        ui,
+        locale,
+        "search-shortcuts",
+        &[
+            (&[command, "F"], TextKey::SearchWindow),
+            (&["F3"], TextKey::HelpNextMatch),
+            (&["Shift", "F3"], TextKey::HelpPreviousMatch),
+            (&["Esc"], TextKey::HelpCloseSearch),
+        ],
+    );
+    ui.separator();
+    ui.strong(locale.text(TextKey::HelpEditCommands));
+    help_rows(
+        ui,
+        locale,
+        "edit-shortcuts",
+        &[
+            (&[command, "C"], TextKey::CopySelectedStructures),
+            (&[command, "V"], TextKey::PasteSelectedContainer),
+            (&["Delete"], TextKey::DeleteSelectedStructures),
+            (&[command, "Z"], TextKey::Undo),
+            (&[command, "Y"], TextKey::Redo),
+            (&[command, "Shift", "Z"], TextKey::Redo),
+        ],
+    );
+    ui.label(locale.text(TextKey::HelpEditShortcutsScope));
+}
+
 pub(in crate::app) fn show_controls_help(ui: &mut Ui, locale: Locale) {
     ui.strong(locale.text(TextKey::HelpCommonControls));
     ui.label(locale.text(TextKey::HelpCanvasFocus));
@@ -28,7 +88,7 @@ pub(in crate::app) fn show_controls_help(ui: &mut Ui, locale: Locale) {
         &[
             (&["Drag", "↔"], TextKey::HelpPan),
             (&["Wheel", "↑", "↓", "Pinch"], TextKey::HelpZoom),
-            (&["+", "−"], TextKey::HelpZoom),
+            (&["+", "=", "−"], TextKey::HelpZoom),
             (&["Home"], TextKey::GraphFit),
             (&["↑", "↓"], TextKey::HelpPreviousNext),
             (&["Ctrl/Cmd", "F"], TextKey::SearchWindow),

@@ -149,6 +149,17 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::ExpandAll => ">  Развернуть все",
         TextKey::CollapseAll => "<  Свернуть все",
         TextKey::HelpMenu => "Помощь",
+        TextKey::KeyboardShortcuts => "Сочетания клавиш",
+        TextKey::HelpFileCommands => "Команды файла",
+        TextKey::HelpSearchCommands => "Поиск",
+        TextKey::HelpEditCommands => "Редактирование",
+        TextKey::HelpEditShortcutsScope => {
+            "В текстовых полях действуют собственные команды копирования, вставки и отмены/повтора. Команды документа требуют подходящего выделения и режима редактирования для изменения данных. Схема структуры данных поддерживает копирование, вставку и удаление, но не отмену/повтор правок документа."
+        }
+        TextKey::HelpNextMatch => "Следующее совпадение поиска",
+        TextKey::HelpPreviousMatch => "Предыдущее совпадение поиска",
+        TextKey::HelpCloseSearch => "Закрыть поиск без очистки запроса",
+        TextKey::HelpCloseHelp => "Закрыть справку по сочетаниям клавиш",
         TextKey::DiagramLegend => "Легенда и управление диаграммами",
         TextKey::LegendObject => "Объект/таблица (синий)",
         TextKey::LegendArray => "Массив/список (фиолетовый)",

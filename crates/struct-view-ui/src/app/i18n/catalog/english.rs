@@ -149,6 +149,17 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::ExpandAll => ">  Expand all",
         TextKey::CollapseAll => "<  Collapse all",
         TextKey::HelpMenu => "Help",
+        TextKey::KeyboardShortcuts => "Keyboard shortcuts",
+        TextKey::HelpFileCommands => "File commands",
+        TextKey::HelpSearchCommands => "Search",
+        TextKey::HelpEditCommands => "Editing",
+        TextKey::HelpEditShortcutsScope => {
+            "Text fields use their own copy, paste and undo/redo commands. Document commands require an applicable selection and editing mode for mutations. Data structure diagrams support copy, paste and delete, but not document undo/redo."
+        }
+        TextKey::HelpNextMatch => "Next search match",
+        TextKey::HelpPreviousMatch => "Previous search match",
+        TextKey::HelpCloseSearch => "Close search without clearing the query",
+        TextKey::HelpCloseHelp => "Close keyboard shortcuts help",
         TextKey::DiagramLegend => "Diagram legend and controls",
         TextKey::LegendObject => "Object/table (blue)",
         TextKey::LegendArray => "Array/list (purple)",
