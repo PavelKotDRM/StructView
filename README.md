@@ -132,6 +132,20 @@ Prebuilt archives for tagged versions are available on
 
 ## Graphical interface
 
+### Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+N / Ctrl+O | New / open file |
+| Ctrl+S / Ctrl+Shift+S | Save / save as (including structure source text) |
+| Ctrl+W | Close file, confirming unsaved changes |
+| Ctrl+F | Open search and focus its query |
+| F3 / Shift+F3 | Next / previous search match |
+| Esc | Close search without clearing the query |
+
+On macOS, use Cmd instead of Ctrl. Text fields retain their own copy/paste
+and undo/redo shortcuts.
+
 Starting the application without arguments opens an empty window:
 
 ```sh
@@ -184,7 +198,8 @@ The interface provides:
   Choose top-to-bottom, left-to-right, or compact layout under
   **View -> Structure layout**. Zoom, 100%, fit, select-all, clear-selection, selected-node toggle,
   and **Show next 100 children** also live in **View**. Click a container
-  to toggle it; large containers and deeper branches start collapsed.
+  to select it; use its expand/collapse button to toggle its children and
+  select and center that container. Large containers and deeper branches start collapsed.
   Expanded containers initially show at most 100 children; select the parent
   and use **Show next 100 children** to reveal more. The total node count
   includes hidden nodes. YAML anchors are labeled and aliases are terminal
@@ -195,7 +210,9 @@ The interface provides:
   **View -> Tree actions -> Expand all / Collapse all**. In structure mode,
   expand-all retains paging for large containers.
   Use the common advanced search window via the magnifying-glass button,
-  **Edit -> Advanced search**, or Ctrl/Cmd+F. The same key/value/path scopes,
+  **Edit -> Advanced search**, or Ctrl/Cmd+F, which focuses the query even
+  when another widget has focus. F3 / Shift+F3 select the next / previous
+  match; Esc closes search without clearing the query. The same key/value/path scopes,
   case sensitivity, exact/whole-word matching, regex builder, and result list
   are available in both modes. Navigating to a match
   expands the necessary ancestors, reveals paged children, and centers the

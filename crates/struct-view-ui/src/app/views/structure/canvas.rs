@@ -366,7 +366,9 @@ impl StructureView {
         if let Some(id) = expansion_requested {
             self.toggle_expansion(id);
         }
-        if let Some(id) = focused {
+        if let Some(id) = focused
+            && expansion_requested.is_none()
+        {
             self.selected = id;
             self.keyboard(ui);
             if ui.input(|i| {
@@ -384,7 +386,10 @@ impl StructureView {
                 response.request_focus();
             }
         }
-        if response.clicked() && clicked.is_none() && !super::super::diagram::keyboard_activate(ui)
+        if response.clicked()
+            && clicked.is_none()
+            && expansion_requested.is_none()
+            && !super::super::diagram::keyboard_activate(ui)
         {
             self.selected_nodes.clear();
             self.source_preview = None;

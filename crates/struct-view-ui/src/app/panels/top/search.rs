@@ -1,6 +1,44 @@
 use super::*;
 
 impl StructViewApp {
+    pub(in crate::app) fn open_search_window(&mut self) {
+        self.search_window_open = true;
+        self.search_focus_requested = true;
+    }
+
+    pub(super) fn handle_search_shortcuts(&mut self, ctx: &egui::Context) {
+        let (find, previous, next, close) = ctx.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::COMMAND, egui::Key::F),
+                input.consume_key(egui::Modifiers::SHIFT, egui::Key::F3),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::F3),
+                self.search_window_open
+                    && input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        });
+        if find {
+            self.open_search_window();
+            if self.search_window_docking.detached {
+                ctx.send_viewport_cmd_to(
+                    egui::ViewportId::from_hash_of("advanced_search"),
+                    egui::ViewportCommand::Focus,
+                );
+            }
+        }
+        if previous || next {
+            if previous {
+                self.search.prev();
+            } else {
+                self.search.next();
+            }
+            self.request_search_scroll();
+        }
+        if close {
+            self.search_window_open = false;
+            self.search_focus_requested = false;
+        }
+    }
+
     pub(super) fn show_search_window(&mut self, ctx: &egui::Context) {
         if !self.search_window_open {
             self.search_window_docking.reset_if_active();
@@ -11,6 +49,10 @@ impl StructViewApp {
         let mut docking = std::mem::take(&mut self.search_window_docking);
         docking.begin();
         let mut show_content = |ui: &mut egui::Ui| {
+            self.handle_search_shortcuts(ui.ctx());
+            if !self.search_window_open {
+                return;
+            }
             if if self.visualization == VisualizationMode::Structure {
                 !self.structure_view.has_document()
             } else {
@@ -27,6 +69,10 @@ impl StructViewApp {
                         .hint_text(locale.text(TextKey::SearchPlaceholder))
                         .desired_width(ui.available_width() - 90.0),
                 );
+                if self.search_focus_requested {
+                    response.request_focus();
+                    self.search_focus_requested = false;
+                }
                 if response.changed()
                     || (response.lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter)))

@@ -4,8 +4,18 @@ impl StructViewApp {
     pub(super) fn show_edit_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::EditMenu), |ui| {
-            if ui.button(locale.text(TextKey::SearchWindow)).clicked() {
-                self.search_window_open = true;
+            if ui
+                .add(
+                    egui::Button::new(locale.text(TextKey::SearchWindow)).shortcut_text(
+                        ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::F,
+                        )),
+                    ),
+                )
+                .clicked()
+            {
+                self.open_search_window();
                 ui.close();
             }
             if self.visualization == VisualizationMode::Structure {

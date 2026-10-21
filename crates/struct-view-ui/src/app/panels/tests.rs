@@ -205,6 +205,136 @@ fn delete_key_requests_deletion_of_selected_structure_in_edit_mode() {
     assert!(app.delete_requested);
 }
 
+fn shortcut_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
+    egui::RawInput {
+        events: vec![egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn find_shortcut_focuses_search_even_when_another_widget_has_focus() {
+    for mode in [
+        VisualizationMode::Tree,
+        VisualizationMode::Graph,
+        VisualizationMode::Table,
+        VisualizationMode::Schema,
+    ] {
+        let mut app = StructViewApp::default();
+        app.root = Some(parse_json(r#"{"needle":1}"#).unwrap());
+        app.visualization = mode;
+        let context = egui::Context::default();
+        let mut text = String::new();
+        context
+            .run_ui(egui::RawInput::default(), |ui| {
+                ui.text_edit_singleline(&mut text).request_focus();
+            })
+            .drop_without_applying_deltas();
+        assert!(context.egui_wants_keyboard_input());
+        context
+            .run_ui(
+                shortcut_input(egui::Key::F, egui::Modifiers::COMMAND),
+                |ui| {
+                    app.show_top_panel(ui);
+                },
+            )
+            .drop_without_applying_deltas();
+        assert!(app.search_window_open);
+        assert!(context.text_edit_focused());
+        assert!(!app.search_focus_requested);
+
+        context
+            .run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Text("needle".into())],
+                    ..Default::default()
+                },
+                |ui| app.show_top_panel(ui),
+            )
+            .drop_without_applying_deltas();
+        assert_eq!(app.search_query_buf, "needle");
+        assert_eq!(app.search.matches.len(), 1);
+    }
+}
+
+#[test]
+fn search_shortcuts_navigate_and_close_while_typing() {
+    let mut app = StructViewApp::default();
+    app.root = Some(parse_json(r#"{"first":"needle","second":"needle"}"#).unwrap());
+    app.search_query_buf = "needle".into();
+    app.refresh_search();
+    app.open_search_window();
+    let context = egui::Context::default();
+    context
+        .run_ui(egui::RawInput::default(), |ui| app.show_top_panel(ui))
+        .drop_without_applying_deltas();
+
+    for (key, modifiers, expected_index) in [
+        (egui::Key::F3, egui::Modifiers::NONE, 1),
+        (egui::Key::F3, egui::Modifiers::NONE, 0),
+        (egui::Key::F3, egui::Modifiers::SHIFT, 1),
+    ] {
+        context
+            .run_ui(shortcut_input(key, modifiers), |ui| app.show_top_panel(ui))
+            .drop_without_applying_deltas();
+        assert_eq!(app.search.current_index, expected_index);
+        assert_eq!(
+            app.search_scroll_target.as_deref(),
+            app.search.current_match_path()
+        );
+    }
+    context
+        .run_ui(
+            shortcut_input(egui::Key::Escape, egui::Modifiers::NONE),
+            |ui| {
+                app.show_top_panel(ui);
+            },
+        )
+        .drop_without_applying_deltas();
+    assert!(!app.search_window_open);
+    assert_eq!(app.search_query_buf, "needle");
+}
+
+#[test]
+fn file_shortcuts_save_and_use_existing_unsaved_close_confirmation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("shortcut.json");
+    std::fs::write(&path, r#"{"value":1}"#).unwrap();
+    let mut app = StructViewApp::default();
+    app.load_file(path.clone());
+    app.root = Some(parse_json(r#"{"value":2}"#).unwrap());
+    let context = egui::Context::default();
+    context
+        .run_ui(
+            shortcut_input(egui::Key::S, egui::Modifiers::COMMAND),
+            |ui| {
+                app.handle_shortcuts(ui.ctx());
+            },
+        )
+        .drop_without_applying_deltas();
+    assert!(app.save_requested);
+    assert!(app.save_current());
+    assert!(std::fs::read_to_string(&path).unwrap().contains('2'));
+
+    app.root = Some(parse_json(r#"{"value":3}"#).unwrap());
+    context
+        .run_ui(
+            shortcut_input(egui::Key::W, egui::Modifiers::COMMAND),
+            |ui| {
+                app.handle_shortcuts(ui.ctx());
+            },
+        )
+        .drop_without_applying_deltas();
+    assert!(app.close_file_confirmation_open);
+    assert!(app.root.is_some());
+}
+
 #[test]
 fn comparison_and_diff_keep_long_values_in_single_line_columns() {
     let long_value = "V".repeat(300);

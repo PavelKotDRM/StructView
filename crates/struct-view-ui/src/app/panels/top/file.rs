@@ -1,6 +1,19 @@
 use super::*;
 
 impl StructViewApp {
+    pub(in crate::app::panels::top) fn open_active_file_dialog(&mut self) {
+        if self.visualization == VisualizationMode::Structure {
+            self.structure_view.open_file_dialog();
+            if let Some(path) = self.structure_view.requested_open.take() {
+                self.request_document_replacement(
+                    crate::app::state::DocumentReplacement::OpenStructure(path),
+                );
+            }
+        } else {
+            self.open_file_dialog();
+        }
+    }
+
     pub(super) fn show_file_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::FileMenu), |ui| {
@@ -16,22 +29,31 @@ impl StructViewApp {
                     self.request_graph_copy();
                 }
             }
-            if ui.button(locale.text(TextKey::NewFile)).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(locale.text(TextKey::NewFile)).shortcut_text(
+                        ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::N,
+                        )),
+                    ),
+                )
+                .clicked()
+            {
                 ui.close();
                 self.open_new_file_dialog();
             }
-            if ui.button(locale.text(TextKey::Open)).clicked() {
+            if ui
+                .add(egui::Button::new(locale.text(TextKey::Open)).shortcut_text(
+                    ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                        egui::Modifiers::COMMAND,
+                        egui::Key::O,
+                    )),
+                ))
+                .clicked()
+            {
                 ui.close();
-                if self.visualization == VisualizationMode::Structure {
-                    self.structure_view.open_file_dialog();
-                    if let Some(path) = self.structure_view.requested_open.take() {
-                        self.request_document_replacement(
-                            crate::app::state::DocumentReplacement::OpenStructure(path),
-                        );
-                    }
-                } else {
-                    self.open_file_dialog();
-                }
+                self.open_active_file_dialog();
             }
             if self.visualization == VisualizationMode::Structure {
                 self.structure_view.file_menu(ui, locale);
@@ -52,7 +74,12 @@ impl StructViewApp {
                                 .file_state
                                 .format
                                 .is_none_or(DataFormat::is_serializable),
-                        egui::Button::new(locale.text(TextKey::Save)),
+                        egui::Button::new(locale.text(TextKey::Save)).shortcut_text(
+                            ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                                egui::Modifiers::COMMAND,
+                                egui::Key::S,
+                            )),
+                        ),
                     )
                     .clicked()
                 {
@@ -62,7 +89,12 @@ impl StructViewApp {
                 if ui
                     .add_enabled(
                         self.root.is_some() && self.visualization != VisualizationMode::Structure,
-                        egui::Button::new(locale.text(TextKey::SaveAs)),
+                        egui::Button::new(locale.text(TextKey::SaveAs)).shortcut_text(
+                            ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                                egui::Key::S,
+                            )),
+                        ),
                     )
                     .clicked()
                 {
@@ -90,7 +122,17 @@ impl StructViewApp {
                     }
                 });
             }
-            if ui.button(locale.text(TextKey::CloseFile)).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(locale.text(TextKey::CloseFile)).shortcut_text(
+                        ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::W,
+                        )),
+                    ),
+                )
+                .clicked()
+            {
                 ui.close();
                 self.request_close_file();
             }

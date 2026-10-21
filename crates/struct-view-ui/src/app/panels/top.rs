@@ -40,7 +40,7 @@ impl StructViewApp {
                                 ))
                                 .clicked()
                             {
-                                self.search_window_open = true;
+                                self.open_search_window();
                             }
                         }
                     });
@@ -50,22 +50,55 @@ impl StructViewApp {
 
     /// Обработать горячие клавиши команд редактирования и работы со структурами.
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        self.handle_search_shortcuts(ctx);
+        let (new, open, save_as, save, close) = ctx.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::COMMAND, egui::Key::N),
+                input.consume_key(egui::Modifiers::COMMAND, egui::Key::O),
+                input.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::S,
+                ),
+                input.consume_key(egui::Modifiers::COMMAND, egui::Key::S),
+                input.consume_key(egui::Modifiers::COMMAND, egui::Key::W),
+            )
+        });
+        if new {
+            self.open_new_file_dialog();
+        }
+        if open {
+            self.open_active_file_dialog();
+        }
+        if save_as || save {
+            if self.visualization == VisualizationMode::Structure {
+                self.structure_view.save_from_shortcut(self.locale, save_as);
+            } else if self.root.is_some() {
+                if save_as {
+                    self.save_as();
+                } else if self
+                    .file_state
+                    .format
+                    .is_none_or(DataFormat::is_serializable)
+                {
+                    self.request_save_current();
+                }
+            }
+        }
+        if close {
+            self.request_close_file();
+        }
         if self.visualization == VisualizationMode::Structure {
             if ctx.egui_wants_keyboard_input() {
                 return;
             }
-            let (find, delete, copy, paste) = ctx.input(|input| {
+            let (delete, copy, paste) = ctx.input(|input| {
                 let command = input.modifiers.command;
                 (
-                    command && input.key_pressed(egui::Key::F),
                     input.key_pressed(egui::Key::Delete),
                     command && input.key_pressed(egui::Key::C),
                     command && input.key_pressed(egui::Key::V),
                 )
             });
-            if find {
-                self.search_window_open = true;
-            }
             if delete && self.structure_view.can_delete_selected() {
                 self.structure_view.delete_selected(self.locale);
             }
@@ -81,7 +114,7 @@ impl StructViewApp {
             return;
         }
 
-        let (copy, paste, undo, redo, delete, find) = ctx.input(|input| {
+        let (copy, paste, undo, redo, delete) = ctx.input(|input| {
             let command = input.modifiers.command;
             (
                 command && input.key_pressed(egui::Key::C),
@@ -91,10 +124,8 @@ impl StructViewApp {
                     && (input.key_pressed(egui::Key::Y)
                         || (input.modifiers.shift && input.key_pressed(egui::Key::Z))),
                 input.key_pressed(egui::Key::Delete),
-                command && input.key_pressed(egui::Key::F),
             )
         });
-        self.search_window_open |= find;
         self.copy_structures_requested |= copy;
         self.paste_requested |= paste;
         self.undo_requested |= undo && self.can_undo();

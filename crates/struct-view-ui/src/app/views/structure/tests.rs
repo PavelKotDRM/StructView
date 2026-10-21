@@ -619,7 +619,18 @@ fn main_menu_exposes_structure_controls_and_opens_source() {
         output.drop_without_applying_deltas();
         app_frame(&mut app, &context, 1000.0, click_at(position)).drop_without_applying_deltas();
         let output = app_frame(&mut app, &context, 1000.0, Vec::new());
-        label_center(&output, Locale::English.text(item));
+        let label = match item {
+            TextKey::SearchWindow => format!(
+                "{} {}",
+                Locale::English.text(item),
+                context.format_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    egui::Key::F,
+                ))
+            ),
+            _ => Locale::English.text(item).to_string(),
+        };
+        label_center(&output, &label);
         if menu == "File" {
             label_center(&output, Locale::English.text(TextKey::DiagramExport));
         }
@@ -638,6 +649,7 @@ fn find_shortcut_opens_shared_search_window_on_wide_and_narrow_windows() {
         app.visualization = crate::app::visualization::VisualizationMode::Structure;
         app.structure_view = view(r#"{"needle":1}"#);
         app_frame(&mut app, &context, width, Vec::new()).drop_without_applying_deltas();
+        context.memory_mut(|memory| memory.request_focus(egui::Id::unique("focused-canvas")));
         let event = egui::Event::Key {
             key: egui::Key::F,
             physical_key: None,
@@ -651,6 +663,7 @@ fn find_shortcut_opens_shared_search_window_on_wide_and_narrow_windows() {
             app.search_window_open,
             "Shared search must be open at width {width}"
         );
+        assert!(context.text_edit_focused());
         let output = app_frame(&mut app, &context, width, Vec::new());
         label_center(&output, Locale::English.text(TextKey::SearchWindow));
         output.drop_without_applying_deltas();
@@ -1378,7 +1391,7 @@ fn structure_canvas_selection_matches_graph_toggle_and_additive_behavior() {
 }
 
 #[test]
-fn dedicated_expand_control_toggles_children_without_changing_selection() {
+fn dedicated_expand_control_selects_and_centers_the_toggled_node() {
     let mut view = view(r#"{"first":{"nested":1},"second":2}"#);
     let first = 1;
     let second = 3;
@@ -1388,12 +1401,29 @@ fn dedicated_expand_control_toggles_children_without_changing_selection() {
     view.toggle_expansion(first);
 
     assert!(!view.collapsed.contains(&first));
-    assert_eq!(view.selected_nodes, HashSet::from([second]));
-    assert_eq!(view.selected, second);
+    assert_eq!(view.selected_nodes, HashSet::from([first]));
+    assert_eq!(view.selected, first);
+    assert_eq!(view.path, HashSet::from([0, first]));
+    assert!(view.center_selected);
 
     view.toggle_expansion(first);
     assert!(view.collapsed.contains(&first));
-    assert_eq!(view.selected_nodes, HashSet::from([second]));
+    assert_eq!(view.selected_nodes, HashSet::from([first]));
+}
+
+#[test]
+fn clicking_expand_control_selects_the_container() {
+    let mut view = view(r#"{"first":{"nested":1},"second":2}"#);
+    view.collapsed.insert(1);
+    view.select(3, false);
+    let context = egui::Context::default();
+    frame(&mut view, &context, Vec::new()).drop_without_applying_deltas();
+    let rect = view.layout.nodes.iter().find(|(id, _)| *id == 1).unwrap().1;
+    let position = view.pan + rect.min.to_vec2() * view.zoom + Vec2::splat(13.5 * view.zoom);
+    frame(&mut view, &context, click_at(position.to_pos2())).drop_without_applying_deltas();
+    assert!(!view.collapsed.contains(&1));
+    assert_eq!(view.selected, 1);
+    assert_eq!(view.selected_nodes, HashSet::from([1]));
 }
 #[test]
 fn plus_constructor_adds_typed_fields_and_array_items() {
@@ -1460,6 +1490,37 @@ fn saving_structure_edits_writes_the_source_and_clears_unsaved_state() {
     assert_eq!(view.origin.as_deref(), Some(path.as_path()));
     assert!(!view.unsaved);
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn save_shortcut_writes_structure_source_without_saving_the_other_document() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("structure.json");
+    std::fs::write(&path, r#"{"name":"old"}"#).unwrap();
+    let mut app = crate::app::StructViewApp::default();
+    app.root = Some(struct_view_core::parser::parse_json(r#"{"other":true}"#).unwrap());
+    app.visualization = crate::app::visualization::VisualizationMode::Structure;
+    app.structure_view = view(r#"{"name":"new"}"#);
+    app.structure_view.origin = Some(path.clone());
+    app.structure_view.unsaved = true;
+    let context = egui::Context::default();
+    app_frame(&mut app, &context, 1000.0, Vec::new()).drop_without_applying_deltas();
+    app_frame(
+        &mut app,
+        &context,
+        1000.0,
+        vec![egui::Event::Key {
+            key: egui::Key::S,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }],
+    )
+    .drop_without_applying_deltas();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"name":"new"}"#);
+    assert!(!app.structure_view.unsaved);
+    assert!(!app.save_requested);
 }
 
 #[test]

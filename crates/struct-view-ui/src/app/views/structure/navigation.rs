@@ -86,7 +86,6 @@ impl StructureView {
     }
 
     pub(super) fn toggle(&mut self, id: usize) {
-        self.selected = id;
         self.toggle_expansion(id);
     }
 
@@ -98,6 +97,7 @@ impl StructureView {
         {
             return;
         }
+        self.select(id, false);
         if !self.collapsed.remove(&id) {
             self.collapsed.insert(id);
         }

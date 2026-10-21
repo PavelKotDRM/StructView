@@ -193,6 +193,17 @@ impl StructureView {
         self.save_source(locale)
     }
 
+    pub(in crate::app) fn save_from_shortcut(&mut self, locale: Locale, save_as: bool) {
+        if !self.can_save_source() {
+            return;
+        }
+        if save_as {
+            self.save_source_as(locale);
+        } else if self.origin.is_some() || self.unsaved || self.source_changed {
+            self.save_source(locale);
+        }
+    }
+
     fn save_source(&mut self, locale: Locale) -> bool {
         if let Some(path) = self.origin.clone() {
             self.write_source(&path, locale)
@@ -265,7 +276,12 @@ impl StructureView {
             .add_enabled(
                 self.can_save_source()
                     && (self.origin.is_some() || self.unsaved || self.source_changed),
-                egui::Button::new(locale.text(TextKey::Save)),
+                egui::Button::new(locale.text(TextKey::Save)).shortcut_text(
+                    ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                        egui::Modifiers::COMMAND,
+                        egui::Key::S,
+                    )),
+                ),
             )
             .clicked()
         {
@@ -275,7 +291,12 @@ impl StructureView {
         if ui
             .add_enabled(
                 self.can_save_source(),
-                egui::Button::new(locale.text(TextKey::SaveAs)),
+                egui::Button::new(locale.text(TextKey::SaveAs)).shortcut_text(
+                    ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                        egui::Key::S,
+                    )),
+                ),
             )
             .clicked()
         {
