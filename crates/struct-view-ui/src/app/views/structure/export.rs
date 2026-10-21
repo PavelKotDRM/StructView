@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn compact_grid_export_preserves_all_nodes_and_bent_tree_edges() {
-        let source = format!("[{}]", vec![r#"{"value":1}"#; 12].join(","));
+        let source = format!("[{}]", [r#"{"value":1}"#; 12].join(","));
         let doc = struct_view_core::structure::parse(&source, None).unwrap();
         let collapsed = doc.nodes[0].children.iter().copied().collect();
         let layout = build(&doc, &collapsed, &HashMap::new(), Direction::Compact);
