@@ -18,6 +18,7 @@ pub(in crate::app::views::graph) fn graph_edge_label_callout(
         points,
         canvas,
         occupied_label_rects,
+        8.0,
     ))
 }
 
@@ -25,6 +26,7 @@ pub(in crate::app::views::graph) fn graph_edge_label_callout_at(
     label: &str,
     points: &[Pos2],
     position: Pos2,
+    reference_radius: f32,
 ) -> Option<GraphEdgeLabelLayout> {
     if label.trim().is_empty() {
         return None;
@@ -34,7 +36,8 @@ pub(in crate::app::views::graph) fn graph_edge_label_callout_at(
         text.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH,
         GRAPH_EDGE_LABEL_HEIGHT,
     );
-    let background = aligned_label_rect(position, size, Align2::LEFT_CENTER).expand(3.0);
+    let background =
+        aligned_label_rect(position, size, Align2::LEFT_CENTER, reference_radius).expand(3.0);
     Some(graph_edge_label_layout(
         text,
         position,
@@ -49,10 +52,11 @@ pub(in crate::app::views::graph) fn graph_edge_label_callout_text(
     points: &[Pos2],
     canvas: egui::Rect,
     occupied_label_rects: &[egui::Rect],
+    reference_radius: f32,
 ) -> GraphEdgeLabelLayout {
     let size = Vec2::new(
         text.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH,
-        GRAPH_EDGE_LABEL_HEIGHT,
+        GRAPH_EDGE_LABEL_HEIGHT.max(reference_radius * 2.0),
     );
     // A reserved column beyond all routes guarantees a visible label even in dense graphs.
     let mut position = Pos2::new(
@@ -60,7 +64,8 @@ pub(in crate::app::views::graph) fn graph_edge_label_callout_text(
         points[points.len() / 2].y.max(size.y / 2.0 + 24.0),
     );
     loop {
-        let background = aligned_label_rect(position, size, Align2::LEFT_CENTER).expand(3.0);
+        let background =
+            aligned_label_rect(position, size, Align2::LEFT_CENTER, reference_radius).expand(3.0);
         let bottom = occupied_label_rects
             .iter()
             .filter(|rect| background.intersects(rect.expand(2.0)))
@@ -88,6 +93,7 @@ pub(in crate::app::views::graph) fn place_edge_label(
     node_rects: &[egui::Rect],
     occupied_label_rects: &[egui::Rect],
     routed_edges: &[Vec<Pos2>],
+    reference_radius: f32,
 ) -> Option<egui::Rect> {
     if label.is_empty() {
         return None;
@@ -97,7 +103,7 @@ pub(in crate::app::views::graph) fn place_edge_label(
         label.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH,
         GRAPH_EDGE_LABEL_HEIGHT,
     );
-    let label_rect = aligned_label_rect(position, size, alignment).expand(3.0);
+    let label_rect = aligned_label_rect(position, size, alignment, reference_radius).expand(3.0);
     if label_rect.left() < canvas.left()
         || label_rect.right() > canvas.right()
         || label_rect.top() < canvas.top()

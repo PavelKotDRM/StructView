@@ -56,6 +56,7 @@ pub(in crate::app::views::graph) fn resolve_graph_label_leaders(
             });
         if blocked {
             reference += 1;
+            let marker_size = Vec2::splat((graph_reference_radius(reference) + 1.0) * 2.0);
             label.leader = None;
             let candidates = routes[index]
                 .windows(2)
@@ -65,14 +66,14 @@ pub(in crate::app::views::graph) fn resolve_graph_label_leaders(
                 })
                 .collect::<Vec<_>>();
             let clears_arrowheads = |point: Pos2| {
-                let marker = egui::Rect::from_center_size(point, Vec2::splat(18.0));
+                let marker = egui::Rect::from_center_size(point, marker_size);
                 !arrowheads.iter().any(|rect| marker.intersects(*rect))
             };
             let anchor = candidates
                 .iter()
                 .copied()
                 .filter(|point| {
-                    let marker = egui::Rect::from_center_size(*point, Vec2::splat(18.0));
+                    let marker = egui::Rect::from_center_size(*point, marker_size);
                     clears_arrowheads(*point)
                         && !node_rects
                             .iter()
@@ -102,12 +103,12 @@ pub(in crate::app::views::graph) fn resolve_graph_label_leaders(
                     // A very short route may be entirely covered by an arrowhead.
                     let mut point = start;
                     while !clears_arrowheads(point) {
-                        point.x += 18.0;
+                        point.x += marker_size.x;
                     }
                     point
                 });
             label.reference = Some((reference, anchor));
-            markers.push(egui::Rect::from_center_size(anchor, Vec2::splat(18.0)));
+            markers.push(egui::Rect::from_center_size(anchor, marker_size));
         } else {
             accepted.push([start, end]);
         }

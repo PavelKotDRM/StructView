@@ -5,8 +5,16 @@ fn blocked_and_short_routes_keep_legible_callouts_but_empty_edges_stay_unlabelle
     let points = [Pos2::new(40.0, 50.0), Pos2::new(45.0, 50.0)];
     let canvas = egui::Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0));
     assert!(
-        layout_graph_edge_label("long_relationship", &points, canvas, &[canvas], &[], &[])
-            .is_none()
+        layout_graph_edge_label(
+            "long_relationship",
+            &points,
+            canvas,
+            &[canvas],
+            &[],
+            &[],
+            8.0
+        )
+        .is_none()
     );
     let first = graph_edge_label_callout("long_relationship", &points, canvas, &[]).unwrap();
     let second =
@@ -17,7 +25,7 @@ fn blocked_and_short_routes_keep_legible_callouts_but_empty_edges_stay_unlabelle
     assert!(first.leader.is_some());
     assert!(!first.background.intersects(second.background));
     assert!(graph_edge_label_callout("", &points, canvas, &[]).is_none());
-    assert!(layout_graph_edge_label("", &points, canvas, &[], &[], &[]).is_none());
+    assert!(layout_graph_edge_label("", &points, canvas, &[], &[], &[], 8.0).is_none());
 }
 
 #[test]
@@ -36,7 +44,7 @@ fn crossing_label_leaders_do_not_both_remain_visible() {
                 format!("link {index}"),
                 position,
                 Align2::LEFT_CENTER,
-                aligned_label_rect(position, Vec2::new(60.0, 16.0), Align2::LEFT_CENTER),
+                aligned_label_rect(position, Vec2::new(60.0, 16.0), Align2::LEFT_CENTER, 8.0),
                 route,
             );
             label.leader = Some([route[1], position]);
@@ -69,7 +77,7 @@ fn dense_graph_keeps_every_nonempty_relationship_label_inside_canvas() {
     graph.edges = (0..24)
         .map(|index| {
             let mut edge = edge.clone();
-            edge.label = format!("relationship_{index:02}");
+            edge.label = format!("relationship_id_{index:02}");
             edge
         })
         .collect();
@@ -219,6 +227,7 @@ fn graph_label_leaders_use_references_when_nodes_routes_or_labels_block_them() {
                 Pos2::new(200.0, 0.0),
                 Vec2::new(80.0, 16.0),
                 Align2::LEFT_CENTER,
+                8.0,
             ),
             &own_route,
         );
@@ -262,6 +271,124 @@ fn graph_label_leaders_use_references_when_nodes_routes_or_labels_block_them() {
 }
 
 #[test]
+fn three_digit_references_are_rendered_inside_enlarged_circles() {
+    let mut graph = layout_graph(r#"[{"id":"source","depends_on":"target"},{"id":"target"}]"#);
+    let mut layout = build_graph_routing_layout(&graph);
+    graph.edges = vec![graph.edges[0].clone(); 101];
+    let route = vec![Pos2::new(40.0, 100.0), Pos2::new(240.0, 100.0)];
+    layout.edge_paths = vec![route.clone(); graph.edges.len()];
+    let radius = graph_reference_radius(graph.edges.len());
+    layout.edge_labels = (0..graph.edges.len())
+        .map(|index| {
+            graph_edge_label_callout_at(
+                "relationship_id_00",
+                &route,
+                Pos2::new(
+                    400.0 + (index % 4) as f32 * 200.0,
+                    30.0 + (index / 4) as f32 * 35.0,
+                ),
+                radius,
+            )
+        })
+        .collect();
+    resolve_graph_label_leaders(&mut layout.edge_labels, &[], &layout.edge_paths);
+    assert_eq!(
+        layout.edge_labels[99]
+            .as_ref()
+            .unwrap()
+            .reference
+            .unwrap()
+            .0,
+        100
+    );
+    layout.content_size = Vec2::new(1250.0, 1000.0);
+    let context = egui::Context::default();
+    let output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                layout.content_size + Vec2::splat(200.0),
+            )),
+            ..Default::default()
+        },
+        |ui| {
+            show_graph(
+                ui,
+                &graph,
+                &layout,
+                &SearchState::default(),
+                Locale::English,
+            )
+        },
+    );
+    let references = output
+        .shapes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, shape)| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text == "100" => Some((index, text)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        references.len(),
+        2,
+        "The route and legend must both show reference 100"
+    );
+    for (index, text) in references {
+        let rect = text.galley.rect.translate(text.pos.to_vec2());
+        let egui::Shape::Circle(circle) = &output.shapes[index - 1].shape else {
+            panic!("Each reference must be preceded by its circle");
+        };
+        assert!(circle.center.distance(rect.center()) < 0.01);
+        assert!(circle.radius > 8.0);
+        for corner in [
+            rect.left_top(),
+            rect.right_top(),
+            rect.left_bottom(),
+            rect.right_bottom(),
+        ] {
+            assert!(corner.distance(circle.center) + 0.5 <= circle.radius);
+        }
+    }
+    output.drop_without_applying_deltas();
+}
+
+#[test]
+fn numbered_reference_circles_fit_text_and_reserved_label_space() {
+    let context = egui::Context::default();
+    let output = context.run_ui(egui::RawInput::default(), |ui| {
+        for number in [1, 9, 10, 99, 100, 999, 1000, 9999, 100_000] {
+            let radius = graph_reference_radius(number);
+            let galley = ui.painter().layout_no_wrap(
+                number.to_string(),
+                FontId::proportional(10.0),
+                egui::Color32::BLACK,
+            );
+            assert!(
+                galley.size().length() / 2.0 + 1.0 <= radius,
+                "Reference {number} must fit inside its circle with stroke clearance"
+            );
+            let label = graph_edge_label_callout_at(
+                "relationship_id_00",
+                &[Pos2::ZERO, Pos2::new(100.0, 0.0)],
+                Pos2::new(200.0, 50.0),
+                radius,
+            )
+            .unwrap();
+            let center = label.reference_center(radius);
+            let circle = egui::Rect::from_center_size(center, Vec2::splat(radius * 2.0));
+            assert!(label.background.contains_rect(circle.expand(0.5)));
+            let text_right =
+                label.position.x + label.text.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH;
+            assert!(text_right + 4.0 <= circle.left());
+        }
+        assert!(graph_reference_radius(100) > graph_reference_radius(99));
+    });
+    output.drop_without_applying_deltas();
+}
+
+#[test]
 fn numbered_markers_clear_own_and_neighbor_arrowheads_even_when_routes_are_crowded() {
     for direction in [
         Vec2::X,
@@ -288,7 +415,7 @@ fn numbered_markers_clear_own_and_neighbor_arrowheads_even_when_routes_are_crowd
                     "blocked".into(),
                     position,
                     Align2::LEFT_CENTER,
-                    aligned_label_rect(position, Vec2::new(80.0, 16.0), Align2::LEFT_CENTER),
+                    aligned_label_rect(position, Vec2::new(80.0, 16.0), Align2::LEFT_CENTER, 8.0),
                     &own,
                 );
                 label.leader = Some([tip, position]);

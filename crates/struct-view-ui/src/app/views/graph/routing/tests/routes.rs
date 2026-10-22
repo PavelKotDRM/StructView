@@ -848,6 +848,7 @@ fn displaced_graph_labels_point_to_their_own_route() {
         &[],
         &[blocking_label],
         &[points.to_vec()],
+        8.0,
     )
     .expect("A displaced relationship label must still be visible");
     let [anchor, end] = label

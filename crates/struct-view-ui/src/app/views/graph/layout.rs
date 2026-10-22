@@ -549,6 +549,7 @@ pub(super) fn build_graph_routing_layout_with_progress(
     }
     let label_canvas = egui::Rect::from_min_size(Pos2::ZERO, label_content_size);
     let mut occupied_label_rects = Vec::with_capacity(graph.edges.len());
+    let reference_radius = graph_reference_radius(graph.edges.len());
     begin_graph_stage(progress, GraphStage::Labels, graph.edges.len(), 1);
     let mut edge_labels = graph
         .edges
@@ -562,6 +563,7 @@ pub(super) fn build_graph_routing_layout_with_progress(
                 &connected_node_rects,
                 &occupied_label_rects,
                 &routed_edges,
+                reference_radius,
             )
             .inspect(|label| {
                 occupied_label_rects.push(label.background);
@@ -579,7 +581,8 @@ pub(super) fn build_graph_routing_layout_with_progress(
             (label.is_none() && !graph.edges[index].label.trim().is_empty()).then_some(index)
         })
         .collect::<Vec<_>>();
-    let row_height = GRAPH_EDGE_LABEL_HEIGHT + 9.0;
+    let label_height = GRAPH_EDGE_LABEL_HEIGHT.max(reference_radius * 2.0);
+    let row_height = label_height + 9.0;
     let connected_bottom = connected_node_rects
         .iter()
         .map(egui::Rect::bottom)
@@ -588,17 +591,30 @@ pub(super) fn build_graph_routing_layout_with_progress(
         + 24.0;
     let max_rows = ((connected_bottom - 48.0) / row_height).floor().max(1.0) as usize;
     let column_count = callout_indices.len().div_ceil(max_rows);
+    let column_width = callout_indices
+        .iter()
+        .filter_map(|&index| {
+            graph_edge_label_callout_at(
+                &graph.edges[index].label,
+                &routed_edges[index],
+                Pos2::ZERO,
+                reference_radius,
+            )
+        })
+        .map(|label| label.background.width() + 12.0)
+        .fold(0.0_f32, f32::max);
     for (callout_index, &edge_index) in callout_indices.iter().enumerate() {
         let row = callout_index / column_count;
         let column = callout_index % column_count;
         let position = Pos2::new(
-            label_canvas.right() + 24.0 + column as f32 * 156.0,
-            label_canvas.top() + 24.0 + row as f32 * row_height + GRAPH_EDGE_LABEL_HEIGHT / 2.0,
+            label_canvas.right() + 24.0 + column as f32 * column_width,
+            label_canvas.top() + 24.0 + row as f32 * row_height + label_height / 2.0,
         );
         let label = graph_edge_label_callout_at(
             &graph.edges[edge_index].label,
             &routed_edges[edge_index],
             position,
+            reference_radius,
         )
         .inspect(|label| {
             content_size.x = content_size.x.max(label.background.right() + 24.0);
@@ -607,13 +623,14 @@ pub(super) fn build_graph_routing_layout_with_progress(
         edge_labels[edge_index] = label;
     }
     resolve_graph_label_leaders(&mut edge_labels, &connected_node_rects, &routed_edges);
-    for (_, anchor) in edge_labels
+    for (number, anchor) in edge_labels
         .iter()
         .flatten()
         .filter_map(|label| label.reference)
     {
-        content_size.x = content_size.x.max(anchor.x + 24.0);
-        content_size.y = content_size.y.max(anchor.y + 24.0);
+        let radius = graph_reference_radius(number);
+        content_size.x = content_size.x.max(anchor.x + radius + 24.0);
+        content_size.y = content_size.y.max(anchor.y + radius + 24.0);
     }
     let label_right = edge_labels
         .iter()

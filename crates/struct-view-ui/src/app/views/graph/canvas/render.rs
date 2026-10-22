@@ -489,15 +489,10 @@ pub(in crate::app) fn show_graph(
                     edge_color,
                 );
                 if let Some((number, anchor)) = label.reference {
-                    for center in [
-                        transform(anchor),
-                        transform(Pos2::new(
-                            label.background.right() - 11.0,
-                            label.background.center().y,
-                        )),
-                    ] {
-                        painter.circle_filled(center, 8.0 * zoom, ui.visuals().panel_fill);
-                        painter.circle_stroke(center, 8.0 * zoom, Stroke::new(zoom, edge_color));
+                    let radius = graph_reference_radius(number);
+                    for center in [transform(anchor), transform(label.reference_center(radius))] {
+                        painter.circle_filled(center, radius * zoom, ui.visuals().panel_fill);
+                        painter.circle_stroke(center, radius * zoom, Stroke::new(zoom, edge_color));
                         painter.text(
                             center,
                             Align2::CENTER_CENTER,

@@ -9,6 +9,20 @@ pub(in crate::app::views::graph) struct GraphEdgeLabelLayout {
     pub(in crate::app::views::graph) reference: Option<(usize, Pos2)>,
 }
 
+pub(in crate::app::views::graph) fn graph_reference_radius(number: usize) -> f32 {
+    let digits = number.to_string().len() as f32;
+    (Vec2::new(digits * 3.0, 5.0).length() + 2.0).max(8.0)
+}
+
+impl GraphEdgeLabelLayout {
+    pub(in crate::app::views::graph) fn reference_center(&self, radius: f32) -> Pos2 {
+        Pos2::new(
+            self.background.right() - radius - 3.0,
+            self.background.center().y,
+        )
+    }
+}
+
 fn edge_label_placement(points: &[Pos2], node_rects: &[egui::Rect]) -> (Pos2, Align2, f32) {
     if points.len() == 2 {
         let line_start = points[0];
@@ -125,6 +139,7 @@ pub(in crate::app::views::graph) fn layout_graph_edge_label(
     node_rects: &[egui::Rect],
     occupied_label_rects: &[egui::Rect],
     routed_edges: &[Vec<Pos2>],
+    reference_radius: f32,
 ) -> Option<GraphEdgeLabelLayout> {
     if label.trim().is_empty() {
         return None;
@@ -185,6 +200,7 @@ pub(in crate::app::views::graph) fn layout_graph_edge_label(
             node_rects,
             occupied_label_rects,
             routed_edges,
+            reference_radius,
         ) {
             return Some(graph_edge_label_layout(
                 text, position, alignment, background, points,
@@ -229,6 +245,7 @@ pub(in crate::app::views::graph) fn aligned_label_rect(
     position: Pos2,
     size: Vec2,
     alignment: Align2,
+    reference_radius: f32,
 ) -> egui::Rect {
     let min = if alignment == Align2::LEFT_CENTER {
         Pos2::new(position.x, position.y - size.y / 2.0)
@@ -238,7 +255,8 @@ pub(in crate::app::views::graph) fn aligned_label_rect(
         position - size / 2.0
     };
     let mut rect = egui::Rect::from_min_size(min, size);
-    rect.max.x += 24.0;
+    rect.max.x += reference_radius * 2.0 + 8.0;
+    rect = rect.expand2(Vec2::new(0.0, (reference_radius - size.y / 2.0).max(0.0)));
     rect
 }
 

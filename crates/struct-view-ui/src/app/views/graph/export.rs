@@ -192,25 +192,27 @@ fn graph_svg_localized(
             .zip(&routing.node_sizes)
             .map(|(&position, &size)| egui::Rect::from_center_size(position, size)).collect::<Vec<_>>();
         let mut occupied = Vec::new();
+        let reference_radius = graph_reference_radius(graph.edges.len());
         let mut content_size = routing.content_size;
         let mut labels = graph.edges.iter().enumerate().map(|(index, edge)| {
             if edge.label.trim().is_empty() { return None; }
             let full_text = single_line_text(&edge.label).into_owned();
             let route = &routing.edge_paths[index];
             let local = routing.edge_labels[index].as_ref().and_then(|label| {
-                place_edge_label(&full_text, label.position, label.alignment, canvas, &node_rects, &occupied, &routing.edge_paths)
+                place_edge_label(&full_text, label.position, label.alignment, canvas, &node_rects, &occupied, &routing.edge_paths, reference_radius)
                     .map(|background| graph_edge_label_layout(full_text.clone(), label.position, label.alignment, background, route))
             });
-            let label = local.unwrap_or_else(|| graph_edge_label_callout_text(full_text, route, canvas, &occupied));
+            let label = local.unwrap_or_else(|| graph_edge_label_callout_text(full_text, route, canvas, &occupied, reference_radius));
             occupied.push(label.background);
             content_size.x = content_size.x.max(label.background.right() + 24.0);
             content_size.y = content_size.y.max(label.background.bottom() + 24.0);
             Some(label)
         }).collect::<Vec<_>>();
         resolve_graph_label_leaders(&mut labels, &node_rects, &routing.edge_paths);
-        for (_, anchor) in labels.iter().flatten().filter_map(|label| label.reference) {
-            content_size.x = content_size.x.max(anchor.x + 24.0);
-            content_size.y = content_size.y.max(anchor.y + 24.0);
+        for (number, anchor) in labels.iter().flatten().filter_map(|label| label.reference) {
+            let radius = graph_reference_radius(number);
+            content_size.x = content_size.x.max(anchor.x + radius + 24.0);
+            content_size.y = content_size.y.max(anchor.y + radius + 24.0);
         }
         writeln!(svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">"#,
             content_size.x.ceil(), content_size.y.ceil(),
@@ -277,8 +279,9 @@ fn graph_svg_localized(
                 else if label.alignment == Align2::RIGHT_CENTER { "end" } else { "middle" };
             text(&mut svg, label.position, &label.text, 12.0, fill, anchor, "sans-serif");
             if let Some((number, route_anchor)) = label.reference {
-                for center in [route_anchor, Pos2::new(label.background.right() - 11.0, label.background.center().y)] {
-                    writeln!(svg, r#"<circle cx="{}" cy="{}" r="8" fill="{}" stroke="{}"/>"#,
+                let radius = graph_reference_radius(number);
+                for center in [route_anchor, label.reference_center(radius)] {
+                    writeln!(svg, r#"<circle cx="{}" cy="{}" r="{radius}" fill="{}" stroke="{}"/>"#,
                         center.x, center.y, color(visuals.panel_fill), color(fill)).unwrap();
                     text(&mut svg, center, &number.to_string(), 10.0, fill, "middle", "sans-serif");
                 }
@@ -395,6 +398,25 @@ mod tests {
     }
 
     #[test]
+    fn exported_three_digit_references_use_enlarged_circles() {
+        let root = struct_view_core::parser::parse_json(
+            r#"[{"id":"source","depends_on":"target"},{"id":"target"}]"#,
+        )
+        .unwrap();
+        let mut graph = build_relationship_graph(&root);
+        let mut routing = build_graph_routing_layout(&graph);
+        graph.edges = vec![graph.edges[0].clone(); 101];
+        routing.edge_paths =
+            vec![vec![Pos2::new(40.0, 100.0), Pos2::new(240.0, 100.0)]; graph.edges.len()];
+        routing.edge_labels = (0..graph.edges.len()).map(|_| None).collect();
+        let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
+        assert_eq!(svg.matches(">100</text>").count(), 2);
+        let radius = graph_reference_radius(100);
+        assert!(radius > 8.0);
+        assert_eq!(svg.matches(&format!(r#"r="{radius}""#)).count(), 4);
+    }
+
+    #[test]
     fn exported_dense_graph_contains_all_relationships_and_callouts() {
         let root = struct_view_core::parser::parse_json(
             r#"[{"id":"source","depends_on":"target"},{"id":"target"}]"#,
@@ -405,7 +427,7 @@ mod tests {
         graph.edges = (0..24)
             .map(|index| {
                 let mut edge = edge.clone();
-                edge.label = format!("relationship_{index:02}");
+                edge.label = format!("relationship_id_{index:02}");
                 edge
             })
             .collect();

@@ -176,3 +176,7 @@ are laid out separately and do not stretch the connected graph's routes or
 labels. If fallback relationship labels would make a vertical legend taller
 than the connected graph, they are packed into multiple rows beside the graph;
 isolated nodes are shifted right as needed to leave the legend clear.
+Legend columns reserve the full label and numbered-circle width, with a gap
+between columns. Numbered circles grow with the digit count, and their space
+is included in label placement and arrowhead clearance in both the interactive
+view and SVG/PNG exports.
