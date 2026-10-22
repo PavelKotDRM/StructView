@@ -99,8 +99,8 @@ pub(in crate::app::views::graph) fn place_edge_label(
         label.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH,
         GRAPH_EDGE_LABEL_HEIGHT,
     );
-    let label_rect = aligned_label_rect(position, size, alignment, context.reference_radius)
-        .expand(3.0);
+    let label_rect =
+        aligned_label_rect(position, size, alignment, context.reference_radius).expand(3.0);
     if label_rect.left() < context.canvas.left()
         || label_rect.right() > context.canvas.right()
         || label_rect.top() < context.canvas.top()

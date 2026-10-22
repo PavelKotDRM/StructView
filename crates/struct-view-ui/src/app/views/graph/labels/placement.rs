@@ -199,9 +199,7 @@ pub(in crate::app::views::graph) fn layout_graph_edge_label(
         if prefer_callout && text != full_text {
             continue;
         }
-        if let Some(background) =
-            place_edge_label(&text, position, alignment, &placement_context)
-        {
+        if let Some(background) = place_edge_label(&text, position, alignment, &placement_context) {
             return Some(graph_edge_label_layout(
                 text, position, alignment, background, points,
             ));
