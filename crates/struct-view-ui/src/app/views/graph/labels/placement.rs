@@ -148,6 +148,13 @@ pub(in crate::app::views::graph) fn layout_graph_edge_label(
     let prefer_callout = full_text.chars().count() <= 18;
     let minimum_width =
         single_line_text(label).chars().count().min(6) as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH;
+    let placement_context = EdgeLabelPlacementContext {
+        canvas,
+        node_rects,
+        occupied_label_rects,
+        routed_edges,
+        reference_radius,
+    };
     let mut candidates = vec![edge_label_placement(points, node_rects)];
     let mut segments = points.windows(2).collect::<Vec<_>>();
     segments.sort_by(|left, right| {
@@ -192,16 +199,9 @@ pub(in crate::app::views::graph) fn layout_graph_edge_label(
         if prefer_callout && text != full_text {
             continue;
         }
-        if let Some(background) = place_edge_label(
-            &text,
-            position,
-            alignment,
-            canvas,
-            node_rects,
-            occupied_label_rects,
-            routed_edges,
-            reference_radius,
-        ) {
+        if let Some(background) =
+            place_edge_label(&text, position, alignment, &placement_context)
+        {
             return Some(graph_edge_label_layout(
                 text, position, alignment, background, points,
             ));

@@ -198,8 +198,20 @@ fn graph_svg_localized(
             if edge.label.trim().is_empty() { return None; }
             let full_text = single_line_text(&edge.label).into_owned();
             let route = &routing.edge_paths[index];
+            let placement_context = EdgeLabelPlacementContext {
+                canvas,
+                node_rects: &node_rects,
+                occupied_label_rects: &occupied,
+                routed_edges: &routing.edge_paths,
+                reference_radius,
+            };
             let local = routing.edge_labels[index].as_ref().and_then(|label| {
-                place_edge_label(&full_text, label.position, label.alignment, canvas, &node_rects, &occupied, &routing.edge_paths, reference_radius)
+                place_edge_label(
+                    &full_text,
+                    label.position,
+                    label.alignment,
+                    &placement_context,
+                )
                     .map(|background| graph_edge_label_layout(full_text.clone(), label.position, label.alignment, background, route))
             });
             let label = local.unwrap_or_else(|| graph_edge_label_callout_text(full_text, route, canvas, &occupied, reference_radius));

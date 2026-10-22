@@ -23,9 +23,9 @@ use cards::{
 pub(in crate::app) use export::render_graph_image;
 pub(in crate::app) use export::{GraphExportFormat, GraphExportStyle, export_graph_image};
 use labels::{
-    GraphEdgeLabelLayout, graph_edge_label_callout_at, graph_edge_label_callout_text,
-    graph_edge_label_layout, graph_reference_radius, layout_graph_edge_label, place_edge_label,
-    resolve_graph_label_leaders, shorten_to_width,
+    EdgeLabelPlacementContext, GraphEdgeLabelLayout, graph_edge_label_callout_at,
+    graph_edge_label_callout_text, graph_edge_label_layout, graph_reference_radius,
+    layout_graph_edge_label, place_edge_label, resolve_graph_label_leaders, shorten_to_width,
 };
 #[cfg(test)]
 use labels::{aligned_label_rect, graph_edge_label_callout};

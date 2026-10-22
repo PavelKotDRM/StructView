@@ -89,11 +89,7 @@ pub(in crate::app::views::graph) fn place_edge_label(
     label: &str,
     position: Pos2,
     alignment: Align2,
-    canvas: egui::Rect,
-    node_rects: &[egui::Rect],
-    occupied_label_rects: &[egui::Rect],
-    routed_edges: &[Vec<Pos2>],
-    reference_radius: f32,
+    context: &EdgeLabelPlacementContext<'_>,
 ) -> Option<egui::Rect> {
     if label.is_empty() {
         return None;
@@ -103,18 +99,21 @@ pub(in crate::app::views::graph) fn place_edge_label(
         label.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH,
         GRAPH_EDGE_LABEL_HEIGHT,
     );
-    let label_rect = aligned_label_rect(position, size, alignment, reference_radius).expand(3.0);
-    if label_rect.left() < canvas.left()
-        || label_rect.right() > canvas.right()
-        || label_rect.top() < canvas.top()
-        || label_rect.bottom() > canvas.bottom()
-        || node_rects
+    let label_rect = aligned_label_rect(position, size, alignment, context.reference_radius)
+        .expand(3.0);
+    if label_rect.left() < context.canvas.left()
+        || label_rect.right() > context.canvas.right()
+        || label_rect.top() < context.canvas.top()
+        || label_rect.bottom() > context.canvas.bottom()
+        || context
+            .node_rects
             .iter()
             .any(|rect| label_rect.intersects(rect.expand(2.0)))
-        || occupied_label_rects
+        || context
+            .occupied_label_rects
             .iter()
             .any(|rect| label_rect.intersects(*rect))
-        || routed_edges.iter().any(|route| {
+        || context.routed_edges.iter().any(|route| {
             route.windows(2).any(|segment| {
                 segment_intersects_rect(segment[0], segment[1], label_rect.expand(2.0))
             }) || route.first().into_iter().chain(route.last()).any(|tip| {
@@ -125,4 +124,12 @@ pub(in crate::app::views::graph) fn place_edge_label(
         return None;
     }
     Some(label_rect)
+}
+
+pub(in crate::app::views::graph) struct EdgeLabelPlacementContext<'a> {
+    pub(in crate::app::views::graph) canvas: egui::Rect,
+    pub(in crate::app::views::graph) node_rects: &'a [egui::Rect],
+    pub(in crate::app::views::graph) occupied_label_rects: &'a [egui::Rect],
+    pub(in crate::app::views::graph) routed_edges: &'a [Vec<Pos2>],
+    pub(in crate::app::views::graph) reference_radius: f32,
 }
