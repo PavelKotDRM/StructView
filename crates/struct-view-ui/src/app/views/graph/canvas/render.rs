@@ -34,8 +34,8 @@ pub(super) fn graph_selection_marker_center(
         Some(Shape::Terminator | Shape::Connector) => {
             rounded_corner_marker(rect, (rect.height() * 0.5).min(255.0), outward_offset)
         }
-        Some(Shape::Database) => rounded_corner_marker(rect, 14.0, outward_offset),
-        _ => rounded_corner_marker(rect, 6.0, outward_offset),
+        Some(Shape::Database) => rounded_corner_marker(rect, 14.0 * zoom, outward_offset),
+        _ => rounded_corner_marker(rect, 6.0 * zoom, outward_offset),
     }
 }
 
@@ -46,6 +46,25 @@ fn rounded_corner_marker(rect: egui::Rect, radius: f32, outward_offset: f32) -> 
         rect.right() - radius + radius * diagonal + outward_offset * diagonal,
         rect.top() + radius - radius * diagonal - outward_offset * diagonal,
     )
+}
+
+pub(super) fn flowchart_node_corner_radius(
+    rect: egui::Rect,
+    shape: Option<crate::app::visualization::FlowchartNodeShape>,
+    zoom: f32,
+) -> u8 {
+    use crate::app::visualization::FlowchartNodeShape as Shape;
+
+    let radius = match shape {
+        Some(Shape::Terminator | Shape::Connector) => rect.height() * 0.5,
+        Some(Shape::Database) => 14.0 * zoom,
+        _ => 6.0 * zoom,
+    };
+    radius
+        .min(rect.width() * 0.5)
+        .min(rect.height() * 0.5)
+        .min(f32::from(u8::MAX))
+        .round() as u8
 }
 
 /// Отрисовать граф идентификаторов и зависимостей.
@@ -97,11 +116,17 @@ pub(in crate::app) fn show_graph(
     if graph.edges.is_empty() {
         ui.label(RichText::new(locale.text(TextKey::GraphNoRelationships)).weak());
     }
-    let jobs = crate::app::graph_animation::jobs::state(ui.ctx())
+    let mut jobs = crate::app::graph_animation::jobs::state(ui.ctx())
         .filter(|state| state.visuals.matches_graph(routing.graph_fingerprint));
-    let job_focus = jobs
-        .as_ref()
-        .and_then(|state| crate::app::graph_animation::jobs::show_jobs(ui, state, graph, locale));
+    let job_action = jobs
+        .as_mut()
+        .map(|state| crate::app::graph_animation::jobs::show_jobs(ui, state, graph, locale));
+    if let (Some(state), Some(action)) = (&jobs, &job_action)
+        && action.changed
+    {
+        crate::app::graph_animation::jobs::store(ui.ctx(), state.clone());
+    }
+    let job_focus = job_action.and_then(|action| action.focus);
     let (_, viewport) = ui.allocate_space(ui.available_size().max(Vec2::splat(1.0)));
     if let Some(index) = job_focus {
         interaction.cursor = index;
@@ -632,6 +657,7 @@ pub(in crate::app) fn show_graph(
                 node.flowchart_shape(),
                 node_fill,
                 Stroke::new(node_stroke.width * zoom, node_stroke.color),
+                zoom,
             );
             if is_selected {
                 let marker = graph_selection_marker_center(rect, node.flowchart_shape(), zoom);
@@ -856,6 +882,7 @@ pub(in crate::app) fn show_graph(
         shape: Option<crate::app::visualization::FlowchartNodeShape>,
         fill: Color32,
         stroke: Stroke,
+        zoom: f32,
     ) {
         use crate::app::visualization::FlowchartNodeShape as Shape;
 
@@ -893,13 +920,7 @@ pub(in crate::app) fn show_graph(
             return;
         }
 
-        let rounding = match shape {
-            Some(Shape::Terminator) | Some(Shape::Connector) => {
-                (rect.height() / 2.0).min(f32::from(u8::MAX)).round() as u8
-            }
-            Some(Shape::Database) => 14,
-            _ => 6,
-        };
+        let rounding = flowchart_node_corner_radius(rect, shape, zoom);
         painter.rect_filled(rect, egui::CornerRadius::same(rounding), fill);
         painter.rect_stroke(
             rect,
@@ -908,7 +929,7 @@ pub(in crate::app) fn show_graph(
             egui::StrokeKind::Inside,
         );
         if shape == Some(Shape::Subprocess) {
-            let inset = 10.0;
+            let inset = 10.0 * zoom;
             for x in [rect.left() + inset, rect.right() - inset] {
                 painter.line_segment(
                     [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],

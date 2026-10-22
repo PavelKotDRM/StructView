@@ -117,12 +117,12 @@ realtime-обзора завершённые задачи остаются дл�
 | `--once` | Не запускать панель; выполнить демо и выйти |
 | `--autoplay` | Сразу начать выбранный режим, не ожидая кнопки запуска |
 | `--step-by-step` | Ждать кнопки «Далее» на контрольных точках; несовместим с `--once` |
-| `--graph PATH` | TOML-файл графа, который должен быть открыт в StructView |
+| `--graph PATH` | Необязательный TOML-файл; без него контроллер определит открытый встроенный граф автоматически |
 | `--ca PATH` | PEM-сертификат центра сертификации для внутреннего HTTPS |
 
-По умолчанию используется блок-схема. Пример интернет-магазина остаётся
-доступен: откройте [`fixtures/GraphAnimationDemo.toml`](fixtures/GraphAnimationDemo.toml)
-в StructView и запустите контроллер с `--graph`:
+Контроллер автоматически распознаёт встроенные блок-схему и граф интернет-магазина,
+открытые в StructView. Чтобы явно выбрать пример интернет-магазина, откройте
+[`fixtures/GraphAnimationDemo.toml`](fixtures/GraphAnimationDemo.toml) и запустите:
 
 ```powershell
 python tests\demo_graph_animation.py --api http://127.0.0.1:8088 --graph tests\fixtures\GraphAnimationDemo.toml

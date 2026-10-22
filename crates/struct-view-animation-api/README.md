@@ -16,6 +16,9 @@ domain-specific validation and commands outside the transport crate.
   explicit network-access opt-in;
 - `ApiRequest` carries parsed requests to the caller thread, while `ApiReply`
   returns its JSON response;
+- `AnimationApiServer::stats()` reports bounded connection/queue counters and
+  the 50 most recent endpoint/batch-size/status/duration records without
+  retaining request bodies or credentials;
 - `ApiOperation` distinguishes capabilities, graph, animation, realtime, and
   job endpoints. `GET /v1/jobs` requests job state and `POST /v1/jobs` carries
   atomic job commands; the embedding application owns job schema validation.

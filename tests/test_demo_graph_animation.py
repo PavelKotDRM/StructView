@@ -128,6 +128,10 @@ class DemoTests(unittest.TestCase):
     def test_shop_fixture_remains_supported_by_the_controller(self):
         shop_path = demo.FIXTURE.parent / "GraphAnimationDemo.toml"
         shop_fixture = fixture(shop_path)
+        self.assertEqual(
+            demo.matching_fixture(descriptor(shop_path)),
+            shop_fixture,
+        )
         nodes = {node["id"] for node in shop_fixture["entities"]}
         outgoing = {node: set() for node in nodes}
         indegree = dict.fromkeys(nodes, 0)
@@ -404,6 +408,19 @@ class DemoTests(unittest.TestCase):
                     start.assert_called_once_with("both")
                 else:
                     start.assert_not_called()
+
+    def test_main_auto_detects_open_shop_fixture(self):
+        shop_path = demo.FIXTURE.parent / "GraphAnimationDemo.toml"
+        arguments = ["demo", "--api", "http://127.0.0.1:8088"]
+        with patch.object(sys, "argv", arguments), \
+                patch.dict(os.environ, {"STRUCTVIEW_API_TOKEN": "test-token"}), \
+                patch.object(demo, "Api", return_value=FakeApi(descriptor(shop_path))), \
+                patch.object(demo, "Demo") as controller, \
+                patch.object(demo, "DemoServer") as server, \
+                patch("builtins.print"):
+            self.assertEqual(demo.main(), 0)
+            self.assertEqual(controller.call_args.args[1], fixture(shop_path))
+            server.return_value.serve_forever.assert_called_once()
 
     def test_missing_jobs_capability_is_reported(self):
         runner = demo.Demo(FakeApi(), fixture())

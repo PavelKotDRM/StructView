@@ -1,9 +1,11 @@
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{
-    Arc, RwLock,
-    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, RwLock,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{self, Receiver, SyncSender, TryRecvError},
 };
 use std::thread::{self, JoinHandle};
@@ -59,6 +61,42 @@ pub enum ApiOperation {
     Stop,
 }
 
+impl ApiOperation {
+    pub(super) fn endpoint(&self) -> &'static str {
+        match self {
+            Self::Capabilities => "GET /v1/capabilities",
+            Self::Graph => "GET /v1/graph",
+            Self::Status => "GET /v1/animation",
+            Self::Play(_) => "POST /v1/animation",
+            Self::Realtime(_) => "POST /v1/realtime",
+            Self::RealtimeStatus => "GET /v1/realtime",
+            Self::Jobs(_) => "POST /v1/jobs",
+            Self::JobsStatus => "GET /v1/jobs",
+            Self::Stop => "POST /v1/animation/stop",
+        }
+    }
+
+    pub(super) fn summary(&self) -> String {
+        match self {
+            Self::Play(value) => format!(
+                "steps: {}",
+                value
+                    .get("steps")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len)
+            ),
+            Self::Realtime(value) | Self::Jobs(value) => format!(
+                "commands: {}",
+                value
+                    .get("commands")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len)
+            ),
+            _ => String::new(),
+        }
+    }
+}
+
 pub struct ApiReply {
     pub status: u16,
     pub value: Value,
@@ -70,6 +108,84 @@ pub struct ApiRequest {
     pub deadline: Instant,
 }
 
+/// Bounded metadata for one completed HTTP request; payloads and credentials are omitted.
+#[derive(Clone, Debug)]
+pub struct ApiRequestRecord {
+    pub endpoint: String,
+    pub summary: String,
+    pub status: u16,
+    pub duration_ms: u128,
+}
+
+/// Live transport counters and recent request metadata.
+#[derive(Clone, Debug)]
+pub struct ApiServerStats {
+    pub active_connections: usize,
+    pub queued_requests: usize,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub recent_requests: Vec<ApiRequestRecord>,
+}
+
+struct ApiTelemetry {
+    active_connections: AtomicUsize,
+    queued_requests: AtomicUsize,
+    successful_requests: AtomicU64,
+    failed_requests: AtomicU64,
+    recent_requests: Mutex<VecDeque<ApiRequestRecord>>,
+}
+
+impl ApiTelemetry {
+    fn new() -> Self {
+        Self {
+            active_connections: AtomicUsize::new(0),
+            queued_requests: AtomicUsize::new(0),
+            successful_requests: AtomicU64::new(0),
+            failed_requests: AtomicU64::new(0),
+            recent_requests: Mutex::new(VecDeque::with_capacity(50)),
+        }
+    }
+
+    fn record(&self, endpoint: &str, summary: &str, status: u16, duration: Duration) {
+        if status < 400 {
+            self.successful_requests.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.failed_requests.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Ok(mut recent) = self.recent_requests.lock() {
+            if recent.len() == 50 {
+                recent.pop_front();
+            }
+            recent.push_back(ApiRequestRecord {
+                endpoint: endpoint.to_owned(),
+                summary: summary.to_owned(),
+                status,
+                duration_ms: duration.as_millis(),
+            });
+        } else {
+            eprintln!("Animation API request history lock poisoned");
+        }
+    }
+
+    fn snapshot(&self) -> Result<ApiServerStats, String> {
+        let recent_requests = self
+            .recent_requests
+            .lock()
+            .map_err(|_| "Animation API request history lock poisoned".to_string())?
+            .iter()
+            .cloned()
+            .rev()
+            .collect();
+        Ok(ApiServerStats {
+            active_connections: self.active_connections.load(Ordering::Relaxed),
+            queued_requests: self.queued_requests.load(Ordering::Relaxed),
+            successful_requests: self.successful_requests.load(Ordering::Relaxed),
+            failed_requests: self.failed_requests.load(Ordering::Relaxed),
+            recent_requests,
+        })
+    }
+}
+
 /// Explicitly enabled server. Dropping it stops all workers and invalidates the token.
 pub struct AnimationApiServer {
     address: SocketAddr,
@@ -77,6 +193,7 @@ pub struct AnimationApiServer {
     token: String,
     secret: Arc<RwLock<String>>,
     requests: Receiver<ApiRequest>,
+    telemetry: Arc<ApiTelemetry>,
     shutdown: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -152,6 +269,8 @@ impl AnimationApiServer {
         let worker_secret = Arc::clone(&secret);
         let shutdown = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&shutdown);
+        let telemetry = Arc::new(ApiTelemetry::new());
+        let worker_telemetry = Arc::clone(&telemetry);
         let (sender, requests) = mpsc::sync_channel(16);
         let worker = thread::Builder::new()
             .name("struct-view-animation-api".into())
@@ -174,13 +293,29 @@ impl AnimationApiServer {
                             }
                             if clients.len() >= MAX_CLIENTS {
                                 eprintln!("Animation API concurrent client limit reached");
-                                if tls.is_none() {
-                                    let mut connection = Connection::plain(stream);
-                                    if let Err(error) = write_reply(&mut connection,ApiReply {
-                                        status:503,value:json!({"error":"Too many concurrent API clients"})
-                                    }) {
-                                        eprintln!("Animation API rejection error: {error}");
-                                    }
+                                worker_telemetry
+                                    .active_connections
+                                    .fetch_add(1, Ordering::Relaxed);
+                                let _client = ActiveClient(Arc::clone(&worker_telemetry));
+                                let result = Connection::new(stream, tls.clone()).and_then(
+                                    |mut connection| {
+                                        write_reply(
+                                            &mut connection,
+                                            ApiReply {
+                                                status: 503,
+                                                value: json!({"error":"Too many concurrent API clients"}),
+                                            },
+                                        )
+                                    },
+                                );
+                                worker_telemetry.record(
+                                    "Connection limit",
+                                    "",
+                                    503,
+                                    Duration::ZERO,
+                                );
+                                if let Err(error) = result {
+                                    eprintln!("Animation API rejection error: {error}");
                                 }
                                 continue;
                             }
@@ -190,14 +325,20 @@ impl AnimationApiServer {
                             let sender = sender.clone();
                             let wake = Arc::clone(&wake);
                             let shutdown = Arc::clone(&stop);
+                            let telemetry = Arc::clone(&worker_telemetry);
+                            telemetry.active_connections.fetch_add(1, Ordering::Relaxed);
                             match thread::Builder::new().name("struct-view-api-client".into()).spawn(move || {
+                                let _client = ActiveClient(telemetry);
                                 let result = Connection::new(stream,tls)
-                                    .and_then(|mut stream| serve(&mut stream,&secret,&hosts,&sender,wake.as_ref(),&shutdown));
+                                    .and_then(|mut stream| serve(&mut stream,&secret,&hosts,&sender,wake.as_ref(),&shutdown,&_client.0));
                                 // Clients can disconnect at any time; transport errors are local to that connection.
                                 if let Err(error) = result { eprintln!("Animation API connection error: {error}"); }
                             }) {
                                 Ok(client) => clients.push(client),
-                                Err(error) => eprintln!("Cannot start animation API client: {error}"),
+                                Err(error) => {
+                                    worker_telemetry.active_connections.fetch_sub(1, Ordering::Relaxed);
+                                    eprintln!("Cannot start animation API client: {error}");
+                                }
                             }
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -223,6 +364,7 @@ impl AnimationApiServer {
             token,
             secret,
             requests,
+            telemetry,
             shutdown,
             worker: Some(worker),
         })
@@ -262,12 +404,30 @@ impl AnimationApiServer {
 
     pub fn try_request(&self) -> Result<Option<ApiRequest>, String> {
         match self.requests.try_recv() {
-            Ok(request) => Ok(Some(request)),
+            Ok(request) => {
+                self.telemetry
+                    .queued_requests
+                    .fetch_sub(1, Ordering::Relaxed);
+                Ok(Some(request))
+            }
             Err(TryRecvError::Empty) => Ok(None),
             Err(TryRecvError::Disconnected) => {
                 Err("Graph animation API worker stopped unexpectedly".into())
             }
         }
+    }
+
+    /// Return a snapshot of connection, queue, and recent request statistics.
+    pub fn stats(&self) -> Result<ApiServerStats, String> {
+        self.telemetry.snapshot()
+    }
+}
+
+struct ActiveClient(Arc<ApiTelemetry>);
+
+impl Drop for ActiveClient {
+    fn drop(&mut self) {
+        self.0.active_connections.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

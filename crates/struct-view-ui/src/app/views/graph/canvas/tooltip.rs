@@ -296,6 +296,53 @@ mod tests {
     }
 
     #[test]
+    fn node_tooltip_lists_statuses_hidden_by_badge_overflow() {
+        let graph = crate::app::visualization::build_relationship_graph(
+            &struct_view_core::parser::parse_json(r#"{"nodes":[{"id":"a"}],"edges":[]}"#).unwrap(),
+        );
+        let state = RealtimeState::apply(
+            None,
+            RealtimeUpdate {
+                graph_id: "graph".into(),
+                commands: (1..=4)
+                    .map(|index| RealtimeCommand::Element {
+                        id: format!("job-{index}"),
+                        nodes: vec!["a".into()],
+                        edges: vec![],
+                        status: Some(ElementStatus::Running),
+                        color: None,
+                        pulse: None,
+                        label: Some(format!("Task {index}")),
+                        stage: Some(format!("Stage {index}")),
+                    })
+                    .collect(),
+            },
+            &graph,
+            0.0,
+        )
+        .unwrap();
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show_graph_realtime_status(ui, Some(&state), Some(0), None, Locale::English);
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        for index in 1..=4 {
+            assert!(text.contains(&format!("Task {index}")));
+            assert!(text.contains(&format!("job-{index}")));
+            assert!(text.contains(&format!("Stage {index}")));
+        }
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
     fn node_tooltip_includes_progress_only_for_its_assigned_jobs() {
         let graph = crate::app::visualization::build_relationship_graph(
             &struct_view_core::parser::parse_json(

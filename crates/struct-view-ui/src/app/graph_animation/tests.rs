@@ -1357,6 +1357,34 @@ fn api_settings_show_network_and_tls_fields_and_wire_selected_configuration() {
     );
     app.graph_animation.bind = "not an IP".into();
     assert!(app.graph_animation.server_options().is_err());
+    app.graph_animation.server = Some(AnimationApiServer::start(0).unwrap());
+    let output = render(&mut app, vec![]);
+    let labels = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for key in [
+        TextKey::GraphApiActiveToken,
+        TextKey::GraphApiConnections,
+        TextKey::GraphApiQueue,
+        TextKey::GraphApiSuccessfulRequests,
+        TextKey::GraphApiFailedRequests,
+        TextKey::GraphApiRecentRequests,
+        TextKey::GraphApiNoRequests,
+    ] {
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains(app.locale.text(key))),
+            "{key:?}: {labels:?}"
+        );
+    }
+    output.drop_without_applying_deltas();
+    app.graph_animation.server = None;
 }
 
 #[test]
@@ -1422,6 +1450,37 @@ fn https_validates_certificate_configuration_and_serves_authenticated_json() {
         response.starts_with("HTTP/1.1 200") && response.contains(r#""accepted":true"#),
         "{response}"
     );
+    let mut slow_clients = (0..8)
+        .map(|_| {
+            let tcp = TcpStream::connect(server.address()).unwrap();
+            tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let connection =
+                rustls::ClientConnection::new(Arc::clone(&config), "localhost".try_into().unwrap())
+                    .unwrap();
+            let mut stream = rustls::StreamOwned::new(connection, tcp);
+            stream.write_all(b"GET ").unwrap();
+            stream.flush().unwrap();
+            stream
+        })
+        .collect::<Vec<_>>();
+    thread::sleep(Duration::from_millis(100));
+    let rejected = tls_client(format!(
+        "GET /v1/graph HTTP/1.1\r\nHost: {}\r\n\r\n",
+        server.address()
+    ));
+    assert!(
+        rejected.join().unwrap().starts_with("HTTP/1.1 503"),
+        "TLS clients over the limit must receive an HTTP error response"
+    );
+    slow_clients.clear();
+    let stats = server.stats().unwrap();
+    assert!(stats.failed_requests >= 1);
+    assert!(stats.successful_requests >= 1);
+    assert!(stats.recent_requests.iter().any(|request| {
+        request.endpoint == "POST /v1/realtime"
+            && request.summary == "commands: 1"
+            && request.status == 200
+    }));
     drop(server);
     std::fs::write(&certificate, "not a certificate").unwrap();
     assert!(AnimationApiServer::start_with(options()).is_err());

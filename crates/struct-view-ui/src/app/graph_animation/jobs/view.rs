@@ -1,17 +1,26 @@
-use super::JobsState;
+use super::{JobCommand, JobUpdate, JobsState};
 use crate::app::i18n::{Locale, TextKey};
 use crate::app::visualization::RelationshipGraph;
 
+pub(in crate::app) struct JobViewAction {
+    pub focus: Option<usize>,
+    pub changed: bool,
+}
+
 pub(in crate::app) fn show_jobs(
     ui: &mut egui::Ui,
-    state: &JobsState,
+    state: &mut JobsState,
     graph: &RelationshipGraph,
     locale: Locale,
-) -> Option<usize> {
+) -> JobViewAction {
     if state.jobs.is_empty() {
-        return None;
+        return JobViewAction {
+            focus: None,
+            changed: false,
+        };
     }
     let mut focus = None;
+    let mut command = None;
     egui::CollapsingHeader::new(format!(
         "{} ({})",
         locale.text(TextKey::GraphJobs),
@@ -19,6 +28,9 @@ pub(in crate::app) fn show_jobs(
     ))
     .default_open(true)
     .show(ui, |ui| {
+        if ui.button(locale.text(TextKey::GraphJobsClear)).clicked() {
+            command = Some(JobCommand::Clear);
+        }
         egui::ScrollArea::vertical()
             .id_salt("graph-job-list")
             .max_height(140.0)
@@ -34,6 +46,12 @@ pub(in crate::app) fn show_jobs(
                         ui.monospace(&job.id);
                         ui.colored_label(job.status.color(), locale.text(job.status.text_key()));
                         ui.label(format!("{} · {:.0}%", job.stage, job.percent));
+                        if ui
+                            .small_button(locale.text(TextKey::GraphJobRemove))
+                            .clicked()
+                        {
+                            command = Some(JobCommand::Remove { id: job.id.clone() });
+                        }
                         for node in &job.nodes {
                             if let Some(index) =
                                 graph.nodes.iter().position(|item| &item.id == node)
@@ -49,7 +67,7 @@ pub(in crate::app) fn show_jobs(
                             let edge = &graph.edges[index];
                             if ui
                                 .small_button(format!(
-                                    "{} → {}",
+                                    "{} -> {}",
                                     graph.nodes[edge.source].label, graph.nodes[edge.target].label
                                 ))
                                 .on_hover_text(locale.text(TextKey::GraphJobFocus))
@@ -62,5 +80,28 @@ pub(in crate::app) fn show_jobs(
                 }
             });
     });
-    focus
+    let mut changed = false;
+    let mut error = None;
+    if let Some(command) = command {
+        let update = JobUpdate {
+            graph_id: state.graph_id.clone(),
+            commands: vec![command],
+        };
+        match JobsState::apply(
+            Some(state.clone()),
+            update,
+            graph,
+            ui.input(|input| input.time),
+        ) {
+            Ok(updated) => {
+                *state = updated;
+                changed = true;
+            }
+            Err(reason) => error = Some(reason),
+        }
+    }
+    if let Some(error) = &error {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+    JobViewAction { focus, changed }
 }

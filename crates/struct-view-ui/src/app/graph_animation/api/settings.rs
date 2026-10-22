@@ -31,6 +31,10 @@ impl Default for GraphAnimationState {
 }
 
 impl GraphAnimationState {
+    pub(in crate::app) fn server_url(&self) -> Option<&str> {
+        self.server.as_ref().map(AnimationApiServer::url)
+    }
+
     pub(in crate::app::graph_animation) fn server_options(
         &self,
     ) -> Result<struct_view_animation_api::server::ServerOptions, String> {
@@ -60,15 +64,21 @@ impl StructViewApp {
         ui.weak(locale.text(TextKey::GraphApiHint));
         let mut token_result = None;
         if let Some(server) = &mut self.graph_animation.server {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
             ui.monospace(server.url());
             ui.label(format!(
                 "{}: {}",
                 locale.text(TextKey::GraphApiBind),
                 server.address()
             ));
-            ui.label("******");
-            let mut token = server.token();
-            ui.add(egui::TextEdit::singleline(&mut token).desired_width(420.0));
+            ui.label(locale.text(TextKey::GraphApiActiveToken));
+            let mut token = server.token().to_owned();
+            ui.add(
+                egui::TextEdit::singleline(&mut token)
+                    .interactive(false)
+                    .desired_width(420.0),
+            );
             ui.horizontal(|ui| {
                 if ui.button(locale.text(TextKey::GraphApiCopyToken)).clicked() {
                     token_result = Some(crate::clipboard::copy_to_clipboard(server.token()));
@@ -108,6 +118,88 @@ impl StructViewApp {
                 }
             });
             ui.weak(locale.text(TextKey::GraphApiTokenHint));
+            ui.separator();
+            match server.stats() {
+                Ok(stats) => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!(
+                            "{}: {}",
+                            locale.text(TextKey::GraphApiConnections),
+                            stats.active_connections
+                        ));
+                        ui.separator();
+                        ui.label(format!(
+                            "{}: {}",
+                            locale.text(TextKey::GraphApiQueue),
+                            stats.queued_requests
+                        ));
+                        ui.separator();
+                        ui.label(format!(
+                            "{}: {}",
+                            locale.text(TextKey::GraphApiSuccessfulRequests),
+                            stats.successful_requests
+                        ));
+                        ui.separator();
+                        ui.label(format!(
+                            "{}: {}",
+                            locale.text(TextKey::GraphApiFailedRequests),
+                            stats.failed_requests
+                        ));
+                    });
+                    egui::CollapsingHeader::new(format!(
+                        "{} ({})",
+                        locale.text(TextKey::GraphApiRecentRequests),
+                        stats.recent_requests.len()
+                    ))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        if stats.recent_requests.is_empty() {
+                            ui.weak(locale.text(TextKey::GraphApiNoRequests));
+                        } else {
+                            egui::ScrollArea::vertical()
+                                .id_salt("graph-api-request-history")
+                                .max_height(180.0)
+                                .show(ui, |ui| {
+                                    egui::Grid::new("graph-api-request-history-grid")
+                                        .striped(true)
+                                        .show(ui, |ui| {
+                                            for request in &stats.recent_requests {
+                                                let request_label = if request.summary.is_empty() {
+                                                    request.endpoint.clone()
+                                                } else {
+                                                    format!(
+                                                        "{} · {}",
+                                                        request.endpoint, request.summary
+                                                    )
+                                                };
+                                                ui.monospace(request_label);
+                                                let status = ui.label(format!(
+                                                    "{}: {}",
+                                                    locale.text(TextKey::GraphApiRequestStatus),
+                                                    request.status
+                                                ));
+                                                if request.status >= 400 {
+                                                    status.on_hover_text(
+                                                        locale
+                                                            .text(TextKey::GraphApiFailedRequests),
+                                                    );
+                                                }
+                                                ui.label(format!(
+                                                    "{}: {} ms",
+                                                    locale.text(TextKey::GraphApiRequestDuration),
+                                                    request.duration_ms
+                                                ));
+                                                ui.end_row();
+                                            }
+                                        });
+                                });
+                        }
+                    });
+                }
+                Err(error) => {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+            }
             if ui.button(locale.text(TextKey::GraphApiStop)).clicked() {
                 self.graph_animation.server = None;
                 self.graph_animation.token_input.clear();

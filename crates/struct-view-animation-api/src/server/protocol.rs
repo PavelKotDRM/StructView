@@ -1,5 +1,5 @@
 use super::transport::Connection;
-use super::{ApiOperation, ApiReply, ApiRequest, MAX_BODY, MAX_HEADERS, TIMEOUT};
+use super::{ApiOperation, ApiReply, ApiRequest, ApiTelemetry, MAX_BODY, MAX_HEADERS, TIMEOUT};
 use serde_json::json;
 use std::io::{BufReader, Read, Write};
 use std::net::Shutdown;
@@ -17,22 +17,29 @@ pub(super) fn serve(
     sender: &SyncSender<ApiRequest>,
     wake: &(dyn Fn() + Send + Sync),
     shutdown: &AtomicBool,
+    telemetry: &ApiTelemetry,
 ) -> std::io::Result<()> {
+    let started = Instant::now();
     let parsed = parse_request(stream, token, hosts);
     let operation = match parsed {
         Ok(operation) => operation,
         Err((status, error)) => {
-            return write_reply(
+            let result = write_reply(
                 stream,
                 ApiReply {
                     status,
                     value: json!({"error":error}),
                 },
             );
+            telemetry.record("Invalid HTTP request", "", status, started.elapsed());
+            return result;
         }
     };
+    let endpoint = operation.endpoint();
+    let summary = operation.summary();
     let (reply, received) = mpsc::sync_channel(1);
     let deadline = Instant::now() + TIMEOUT;
+    telemetry.queued_requests.fetch_add(1, Ordering::Relaxed);
     if sender
         .try_send(ApiRequest {
             operation,
@@ -41,13 +48,16 @@ pub(super) fn serve(
         })
         .is_err()
     {
-        return write_reply(
+        telemetry.queued_requests.fetch_sub(1, Ordering::Relaxed);
+        let result = write_reply(
             stream,
             ApiReply {
                 status: 503,
                 value: json!({"error":"API queue is full or closed"}),
             },
         );
+        telemetry.record(endpoint, &summary, 503, started.elapsed());
+        return result;
     }
     wake();
     let response = loop {
@@ -74,7 +84,10 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     };
-    write_reply(stream, response)
+    let status = response.status;
+    let result = write_reply(stream, response);
+    telemetry.record(endpoint, &summary, status, started.elapsed());
+    result
 }
 
 pub(super) type ParseResult = Result<ApiOperation, (u16, String)>;

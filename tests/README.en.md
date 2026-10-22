@@ -113,12 +113,13 @@ Available options:
 | `--once` | Skip the dashboard, run the demo, and exit |
 | `--autoplay` | Start the selected mode immediately without a dashboard launch click |
 | `--step-by-step` | Wait for Next chapter at checkpoints; cannot be combined with `--once` |
-| `--graph PATH` | TOML graph file that must be open in StructView |
+| `--graph PATH` | Optional TOML fixture; without it, the controller detects the active bundled graph |
 | `--ca PATH` | PEM CA certificate for internal HTTPS |
 
-The flowchart is used by default. The internet-shop example is still available:
-open [`fixtures/GraphAnimationDemo.toml`](fixtures/GraphAnimationDemo.toml) in
-StructView and pass it to the controller with `--graph`:
+The controller automatically recognizes the bundled flowchart and
+internet-shop graph from the active StructView graph. To select the
+internet-shop fixture explicitly, open
+[`fixtures/GraphAnimationDemo.toml`](fixtures/GraphAnimationDemo.toml) and run:
 
 ```powershell
 python tests\demo_graph_animation.py --api http://127.0.0.1:8088 --graph tests\fixtures\GraphAnimationDemo.toml

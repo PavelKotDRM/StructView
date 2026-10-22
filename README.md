@@ -9,7 +9,8 @@ and table, schema, and graph export.
 
 [Русская версия документации](docs/README.ru.md)
 
-Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/tutorial/ru.md).
+Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/tutorial/ru.md) |
+[Graph animation API](docs/tutorial/api-server.ru.md).
 
 ## Features
 
@@ -462,6 +463,14 @@ characters without spaces; use a long random secret. Applying or regenerating
 changes authentication immediately without restarting the listener or playback.
 Old credentials are rejected for new requests; already authorized requests may
 finish. Restart external controllers with the new token. No token is persisted.
+While the server is running, the window shows active connections, queued
+requests, success/error totals, and the 50 most recent request endpoints, batch
+sizes, HTTP statuses, and durations. The history never stores authorization
+tokens or request bodies; endpoint summaries show step/command counts only.
+Press **F1** while the server is running to view a larger, readable OpenAPI 3.1
+overview with the active URL, authentication requirements, and descriptions of
+each endpoint. Open **Raw OpenAPI JSON** in a separate, resizable window for the
+full specification.
 
 The server controls three independent visual layers:
 
@@ -476,6 +485,11 @@ They are visual representations of externally running work, not a worker
 queue: the API does not execute tasks or provide per-job pause/resume.
 The scheduled player remains a single scenario; concurrency is represented
 by independent jobs or realtime IDs. Global stop clears all three layers.
+The **Diagram tasks** list can remove a displayed job status or clear all
+displayed jobs. These actions remove only StructView's visualization; they do
+not stop or cancel the corresponding external work. Use the node tooltip to
+inspect every status attached to a node, including statuses summarized by the
+badge overflow count.
 
 Commands animate the existing automatically laid-out graph without editing
 entities, attributes, routes, undo history, or saved files. Highlights and
@@ -837,18 +851,18 @@ are unsupported. Do not strip browser `Origin` to bypass the API's origin
 restriction, and do not expose its token in frontend JavaScript.
 The server accepts up to 8 simultaneous clients and bounds request parsing/
 TLS-handshake time to 2 seconds, separately from the 2-second GUI reply deadline.
-One slow client no longer blocks others. Excess HTTP clients receive `503`;
-excess TLS clients are disconnected before handshake. Disabling joins client
+One slow client no longer blocks others. Excess HTTP and TLS clients receive
+`503`. Disabling joins client
 workers and releases the listener; it may briefly wait for their I/O deadlines.
 
 #### Graph and flowchart animation demo (Python)
 
 The standard-library controller [tests/demo_graph_animation.py](tests/demo_graph_animation.py)
-defaults to [FlowchartAnimationDemo.toml](tests/fixtures/FlowchartAnimationDemo.toml).
-The compact, connected
-[tests/fixtures/GraphAnimationDemo.toml](tests/fixtures/GraphAnimationDemo.toml):
-8 entities and 9 relationships along an order/payment/delivery workflow is also
-available with `--graph tests\fixtures\GraphAnimationDemo.toml`.
+automatically matches the active graph to one of its bundled fixtures.
+This includes [FlowchartAnimationDemo.toml](tests/fixtures/FlowchartAnimationDemo.toml),
+the compact 8-entity, 9-relationship
+[tests/fixtures/GraphAnimationDemo.toml](tests/fixtures/GraphAnimationDemo.toml),
+and the large stress graph. Use `--graph PATH` to select a fixture explicitly.
 It requires **Python 3.11+**, no pip packages. StructView recognizes the fixture's
 `[[entities]]` and `[[relations]]` arrays as an explicit node/link graph.
 See the [Russian](tests/README.md) or

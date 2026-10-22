@@ -109,6 +109,15 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
             "16–256 printable ASCII characters, no spaces. Changes apply immediately; reconnect clients with the new token. Tokens are not saved."
         }
         TextKey::GraphApiTokenDone => "Token operation completed",
+        TextKey::GraphApiActiveToken => "Active token (read-only)",
+        TextKey::GraphApiConnections => "Active connections",
+        TextKey::GraphApiQueue => "Queued requests",
+        TextKey::GraphApiSuccessfulRequests => "Successful requests",
+        TextKey::GraphApiFailedRequests => "Failed requests",
+        TextKey::GraphApiRecentRequests => "Recent API requests",
+        TextKey::GraphApiNoRequests => "No requests received yet",
+        TextKey::GraphApiRequestStatus => "HTTP status",
+        TextKey::GraphApiRequestDuration => "Duration",
         TextKey::GraphStatusWaiting => "Waiting",
         TextKey::GraphStatusRunning => "Running",
         TextKey::GraphStatusSuccess => "Success",
@@ -120,6 +129,8 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphStatusStage => "Stage",
         TextKey::GraphJobs => "Diagram tasks",
         TextKey::GraphJobFocus => "Focus this job's location",
+        TextKey::GraphJobRemove => "Remove visual status",
+        TextKey::GraphJobsClear => "Clear displayed tasks",
         TextKey::GraphAnimationStop => "Stop animation",
         TextKey::GraphApiHint => {
             "127.0.0.1 by default. HTTP/HTTPS, authentication required. Graph data and layout stay unchanged."
@@ -204,6 +215,42 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::HelpPinch => "Pinch",
         TextKey::HelpClick => "Click",
         TextKey::HelpHover => "Hover",
+        TextKey::HelpGraphApiSupport => "Graph API: supported graph types",
+        TextKey::HelpGraphApiTypesHint => {
+            "GET /v1/graph reports graph or flowchart. Node IDs and link indexes come from that descriptor."
+        }
+        TextKey::HelpGraphApiTypeGraph => {
+            "Relationship graph; nodes and directed, undirected, or bidirectional links."
+        }
+        TextKey::HelpGraphApiTypeFlowchart => {
+            "Flowchart; nodes may include one of the shape IDs below."
+        }
+        TextKey::HelpFlowchartShapeIds => "Flowchart shape IDs",
+        TextKey::HelpFlowchartShapeId => "ID",
+        TextKey::HelpOpenApiTitle => "OpenAPI specification (server is running)",
+        TextKey::HelpOpenApiDescription => {
+            "Browse the available API operations below. Every request requires the active bearer token."
+        }
+        TextKey::HelpOpenApiServer => "Server URL",
+        TextKey::HelpOpenApiVersion => "OpenAPI version",
+        TextKey::HelpOpenApiAuthentication => "Authentication",
+        TextKey::HelpOpenApiBearerAuth => "Bearer token required",
+        TextKey::HelpOpenApiEndpoints => "Available operations",
+        TextKey::HelpOpenApiRequestBody => "Request body",
+        TextKey::HelpOpenApiAnimationScenario => "AnimationScenario (JSON)",
+        TextKey::HelpOpenApiRealtimeUpdate => "RealtimeUpdate (JSON)",
+        TextKey::HelpOpenApiJobsUpdate => "JobsUpdate (JSON)",
+        TextKey::HelpOpenApiRawDocument => "Raw OpenAPI JSON",
+        TextKey::HelpOpenApiOpenRawDocument => "Open full OpenAPI JSON in a large window",
+        TextKey::HelpOpenApiGetCapabilities => "View supported features and limits.",
+        TextKey::HelpOpenApiGetGraph => "Read the active graph descriptor.",
+        TextKey::HelpOpenApiGetAnimation => "View the current animation state.",
+        TextKey::HelpOpenApiPostAnimation => "Start an animation scenario.",
+        TextKey::HelpOpenApiStopAnimation => "Stop animation and clear its visual layers.",
+        TextKey::HelpOpenApiGetRealtime => "View persistent realtime elements and markers.",
+        TextKey::HelpOpenApiPostRealtime => "Apply realtime commands as one update.",
+        TextKey::HelpOpenApiGetJobs => "View visual task statuses.",
+        TextKey::HelpOpenApiPostJobs => "Apply visual task status commands.",
         TextKey::BuildInformation => "Build information",
         TextKey::BuildTime => "Build time",
         TextKey::TargetPlatform => "Target platform",

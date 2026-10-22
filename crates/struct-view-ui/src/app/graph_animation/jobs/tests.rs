@@ -163,7 +163,7 @@ fn node_only_job_has_progress_and_list_exposes_label_stage_location_and_id() {
     assert_eq!(state.descriptor(0.0)["jobs"][0]["current_percent"], 45.0);
     let ctx = egui::Context::default();
     let output = ctx.run_ui(egui::RawInput::default(), |ui| {
-        super::show_jobs(ui, &state, &graph, Locale::English);
+        super::show_jobs(ui, &mut state, &graph, Locale::English);
     });
     let text = output
         .shapes
@@ -225,10 +225,77 @@ fn node_only_job_has_progress_and_list_exposes_label_stage_location_and_id() {
             ..Default::default()
         },
         |ui| {
-            focus = super::show_jobs(ui, &state, &graph, Locale::English);
+            focus = super::show_jobs(ui, &mut state, &graph, Locale::English).focus;
         },
     );
     assert_eq!(focus, Some(0));
+    output.drop_without_applying_deltas();
+}
+
+#[test]
+fn task_list_clear_button_removes_jobs_and_their_visuals() {
+    let graph = graph();
+    let mut state = JobsState::apply(
+        None,
+        update(vec![job("one", "Sending", Some(0), 45.0)]),
+        &graph,
+        0.0,
+    )
+    .unwrap();
+    let ctx = egui::Context::default();
+    let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        super::show_jobs(ui, &mut state, &graph, Locale::English);
+    });
+    let button_labels = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(button_labels.iter().any(|label| label == "a -> b"));
+    assert!(button_labels.iter().all(|label| !label.contains('→')));
+    let target = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == "Clear displayed tasks" => {
+                Some(text.pos + text.galley.size() * 0.5)
+            }
+            _ => None,
+        })
+        .expect("clear tasks button");
+    output.drop_without_applying_deltas();
+    let mut changed = false;
+    let output = ctx.run_ui(
+        egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(target),
+                egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            changed = super::show_jobs(ui, &mut state, &graph, Locale::English).changed;
+        },
+    );
+    assert!(changed);
+    assert!(state.jobs.is_empty());
+    let visuals = state.visuals.descriptor(0.0, &graph);
+    assert!(visuals["elements"].as_array().unwrap().is_empty());
+    assert!(visuals["markers"].as_array().unwrap().is_empty());
     output.drop_without_applying_deltas();
 }
 

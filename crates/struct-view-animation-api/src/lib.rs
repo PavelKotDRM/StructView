@@ -2,4 +2,7 @@
 
 pub mod server;
 
-pub use server::{AnimationApiServer, ApiOperation, ApiReply, ApiRequest, ServerOptions, TlsFiles};
+pub use server::{
+    AnimationApiServer, ApiOperation, ApiReply, ApiRequest, ApiRequestRecord, ApiServerStats,
+    ServerOptions, TlsFiles,
+};

@@ -19,6 +19,11 @@ import demo_graph_walkthrough as walkthrough
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "FlowchartAnimationDemo.toml"
+BUILTIN_FIXTURES = (
+    FIXTURE,
+    FIXTURE.with_name("GraphAnimationDemo.toml"),
+    FIXTURE.with_name("Graph.toml"),
+)
 COLORS = ([40, 200, 255], [255, 180, 40], [170, 120, 255], [70, 210, 110])
 
 
@@ -104,6 +109,24 @@ def fixture_nodes(fixture):
 
 def fixture_links(fixture):
     return fixture["edges"] if "edges" in fixture else fixture["relations"]
+
+
+def load_fixture(path):
+    with path.open("rb") as source:
+        return tomllib.load(source)
+
+
+def matching_fixture(descriptor, paths=BUILTIN_FIXTURES):
+    for path in paths:
+        fixture = load_fixture(path)
+        try:
+            map_graph(fixture, descriptor)
+        except ValueError:
+            continue
+        return fixture
+    raise ValueError(
+        "The active graph does not match a bundled demo fixture; pass its TOML file with --graph"
+    )
 
 
 class Cancelled(Exception):
@@ -559,8 +582,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api", required=True, help="HTTP/HTTPS URL displayed by StructView")
     parser.add_argument("--ca", help="PEM CA certificate for internal HTTPS; verification stays enabled")
-    parser.add_argument("--graph", type=Path, default=FIXTURE,
-                        help="TOML graph or flowchart fixture to verify against the API")
+    parser.add_argument("--graph", type=Path,
+                        help="TOML graph or flowchart fixture; defaults to auto-detecting the active graph")
     parser.add_argument("--port", type=int, default=8765, help="Local dashboard port; 0 chooses a free port")
     parser.add_argument("--mode", choices=("both", "scenario", "realtime"), default="both")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback multiplier, 0.1..10")
@@ -576,10 +599,13 @@ def main():
     server = None
     try:
         token = os.environ.get("STRUCTVIEW_API_TOKEN") or getpass.getpass("StructView Bearer token: ")
-        with args.graph.open("rb") as source:
-            fixture = tomllib.load(source)
         api = Api(args.api, token, args.ca)
-        map_graph(fixture, api.request("/v1/graph"))
+        graph_descriptor = api.request("/v1/graph")
+        if args.graph is None:
+            fixture = matching_fixture(graph_descriptor)
+        else:
+            fixture = load_fixture(args.graph)
+            map_graph(fixture, graph_descriptor)
         demo = Demo(api, fixture, args.speed, args.step_by_step)
         if not args.once:
             server = DemoServer(args.port, demo)

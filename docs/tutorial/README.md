@@ -4,6 +4,7 @@ Choose a language / Выберите язык:
 
 - [English](en.md)
 - [Русский](ru.md)
+- [API-сервер: управление графом из скрипта](api-server.ru.md)
 
 For the feature overview and complete reference, see the
 [English README](../../README.md) or the

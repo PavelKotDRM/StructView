@@ -109,6 +109,15 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
             "16–256 печатных ASCII-символов без пробелов. Смена применяется сразу; подключите клиентов с новым токеном. Токены не сохраняются."
         }
         TextKey::GraphApiTokenDone => "Операция с токеном выполнена",
+        TextKey::GraphApiActiveToken => "Текущий токен (только чтение)",
+        TextKey::GraphApiConnections => "Активные соединения",
+        TextKey::GraphApiQueue => "Запросов в очереди",
+        TextKey::GraphApiSuccessfulRequests => "Успешные запросы",
+        TextKey::GraphApiFailedRequests => "Ошибочные запросы",
+        TextKey::GraphApiRecentRequests => "Последние запросы API",
+        TextKey::GraphApiNoRequests => "Запросов пока не было",
+        TextKey::GraphApiRequestStatus => "HTTP-статус",
+        TextKey::GraphApiRequestDuration => "Длительность",
         TextKey::GraphStatusWaiting => "Ожидание",
         TextKey::GraphStatusRunning => "Выполнение",
         TextKey::GraphStatusSuccess => "Успех",
@@ -120,6 +129,8 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphStatusStage => "Этап",
         TextKey::GraphJobs => "Задачи схемы",
         TextKey::GraphJobFocus => "Перейти к месту выполнения задания",
+        TextKey::GraphJobRemove => "Убрать визуальный статус",
+        TextKey::GraphJobsClear => "Убрать все статусы",
         TextKey::GraphAnimationStop => "Остановить анимацию",
         TextKey::GraphApiHint => {
             "По умолчанию только 127.0.0.1. HTTP/HTTPS, обязательный токен. Данные и размещение графа не изменяются."
@@ -204,6 +215,42 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::HelpPinch => "Жест",
         TextKey::HelpClick => "Клик",
         TextKey::HelpHover => "Наведение",
+        TextKey::HelpGraphApiSupport => "API графа: поддерживаемые типы",
+        TextKey::HelpGraphApiTypesHint => {
+            "GET /v1/graph возвращает тип graph или flowchart. ID узлов и индексы связей берутся из этого ответа."
+        }
+        TextKey::HelpGraphApiTypeGraph => {
+            "Граф связей: узлы и направленные, ненаправленные или двунаправленные связи."
+        }
+        TextKey::HelpGraphApiTypeFlowchart => {
+            "Блок-схема: у узлов могут быть указаны ID фигур из списка ниже."
+        }
+        TextKey::HelpFlowchartShapeIds => "ID фигур блок-схем",
+        TextKey::HelpFlowchartShapeId => "ID",
+        TextKey::HelpOpenApiTitle => "Спецификация OpenAPI (сервер запущен)",
+        TextKey::HelpOpenApiDescription => {
+            "Ниже перечислены доступные операции API. Для каждого запроса требуется активный bearer-токен."
+        }
+        TextKey::HelpOpenApiServer => "Адрес сервера",
+        TextKey::HelpOpenApiVersion => "Версия OpenAPI",
+        TextKey::HelpOpenApiAuthentication => "Аутентификация",
+        TextKey::HelpOpenApiBearerAuth => "Требуется bearer-токен",
+        TextKey::HelpOpenApiEndpoints => "Доступные операции",
+        TextKey::HelpOpenApiRequestBody => "Тело запроса",
+        TextKey::HelpOpenApiAnimationScenario => "AnimationScenario (JSON)",
+        TextKey::HelpOpenApiRealtimeUpdate => "RealtimeUpdate (JSON)",
+        TextKey::HelpOpenApiJobsUpdate => "JobsUpdate (JSON)",
+        TextKey::HelpOpenApiRawDocument => "Исходный OpenAPI JSON",
+        TextKey::HelpOpenApiOpenRawDocument => "Открыть полный OpenAPI JSON в большом окне",
+        TextKey::HelpOpenApiGetCapabilities => "Получить возможности API и ограничения.",
+        TextKey::HelpOpenApiGetGraph => "Получить описание активного графа.",
+        TextKey::HelpOpenApiGetAnimation => "Посмотреть текущее состояние анимации.",
+        TextKey::HelpOpenApiPostAnimation => "Запустить сценарий анимации.",
+        TextKey::HelpOpenApiStopAnimation => "Остановить анимацию и очистить её визуальные слои.",
+        TextKey::HelpOpenApiGetRealtime => "Посмотреть постоянные realtime-элементы и маркеры.",
+        TextKey::HelpOpenApiPostRealtime => "Применить realtime-команды одним обновлением.",
+        TextKey::HelpOpenApiGetJobs => "Посмотреть статусы визуальных задач.",
+        TextKey::HelpOpenApiPostJobs => "Применить команды изменения статусов задач.",
         TextKey::BuildInformation => "Информация о сборке",
         TextKey::BuildTime => "Время сборки",
         TextKey::TargetPlatform => "Целевая платформа",

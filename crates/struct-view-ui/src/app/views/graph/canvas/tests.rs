@@ -212,6 +212,51 @@ fn flowchart_canvas_keeps_long_labels_and_wraps_them_into_the_node() {
 }
 
 #[test]
+fn subprocess_side_lines_scale_with_the_node() {
+    let root = struct_view_core::parser::parse_json(
+        r#"{"graph":{"type":"flowchart"},"nodes":[{"id":"subprocess","label":"Subprocess","shape":"subprocess"}],"edges":[]}"#,
+    )
+    .unwrap();
+    let graph = build_relationship_graph(&root);
+    let routing = build_graph_routing_layout(&graph);
+
+    for zoom in [0.5, 1.0, 2.0] {
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::unique(("graph-interaction", routing.graph_fingerprint)),
+                interaction::GraphInteractionState {
+                    zoom,
+                    ..Default::default()
+                },
+            );
+        });
+        let output = render(&ctx, &graph, &routing, Vec::new());
+        let side_lines = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::LineSegment { points, .. }
+                    if (points[0].x - points[1].x).abs() < f32::EPSILON
+                        && (points[0].y - points[1].y).abs() == routing.node_sizes[0].y * zoom =>
+                {
+                    Some(points[0].x)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(side_lines.len(), 2);
+        let spacing = (side_lines[1] - side_lines[0]).abs();
+        assert!(
+            (spacing - (routing.node_sizes[0].x - 20.0) * zoom).abs() < 0.01,
+            "side line inset should scale with node zoom {zoom}: spacing was {spacing}"
+        );
+        output.drop_without_applying_deltas();
+    }
+}
+
+#[test]
 fn selection_markers_follow_flowchart_node_contours() {
     use crate::app::visualization::FlowchartNodeShape as Shape;
 
@@ -231,6 +276,60 @@ fn selection_markers_follow_flowchart_node_contours() {
     assert_eq!(preparation, Pos2::new(176.0, -3.0));
     assert!(terminator.x < process.x);
     assert!(terminator.y > process.y);
+}
+
+#[test]
+fn all_flowchart_shape_details_scale_proportionally() {
+    use crate::app::visualization::FlowchartNodeShape as Shape;
+
+    let shapes = [
+        Shape::Process,
+        Shape::Terminator,
+        Shape::Decision,
+        Shape::InputOutput,
+        Shape::Preparation,
+        Shape::Subprocess,
+        Shape::Database,
+        Shape::Connector,
+    ];
+    let base_rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 80.0));
+    let center = base_rect.center();
+    let base_radii = [
+        (Shape::Process, 6.0),
+        (Shape::Terminator, 40.0),
+        (Shape::Decision, 6.0),
+        (Shape::InputOutput, 6.0),
+        (Shape::Preparation, 6.0),
+        (Shape::Subprocess, 6.0),
+        (Shape::Database, 14.0),
+        (Shape::Connector, 40.0),
+    ];
+
+    for zoom in [0.5, 1.0, 2.0, 4.0] {
+        let scaled_rect = egui::Rect::from_center_size(center, base_rect.size() * zoom);
+        for shape in shapes {
+            let base_marker =
+                super::render::graph_selection_marker_center(base_rect, Some(shape), 1.0);
+            let scaled_marker =
+                super::render::graph_selection_marker_center(scaled_rect, Some(shape), zoom);
+            let expected_marker = center + (base_marker - center) * zoom;
+            assert!(
+                scaled_marker.distance(expected_marker) < 0.01,
+                "{shape:?} marker should scale proportionally at {zoom}x"
+            );
+
+            let expected_radius = base_radii
+                .iter()
+                .find_map(|(candidate, radius)| (*candidate == shape).then_some(radius * zoom))
+                .unwrap();
+            let radius =
+                super::render::flowchart_node_corner_radius(scaled_rect, Some(shape), zoom);
+            assert!(
+                (f32::from(radius) - expected_radius).abs() < 0.51,
+                "{shape:?} corner radius should scale proportionally at {zoom}x"
+            );
+        }
+    }
 }
 
 fn state(ctx: &egui::Context, routing: &GraphRoutingLayout) -> GraphInteractionState {
