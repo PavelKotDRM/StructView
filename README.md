@@ -317,6 +317,8 @@ The interface provides:
   with a transparent canvas or dark styling with an opaque dark canvas,
   independently of the application theme. Relationship labels are exported
   in full, with callouts and image bounds adjusted to fit the complete text.
+  On-screen and exported callout legends use aligned rows and columns, with numbered markers
+  in a separate slot before each label, regardless of label length.
   SVG preserves vector shapes and text. Large PNG images are automatically
   downscaled to at most 16 million pixels to bound memory use, preserving
   the entire graph, aspect ratio, and selected background style. Small images

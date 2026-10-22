@@ -7,6 +7,7 @@ pub(in crate::app::views::graph) struct GraphEdgeLabelLayout {
     pub(in crate::app::views::graph) background: egui::Rect,
     pub(in crate::app::views::graph) leader: Option<[Pos2; 2]>,
     pub(in crate::app::views::graph) reference: Option<(usize, Pos2)>,
+    pub(in crate::app::views::graph) callout_marker: Option<Pos2>,
 }
 
 pub(in crate::app::views::graph) fn graph_reference_radius(number: usize) -> f32 {
@@ -16,10 +17,12 @@ pub(in crate::app::views::graph) fn graph_reference_radius(number: usize) -> f32
 
 impl GraphEdgeLabelLayout {
     pub(in crate::app::views::graph) fn reference_center(&self, radius: f32) -> Pos2 {
-        Pos2::new(
-            self.background.right() - radius - 3.0,
-            self.background.center().y,
-        )
+        self.callout_marker.unwrap_or_else(|| {
+            Pos2::new(
+                self.background.right() - radius - 3.0,
+                self.background.center().y,
+            )
+        })
     }
 }
 
@@ -236,6 +239,7 @@ pub(in crate::app::views::graph) fn graph_edge_label_layout(
         background,
         leader,
         reference: None,
+        callout_marker: None,
     }
 }
 

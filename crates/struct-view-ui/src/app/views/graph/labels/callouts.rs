@@ -38,16 +38,33 @@ pub(in crate::app::views::graph) fn graph_edge_label_callout_at(
     );
     let background =
         aligned_label_rect(position, size, Align2::LEFT_CENTER, reference_radius).expand(3.0);
-    Some(graph_edge_label_layout(
+    Some(graph_edge_label_callout_layout(
         text,
-        position,
-        Align2::LEFT_CENTER,
-        background,
         points,
+        background,
+        reference_radius,
     ))
 }
 
-pub(in crate::app::views::graph) fn graph_edge_label_callout_text(
+pub(in crate::app::views::graph) fn graph_edge_label_callout_layout(
+    text: String,
+    points: &[Pos2],
+    background: egui::Rect,
+    reference_radius: f32,
+) -> GraphEdgeLabelLayout {
+    let marker = Pos2::new(
+        background.left() + 3.0 + reference_radius,
+        background.center().y,
+    );
+    let position = marker + Vec2::new(reference_radius + 8.0, 0.0);
+    let mut label =
+        graph_edge_label_layout(text, position, Align2::LEFT_CENTER, background, points);
+    label.callout_marker = Some(marker);
+    label
+}
+
+#[cfg(test)]
+fn graph_edge_label_callout_text(
     text: String,
     points: &[Pos2],
     canvas: egui::Rect,

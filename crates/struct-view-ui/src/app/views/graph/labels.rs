@@ -5,7 +5,7 @@ mod placement;
 #[cfg(test)]
 pub(super) use callouts::graph_edge_label_callout;
 pub(super) use callouts::{
-    EdgeLabelPlacementContext, graph_edge_label_callout_at, graph_edge_label_callout_text,
+    EdgeLabelPlacementContext, graph_edge_label_callout_at, graph_edge_label_callout_layout,
     place_edge_label,
 };
 pub(super) use leaders::resolve_graph_label_leaders;

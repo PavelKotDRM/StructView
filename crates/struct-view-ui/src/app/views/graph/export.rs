@@ -194,6 +194,14 @@ fn graph_svg_localized(
         let mut occupied = Vec::new();
         let reference_radius = graph_reference_radius(graph.edges.len());
         let mut content_size = routing.content_size;
+        let connected_bounds = graph.edges.iter().fold(egui::Rect::NOTHING, |bounds, edge| {
+            bounds.union(node_rects[edge.source]).union(node_rects[edge.target])
+        });
+        let connected_bounds = routing.edge_paths.iter().flatten().fold(connected_bounds, |mut bounds, &point| {
+            bounds.extend_with(point);
+            bounds
+        });
+        let mut callouts = Vec::new();
         let mut labels = graph.edges.iter().enumerate().map(|(index, edge)| {
             if edge.label.trim().is_empty() { return None; }
             let full_text = single_line_text(&edge.label).into_owned();
@@ -206,6 +214,9 @@ fn graph_svg_localized(
                 reference_radius,
             };
             let local = routing.edge_labels[index].as_ref().and_then(|label| {
+                if label.background.left() > connected_bounds.right() + 24.0 {
+                    return None;
+                }
                 place_edge_label(
                     &full_text,
                     label.position,
@@ -214,13 +225,42 @@ fn graph_svg_localized(
                 )
                     .map(|background| graph_edge_label_layout(full_text.clone(), label.position, label.alignment, background, route))
             });
-            let label = local.unwrap_or_else(|| graph_edge_label_callout_text(full_text, route, canvas, &occupied, reference_radius));
+            let Some(label) = local else {
+                callouts.push((index, full_text));
+                return None;
+            };
             occupied.push(label.background);
-            content_size.x = content_size.x.max(label.background.right() + 24.0);
-            content_size.y = content_size.y.max(label.background.bottom() + 24.0);
             Some(label)
         }).collect::<Vec<_>>();
+        if !callouts.is_empty() {
+            let label_height = GRAPH_EDGE_LABEL_HEIGHT.max(reference_radius * 2.0);
+            let row_height = label_height + 9.0;
+            let max_rows = ((connected_bounds.bottom() - 24.0) / row_height).floor().max(1.0) as usize;
+            let columns = callouts.len().div_ceil(max_rows);
+            let text_width = callouts.iter().map(|(_, text)| {
+                painter.layout_no_wrap(text.clone(), FontId::proportional(12.0), colors.key).size().x
+                    .max(text.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH)
+            }).fold(0.0_f32, f32::max);
+            let marker_width = reference_radius * 2.0 + 8.0;
+            let column_width = text_width + marker_width + 6.0;
+            let left = node_rects.iter().chain(&occupied).map(egui::Rect::right)
+                .fold(connected_bounds.right(), f32::max) + 24.0;
+            for (slot, (index, text)) in callouts.into_iter().enumerate() {
+                let min = Pos2::new(
+                    left + (slot % columns) as f32 * (column_width + 12.0),
+                    24.0 + (slot / columns) as f32 * row_height,
+                );
+                let background = egui::Rect::from_min_size(min, Vec2::new(column_width, label_height + 6.0));
+                labels[index] = Some(graph_edge_label_callout_layout(
+                    text, &routing.edge_paths[index], background, reference_radius,
+                ));
+            }
+        }
         resolve_graph_label_leaders(&mut labels, &node_rects, &routing.edge_paths);
+        for label in labels.iter().flatten() {
+            content_size.x = content_size.x.max(label.background.right() + 24.0);
+            content_size.y = content_size.y.max(label.background.bottom() + 24.0);
+        }
         for (number, anchor) in labels.iter().flatten().filter_map(|label| label.reference) {
             let radius = graph_reference_radius(number);
             content_size.x = content_size.x.max(anchor.x + radius + 24.0);
@@ -292,7 +332,8 @@ fn graph_svg_localized(
             text(&mut svg, label.position, &label.text, 12.0, fill, anchor, "sans-serif");
             if let Some((number, route_anchor)) = label.reference {
                 let radius = graph_reference_radius(number);
-                for center in [route_anchor, label.reference_center(radius)] {
+                let label_center = label.reference_center(radius);
+                for center in [route_anchor, label_center] {
                     writeln!(svg, r#"<circle cx="{}" cy="{}" r="{radius}" fill="{}" stroke="{}"/>"#,
                         center.x, center.y, color(visuals.panel_fill), color(fill)).unwrap();
                     text(&mut svg, center, &number.to_string(), 10.0, fill, "middle", "sans-serif");
@@ -472,6 +513,153 @@ mod tests {
             u32::from_be_bytes(png[20..24].try_into().unwrap())
                 >= routing.content_size.y.ceil() as u32
         );
+    }
+
+    #[test]
+    fn exported_legend_aligns_markers_and_full_labels_in_single_and_multiple_columns() {
+        let attribute = |line: &str, name: &str| -> f32 {
+            line.split_once(&format!(r#"{name}=""#))
+                .unwrap()
+                .1
+                .split('"')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        let root = struct_view_core::parser::parse_json(
+            r#"[{"id":"source","depends_on":"target"},{"id":"target"},{"id":"isolated"}]"#,
+        )
+        .unwrap();
+        for count in [4, 105] {
+            let mut graph = build_relationship_graph(&root);
+            let edge = graph.edges[0].clone();
+            graph.edges = (0..count)
+                .map(|index| {
+                    let mut edge = edge.clone();
+                    edge.label = format!("legend_{index}_{}", "W<&".repeat(index % 5 + 1));
+                    edge
+                })
+                .collect();
+            let mut routing = build_graph_routing_layout(&graph);
+            routing.node_positions[edge.source].y = 200.0;
+            routing.node_positions[edge.target].y = 400.0;
+            routing.content_size.y = routing.content_size.y.max(450.0);
+            routing.edge_paths = vec![vec![Pos2::new(40.0, 100.0), Pos2::new(240.0, 100.0)]; count];
+            // Force export fallback placement rather than reusing the on-screen legend.
+            routing.edge_labels = (0..count).map(|_| None).collect();
+            for style in [
+                GraphExportStyle::LightTransparent,
+                GraphExportStyle::DarkOpaque,
+            ] {
+                let svg = String::from_utf8(
+                    render_graph_image(
+                        &graph,
+                        &routing,
+                        GraphExportFormat::Svg,
+                        style,
+                        Locale::Russian,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+                let lines = svg.lines().collect::<Vec<_>>();
+                let entries = lines
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, line)| line.starts_with("<text ") && line.contains(">legend_"))
+                    .map(|(index, line)| {
+                        let rect = lines[index - 1];
+                        let marker = lines[index + 3];
+                        assert!(rect.starts_with("<rect "));
+                        assert!(marker.starts_with("<circle "));
+                        (
+                            Pos2::new(attribute(line, "x"), attribute(line, "y") - 12.0 * 0.35),
+                            Pos2::new(attribute(marker, "cx"), attribute(marker, "cy")),
+                            egui::Rect::from_min_size(
+                                Pos2::new(attribute(rect, "x"), attribute(rect, "y")),
+                                Vec2::new(attribute(rect, "width"), attribute(rect, "height")),
+                            ),
+                            attribute(marker, "r"),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(entries.len(), count);
+                let radius = graph_reference_radius(count);
+                let gap = radius + 8.0;
+                for (index, (text, marker, background, actual_radius)) in entries.iter().enumerate()
+                {
+                    assert!((text.y - marker.y).abs() < 0.001);
+                    assert!((text.x - marker.x - gap).abs() < 0.001);
+                    assert!(background.contains_rect(egui::Rect::from_center_size(
+                        *marker,
+                        Vec2::splat(*actual_radius * 2.0),
+                    )));
+                    assert!(
+                        svg.contains(&format!(">{}</text>", xml_text(&graph.edges[index].label)))
+                    );
+                    assert!(routing.node_positions.iter().zip(&routing.node_sizes).all(
+                        |(&center, &size)| {
+                            !background.intersects(egui::Rect::from_center_size(center, size))
+                        }
+                    ));
+                    for (other_text, other_marker, other_background, _) in &entries[..index] {
+                        assert!(!background.intersects(*other_background));
+                        assert!((background.size() - other_background.size()).length() < 0.01);
+                        if text.x == other_text.x {
+                            assert_eq!(marker.x, other_marker.x);
+                        }
+                        if background.top() == other_background.top() {
+                            assert_eq!(text.y, other_text.y);
+                            assert_eq!(marker.y, other_marker.y);
+                        }
+                    }
+                }
+                let mut columns = entries.iter().map(|entry| entry.0.x).collect::<Vec<_>>();
+                columns.sort_by(f32::total_cmp);
+                columns.dedup();
+                assert_eq!(columns.len() == 1, count == 4);
+                assert!(entries.iter().any(|entry| entry.0.y != entries[0].0.y));
+                if count > 100 {
+                    assert_eq!(svg.matches(">100</text>").count(), 2);
+                }
+                let png = render_graph_image(
+                    &graph,
+                    &routing,
+                    GraphExportFormat::Png,
+                    style,
+                    Locale::Russian,
+                )
+                .unwrap();
+                let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+                let (width, height) = graph_png_dimensions(
+                    attribute(lines[0], "width") as u32,
+                    attribute(lines[0], "height") as u32,
+                );
+                assert_eq!((pixmap.width(), pixmap.height()), (width, height));
+                let scale = (width as f32 / attribute(lines[0], "width"))
+                    .min(height as f32 / attribute(lines[0], "height"));
+                let dark_background = egui::Visuals::dark().panel_fill;
+                for (_, marker, _, radius) in &entries {
+                    let x = (marker.x * scale).round() as u32;
+                    let y = ((marker.y - radius) * scale).round() as u32;
+                    assert!(
+                        (x - 1..=x + 1).any(|x| (y - 1..=y + 1).any(|y| {
+                            let pixel = pixmap.pixel(x, y).unwrap();
+                            pixel.alpha() > 0
+                                && (style == GraphExportStyle::LightTransparent
+                                    || (pixel.red(), pixel.green(), pixel.blue())
+                                        != (
+                                            dark_background.r(),
+                                            dark_background.g(),
+                                            dark_background.b(),
+                                        ))
+                        })),
+                        "PNG must contain the marker at the SVG grid position"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -616,6 +616,16 @@ pub(super) fn build_graph_routing_layout_with_progress(
             position,
             reference_radius,
         )
+        .map(|label| {
+            let mut background = label.background;
+            background.max.x = background.min.x + column_width - 12.0;
+            graph_edge_label_callout_layout(
+                label.text,
+                &routed_edges[edge_index],
+                background,
+                reference_radius,
+            )
+        })
         .inspect(|label| {
             content_size.x = content_size.x.max(label.background.right() + 24.0);
             content_size.y = content_size.y.max(label.background.bottom() + 24.0);

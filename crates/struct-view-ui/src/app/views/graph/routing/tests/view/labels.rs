@@ -351,6 +351,23 @@ fn three_digit_references_are_rendered_inside_enlarged_circles() {
             assert!(corner.distance(circle.center) + 0.5 <= circle.radius);
         }
     }
+    let mut rendered_labels = 0;
+    for (index, shape) in output.shapes.iter().enumerate() {
+        let egui::Shape::Text(text) = &shape.shape else {
+            continue;
+        };
+        if text.galley.job.text != "relationship_id_00" {
+            continue;
+        }
+        let egui::Shape::Circle(circle) = &output.shapes[index + 4].shape else {
+            panic!("Legend text must be followed by its reference marker");
+        };
+        let text_rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+        assert!((text_rect.center().y - circle.center.y).abs() < 1.0);
+        assert!(text_rect.left() >= circle.center.x + circle.radius + 4.0);
+        rendered_labels += 1;
+    }
+    assert_eq!(rendered_labels, graph.edges.len());
     output.drop_without_applying_deltas();
 }
 
@@ -381,11 +398,65 @@ fn numbered_reference_circles_fit_text_and_reserved_label_space() {
             assert!(label.background.contains_rect(circle.expand(0.5)));
             let text_right =
                 label.position.x + label.text.chars().count() as f32 * GRAPH_EDGE_LABEL_CHAR_WIDTH;
-            assert!(text_right + 4.0 <= circle.left());
+            assert!(circle.right() + 4.0 <= label.position.x);
+            assert!(text_right <= label.background.right() - 3.0);
         }
         assert!(graph_reference_radius(100) > graph_reference_radius(99));
     });
     output.drop_without_applying_deltas();
+}
+
+#[test]
+fn canvas_legend_aligns_variable_length_labels_and_markers_across_columns() {
+    let mut graph = layout_graph(r#"[{"id":"source","depends_on":"target"},{"id":"target"}]"#);
+    let edge = graph.edges[0].clone();
+    graph.edges = (0..24)
+        .map(|index| {
+            let mut edge = edge.clone();
+            edge.label = format!("rel_{index:02}_{}", "W".repeat(index % 10 + 1));
+            edge
+        })
+        .collect();
+    let layout = build_graph_routing_layout(&graph);
+    let callouts = layout
+        .edge_labels
+        .iter()
+        .flatten()
+        .filter(|label| label.callout_marker.is_some())
+        .collect::<Vec<_>>();
+    assert!(callouts.len() > 1);
+    let radius = graph_reference_radius(graph.edges.len());
+    for (index, label) in callouts.iter().enumerate() {
+        let marker = label.reference_center(radius);
+        assert!((marker.y - label.position.y).abs() < 0.001);
+        assert!((label.position.x - marker.x - radius - 8.0).abs() < 0.001);
+        assert!(label.background.contains_rect(egui::Rect::from_center_size(
+            marker,
+            Vec2::splat(radius * 2.0),
+        )));
+        for other in &callouts[..index] {
+            assert!(!label.background.intersects(other.background));
+            assert!((label.background.size() - other.background.size()).length() < 0.01);
+            if label.background.left() == other.background.left() {
+                assert_eq!(label.position.x, other.position.x);
+                assert_eq!(marker.x, other.reference_center(radius).x);
+            }
+            if label.background.top() == other.background.top() {
+                assert_eq!(label.position.y, other.position.y);
+                assert_eq!(marker.y, other.reference_center(radius).y);
+            }
+        }
+    }
+    assert!(
+        callouts
+            .iter()
+            .any(|label| label.position.x != callouts[0].position.x)
+    );
+    assert!(
+        callouts
+            .iter()
+            .any(|label| label.position.y != callouts[0].position.y)
+    );
 }
 
 #[test]
