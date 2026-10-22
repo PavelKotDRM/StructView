@@ -225,3 +225,199 @@ fn graph_editor_copy_preserves_imported_weights_and_ungrouped_layout() {
     assert_eq!(copied_graph.edges.len(), 1);
     assert_eq!(copied_graph.edges[0].label.matches("2.5 ms").count(), 1);
 }
+
+#[test]
+fn graph_editor_copy_preserves_flowchart_type_and_node_shapes() {
+    let (root, _) = parse_data(
+        r##"{
+            "graph":{"type":"flowchart","name":"Approval"},
+            "nodes":[
+                {"id":"start","label":"Start","shape":"terminator"},
+                {"id":"check","label":"Valid?","shape":"decision"},
+                {"id":"input","label":"Amount","attributes":{"shape":"input_output","color":"#336699"}}
+            ],
+            "edges":[{"source":"start","target":"check","label":"continue"}]
+        }"##,
+        Some(DataFormat::Json),
+    )
+    .unwrap();
+    let graph = try_build_relationship_graph(&root).unwrap();
+    let copy = GraphDocument::from_graph(&root, &graph).unwrap();
+
+    assert!(copy.is_flowchart());
+    assert_eq!(copy.metadata["type"], "flowchart_multigraph");
+    assert_eq!(
+        copy.nodes[0]["attributes"]["shape"].as_str(),
+        Some("terminator")
+    );
+    assert_eq!(
+        copy.nodes[2]["attributes"]["shape"].as_str(),
+        Some("input_output")
+    );
+    assert_eq!(copy.nodes[2]["attributes"]["color"], "#336699");
+    let copied_root = copy.to_root().unwrap();
+    let copied_graph = try_build_relationship_graph(&copied_root).unwrap();
+    assert_eq!(
+        copied_graph.nodes[0].flowchart_shape(),
+        Some(crate::app::visualization::FlowchartNodeShape::Terminator)
+    );
+    assert_eq!(
+        copied_graph.nodes[2].flowchart_shape(),
+        Some(crate::app::visualization::FlowchartNodeShape::InputOutput)
+    );
+}
+
+#[test]
+fn creating_editable_graph_copy_keeps_structure_diagram_loaded() {
+    let directory = tempfile::tempdir().unwrap();
+    let structure_path = directory.path().join("structure.json");
+    std::fs::write(&structure_path, r#"{"items":[{"id":"one","name":"One"}]}"#).unwrap();
+
+    let source = parse_data(
+        r#"{"graph":{"type":"flowchart"},"nodes":[{"id":"start","label":"Start","shape":"terminator"}],"edges":[]}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    let mut app = StructViewApp::default();
+    app.open_graph_document(source);
+    app.file_state.path = Some(directory.path().join("graph.json"));
+    app.file_state.saved_content_fingerprint = crate::app::state::document_content_fingerprint(
+        app.root.as_ref().unwrap(),
+        DataFormat::Json,
+    );
+    app.structure_view.open(structure_path);
+    let context = egui::Context::default();
+    let locale = app.locale;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !app.structure_view.has_document() && std::time::Instant::now() < deadline {
+        context
+            .run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| app.structure_view.show(ui, locale, None),
+            )
+            .drop_without_applying_deltas();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(app.structure_view.has_document());
+
+    app.request_graph_copy();
+
+    assert!(app.structure_view.has_document());
+    assert_eq!(app.visualization, VisualizationMode::Graph);
+    assert!(
+        GraphDocument::read(app.root.as_ref().unwrap())
+            .unwrap()
+            .unwrap()
+            .is_flowchart()
+    );
+}
+
+fn open_imported_graph_source(app: &mut StructViewApp) -> JsonNode {
+    let source = parse_data(
+        r#"{"items":[{"id":"one","name":"Start"}]}"#,
+        Some(DataFormat::Json),
+    )
+    .unwrap()
+    .0;
+    app.open_graph_document(source.clone());
+    app.mode = AppMode::View;
+    app.file_state.path = Some(std::path::PathBuf::from("source.json"));
+    app.file_state.saved_content_fingerprint =
+        crate::app::state::document_content_fingerprint(&source, DataFormat::Json);
+    source
+}
+
+fn open_imported_graph(app: &mut StructViewApp) -> JsonNode {
+    let source = open_imported_graph_source(app);
+    app.request_graph_copy();
+    source
+}
+
+#[test]
+fn switching_back_without_edits_restores_the_source_document() {
+    let mut app = StructViewApp::default();
+    let source = open_imported_graph(&mut app);
+
+    assert!(app.generated_graph_copy.is_some());
+    assert!(
+        GraphDocument::read(app.root.as_ref().unwrap())
+            .unwrap()
+            .is_some()
+    );
+
+    app.switch_graph_to_view_mode();
+
+    assert_eq!(
+        node_to_value(app.root.as_ref().unwrap()).unwrap(),
+        node_to_value(&source).unwrap()
+    );
+    assert_eq!(
+        app.file_state.path.as_deref(),
+        Some(std::path::Path::new("source.json"))
+    );
+    assert_eq!(app.mode, AppMode::View);
+    assert!(app.generated_graph_copy.is_none());
+}
+
+#[test]
+fn switching_back_after_edit_keeps_the_generated_copy() {
+    let mut app = StructViewApp::default();
+    open_imported_graph(&mut app);
+    let mut document = GraphDocument::read(app.root.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    document.nodes[0]["label"] = json!("Changed");
+    app.apply_graph_document(document).unwrap();
+
+    app.switch_graph_to_view_mode();
+
+    let document = GraphDocument::read(app.root.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(document.nodes[0]["label"], "Changed");
+    assert_eq!(app.mode, AppMode::View);
+    assert!(app.generated_graph_copy.is_some());
+}
+
+#[test]
+fn graph_copy_reuses_existing_routes_until_the_first_applied_edit() {
+    let mut app = StructViewApp::default();
+    open_imported_graph_source(&mut app);
+    app.mode = AppMode::View;
+    let context = egui::Context::default();
+    app.graph_calculation.ensure_started(
+        app.root.as_ref().unwrap(),
+        app.graph_routing_workers,
+        app.graph_routing_backend,
+        &context,
+    );
+    assert!(app.graph_calculation.has_started());
+
+    app.request_graph_copy();
+
+    assert!(app.graph_calculation.has_started());
+    let mut document = GraphDocument::read(app.root.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    document.nodes[0]["label"] = json!("Changed");
+    app.apply_graph_document(document).unwrap();
+    assert!(!app.graph_calculation.has_started());
+}
+
+#[test]
+fn exiting_with_an_unsaved_generated_graph_copy_requires_confirmation() {
+    let mut app = StructViewApp::default();
+    open_imported_graph(&mut app);
+
+    app.request_exit(&egui::Context::default());
+
+    assert!(app.close_file_confirmation_open);
+    assert!(app.exit_after_close_confirmation);
+}

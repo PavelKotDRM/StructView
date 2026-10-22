@@ -31,6 +31,20 @@ fn graph() -> RelationshipGraph {
 }
 
 #[test]
+fn graph_descriptor_exposes_flowchart_type_and_node_shapes() {
+    let root = parse_json(
+        r#"{"graph":{"type":"flowchart"},"nodes":[{"id":"start","label":"Start","shape":"terminator"},{"id":"decision","label":"Decision","shape":"diamond"}],"edges":[{"source":"start","target":"decision","label":"next"}]}"#,
+    )
+    .unwrap();
+    let graph = try_build_relationship_graph(&root).unwrap();
+    let descriptor = graph_descriptor("flowchart-1", &graph);
+
+    assert_eq!(descriptor["type"], "flowchart");
+    assert_eq!(descriptor["nodes"][0]["shape"], "terminator");
+    assert_eq!(descriptor["nodes"][1]["shape"], "decision");
+}
+
+#[test]
 fn api_payloads_are_schema_validated_before_checking_active_graph_state() {
     assert!(decode_api_operation(ApiOperation::Play(json!([]))).is_err());
     assert!(decode_api_operation(ApiOperation::Realtime(json!({}))).is_err());
@@ -126,6 +140,54 @@ fn compact_animation_demo_fixture_builds_the_expected_graph() {
     assert!(graph.edges.iter().any(|edge| {
         graph.nodes[edge.source].id == "order" && graph.nodes[edge.target].id == "payment"
     }));
+}
+
+#[test]
+fn flowchart_animation_demo_fixture_is_exposed_to_the_api_with_all_shapes() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("fixtures")
+        .join("FlowchartAnimationDemo.toml");
+    let input = std::fs::read_to_string(path).unwrap();
+    let (root, _) = struct_view_core::parser::parse_data(
+        &input,
+        Some(struct_view_core::parser::DataFormat::Toml),
+    )
+    .unwrap();
+    let graph = try_build_relationship_graph(&root).unwrap();
+    let descriptor = graph_descriptor("flowchart-demo", &graph);
+
+    assert_eq!(descriptor["type"], "flowchart");
+    assert_eq!(descriptor["nodes"].as_array().unwrap().len(), 16);
+    assert_eq!(descriptor["edges"].as_array().unwrap().len(), 17);
+    let shapes = descriptor["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|node| node["shape"].as_str())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        shapes,
+        std::collections::HashSet::from([
+            "process",
+            "terminator",
+            "decision",
+            "input_output",
+            "preparation",
+            "subprocess",
+            "database",
+            "connector",
+        ])
+    );
+    assert!(
+        descriptor["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["source"] == "reserve_stock" && edge["target"] == "payment")
+    );
 }
 
 fn scenario(command: AnimationCommand) -> AnimationScenario {

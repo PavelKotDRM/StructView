@@ -27,7 +27,18 @@ impl StructViewApp {
                 let graph = try_build_relationship_graph(root)?;
                 GraphDocument::from_graph(root, &graph)?.to_root()
             });
-        self.request_graph_document(result);
+        match result {
+            Ok(root) => {
+                self.request_document_replacement(DocumentReplacement::GraphCopy(Box::new(root)))
+            }
+            Err(error) => self.show_error(&error),
+        }
+    }
+
+    pub(in crate::app) fn has_editable_graph_document(&self) -> bool {
+        self.root
+            .as_ref()
+            .is_some_and(|root| GraphDocument::read(root).is_ok_and(|document| document.is_some()))
     }
 
     fn request_graph_document(&mut self, result: Result<JsonNode, String>) {
@@ -40,8 +51,56 @@ impl StructViewApp {
     }
 
     pub(in crate::app) fn open_graph_document(&mut self, root: JsonNode) {
+        self.open_graph_document_with_structure(root, true);
+    }
+
+    pub(in crate::app) fn open_graph_copy_document(
+        &mut self,
+        root: JsonNode,
+    ) -> Result<(), String> {
+        let initial_fingerprint =
+            super::state::document_content_fingerprint(&root, DataFormat::Json).ok_or_else(
+                || {
+                    self.locale
+                        .text(TextKey::GraphCopyFingerprintError)
+                        .to_string()
+                },
+            )?;
+        let source = self
+            .take_previous_document()
+            .ok_or_else(|| self.locale.text(TextKey::NoDocument).to_string())?;
+        let graph_calculation = std::mem::take(&mut self.graph_calculation);
+        self.open_graph_document_with_structure(root, false);
+        self.graph_calculation = graph_calculation;
+        self.file_state.saved_content_fingerprint = Some(initial_fingerprint);
+        self.generated_graph_copy = Some(super::state::GeneratedGraphCopy {
+            source,
+            initial_fingerprint,
+        });
+        Ok(())
+    }
+
+    pub(in crate::app) fn switch_graph_to_view_mode(&mut self) {
+        let unchanged = self.generated_graph_copy.as_ref().is_some_and(|copy| {
+            self.root.as_ref().is_some_and(|root| {
+                super::state::document_content_fingerprint(root, DataFormat::Json)
+                    == Some(copy.initial_fingerprint)
+            })
+        });
+        if unchanged && let Some(copy) = self.generated_graph_copy.take() {
+            let graph_calculation = std::mem::take(&mut self.graph_calculation);
+            self.restore_previous_document(copy.source);
+            self.graph_calculation = graph_calculation;
+        } else {
+            self.mode = AppMode::View;
+        }
+    }
+
+    fn open_graph_document_with_structure(&mut self, root: JsonNode, reset_structure: bool) {
         self.clear_document_state();
-        self.structure_view = super::views::structure::StructureView::default();
+        if reset_structure {
+            self.structure_view = super::views::structure::StructureView::default();
+        }
         self.root = Some(root);
         self.file_state = FileState {
             format: Some(DataFormat::Json),

@@ -138,7 +138,7 @@ impl StructViewApp {
     pub(in crate::app) fn request_exit(&mut self, ctx: &egui::Context) {
         self.cancel_pending_document_loads();
         self.pending_document_replacement = None;
-        if self.has_unsaved_changes_before_exit() {
+        if self.needs_exit_confirmation() {
             self.close_file_confirmation_open = true;
             self.exit_after_close_confirmation = true;
         } else {
@@ -149,9 +149,7 @@ impl StructViewApp {
     }
 
     pub(super) fn handle_native_close_request(&mut self, ctx: &egui::Context) {
-        if ctx.input(|input| input.viewport().close_requested())
-            && self.has_unsaved_changes_before_exit()
-        {
+        if ctx.input(|input| input.viewport().close_requested()) && self.needs_exit_confirmation() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if !self.exit_after_close_confirmation {
                 self.request_exit(ctx);
@@ -191,8 +189,12 @@ impl StructViewApp {
         let previous_document_changed = !structure_only
             && (exiting || replacing)
             && self.has_unsaved_previous_document_changes();
-        let document_changed =
-            !structure_only && (self.has_unsaved_document_changes() || previous_document_changed);
+        let generated_copy_needs_saving =
+            exiting && self.generated_graph_copy.is_some() && self.file_state.path.is_none();
+        let document_changed = !structure_only
+            && (self.has_unsaved_document_changes()
+                || previous_document_changed
+                || generated_copy_needs_saving);
         let structure_changed =
             (exiting || replacing || self.visualization == VisualizationMode::Structure)
                 && self.structure_view.has_unsaved_changes();
@@ -205,7 +207,8 @@ impl StructViewApp {
             self.restore_previous_document_for_exit();
         }
 
-        let document_changed = !structure_only && self.has_unsaved_document_changes();
+        let document_changed =
+            !structure_only && (self.has_unsaved_document_changes() || generated_copy_needs_saving);
         let structure_changed =
             (exiting || replacing || self.visualization == VisualizationMode::Structure)
                 && self.structure_view.has_unsaved_changes();
@@ -256,6 +259,11 @@ impl StructViewApp {
     fn perform_document_replacement(&mut self, replacement: DocumentReplacement) {
         match replacement {
             DocumentReplacement::Graph(root) => self.open_graph_document(*root),
+            DocumentReplacement::GraphCopy(root) => {
+                if let Err(error) = self.open_graph_copy_document(*root) {
+                    self.show_error(&error);
+                }
+            }
             DocumentReplacement::Open(path) => self.start_file_load(path),
             DocumentReplacement::Loaded(document) => self.apply_loaded_document(Ok(*document)),
             DocumentReplacement::Create(path, format) => self.create_new_file(path, format),
@@ -274,6 +282,11 @@ impl StructViewApp {
         self.has_unsaved_document_changes()
             || self.has_unsaved_previous_document_changes()
             || self.structure_view.has_unsaved_changes()
+    }
+
+    fn needs_exit_confirmation(&self) -> bool {
+        self.has_unsaved_changes_before_exit()
+            || (self.generated_graph_copy.is_some() && self.file_state.path.is_none())
     }
 
     fn has_unsaved_document_changes(&self) -> bool {
@@ -374,6 +387,7 @@ impl StructViewApp {
         self.close_file_confirmation_open = false;
         self.exit_after_close_confirmation = false;
         self.file_state = FileState::default();
+        self.generated_graph_copy = None;
         self.field_dialog = None;
         self.graph_editor = super::super::graph_editor::GraphEditorState::default();
         self.mode = AppMode::View;
@@ -383,15 +397,20 @@ impl StructViewApp {
         self.toast = None;
     }
 
-    fn restore_previous_document(&mut self, previous_document: PreviousDocumentState) {
+    pub(in crate::app) fn restore_previous_document(
+        &mut self,
+        previous_document: PreviousDocumentState,
+    ) {
         self.clear_history();
         self.file_load_receiver = None;
         self.root = Some(previous_document.root);
         self.file_state = previous_document.file_state;
+        self.generated_graph_copy = None;
         self.comparison = None;
         self.visualization = previous_document.visualization;
         self.visualization_cache = VisualizationCache::default();
         self.graph_calculation = super::super::views::GraphCalculationState::default();
+        self.graph_editor = super::super::graph_editor::GraphEditorState::default();
         self.visible_rows = VisibleRows::default();
         self.visible_rows_dirty = true;
         self.parse_error = None;

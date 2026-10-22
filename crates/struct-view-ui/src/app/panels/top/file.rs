@@ -17,17 +17,12 @@ impl StructViewApp {
     pub(super) fn show_file_menu(&mut self, ui: &mut Ui) {
         let locale = self.locale;
         ui.menu_button(locale.text(TextKey::FileMenu), |ui| {
-            if self.visualization == VisualizationMode::Graph && !self.is_comparing() {
-                if ui.button(locale.text(TextKey::GraphNew)).clicked() {
-                    ui.close();
-                    self.request_new_graph();
-                }
-                if self.root.is_some()
-                    && ui.button(locale.text(TextKey::GraphEditableCopy)).clicked()
-                {
-                    ui.close();
-                    self.request_graph_copy();
-                }
+            if self.visualization == VisualizationMode::Graph
+                && !self.is_comparing()
+                && ui.button(locale.text(TextKey::GraphNew)).clicked()
+            {
+                ui.close();
+                self.request_new_graph();
             }
             if ui
                 .add(

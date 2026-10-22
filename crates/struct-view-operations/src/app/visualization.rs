@@ -6,6 +6,7 @@ mod table;
 #[cfg(test)]
 mod tests;
 
+pub use graph::FlowchartNodeShape;
 pub use graph::build_relationship_graph;
 pub use graph::{GraphEdge, GraphNode, RelationshipGraph, try_build_relationship_graph};
 pub use schema::{

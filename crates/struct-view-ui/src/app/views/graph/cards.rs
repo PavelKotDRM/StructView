@@ -8,6 +8,8 @@ const GRAPH_CARD_LANE_SPACING: f32 = 8.0;
 const GRAPH_CARD_SIDE_MARGIN: f32 = 16.0;
 /// Extra height of a big card, holding its link counts and document path below the label.
 const GRAPH_CARD_INFO_HEIGHT: f32 = 40.0;
+const FLOWCHART_LABEL_ESTIMATED_WIDTH: f32 = 150.0;
+const FLOWCHART_LABEL_LINE_HEIGHT: f32 = 18.0;
 /// Offsets from a card's top edge to its label row, identifier row, and the two rows of a big
 /// card's information block.
 pub(in crate::app::views) const GRAPH_CARD_LABEL_OFFSET: f32 = 26.0;
@@ -31,6 +33,77 @@ pub(in crate::app::views) fn graph_node_size(links: usize) -> Vec2 {
     Vec2::new(width, GRAPH_NODE_SIZE.y + GRAPH_CARD_INFO_HEIGHT)
 }
 
+pub(in crate::app::views::graph) fn graph_has_flowchart_nodes(graph: &RelationshipGraph) -> bool {
+    graph
+        .nodes
+        .iter()
+        .any(|node| node.flowchart_shape().is_some())
+}
+
+pub(in crate::app::views::graph) fn flowchart_label_lines(
+    label: &str,
+    shape: Option<crate::app::visualization::FlowchartNodeShape>,
+) -> Vec<String> {
+    let max_width = if shape == Some(crate::app::visualization::FlowchartNodeShape::Decision) {
+        90.0
+    } else {
+        FLOWCHART_LABEL_ESTIMATED_WIDTH
+    };
+    let mut lines = Vec::new();
+    for paragraph in label.split('\n') {
+        let mut line = String::new();
+        let mut line_width = 0.0;
+        for word in paragraph.split_whitespace() {
+            let word_width = word.chars().map(estimated_character_width).sum::<f32>();
+            let space_width = if line.is_empty() { 0.0 } else { 4.0 };
+            if !line.is_empty() && line_width + space_width + word_width <= max_width {
+                line.push(' ');
+                line.push_str(word);
+                line_width += space_width + word_width;
+                continue;
+            }
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+                line_width = 0.0;
+            }
+            for character in word.chars() {
+                let width = estimated_character_width(character);
+                if !line.is_empty() && line_width + width > max_width {
+                    lines.push(std::mem::take(&mut line));
+                    line_width = 0.0;
+                }
+                line.push(character);
+                line_width += width;
+            }
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        } else if paragraph.is_empty() {
+            lines.push(String::new());
+        }
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn estimated_character_width(character: char) -> f32 {
+    if character.is_ascii_whitespace() {
+        4.0
+    } else if character.is_ascii_uppercase() {
+        9.0
+    } else if character.is_ascii_alphanumeric() {
+        8.0
+    } else if character.is_ascii() {
+        6.0
+    } else if matches!(character as u32, 0x2E80..=0x9FFF | 0xF900..=0xFAFF | 0x1F000..=0x1FAFF) {
+        15.0
+    } else {
+        8.5
+    }
+}
+
 /// Card size of every graph node, in node order.
 pub(in crate::app::views) fn graph_node_sizes(graph: &RelationshipGraph) -> Vec<Vec2> {
     let mut links = vec![0_usize; graph.nodes.len()];
@@ -38,7 +111,27 @@ pub(in crate::app::views) fn graph_node_sizes(graph: &RelationshipGraph) -> Vec<
         links[edge.source] += 1;
         links[edge.target] += 1;
     }
-    links.into_iter().map(graph_node_size).collect()
+    let flowchart = graph_has_flowchart_nodes(graph);
+    graph
+        .nodes
+        .iter()
+        .zip(links)
+        .map(|(node, links)| {
+            let mut size = graph_node_size(links);
+            if flowchart {
+                let lines = flowchart_label_lines(&node.label, node.flowchart_shape()).len() as f32;
+                let label_height = (lines * FLOWCHART_LABEL_LINE_HEIGHT).max(18.0);
+                let content_height = match node.flowchart_shape() {
+                    Some(crate::app::visualization::FlowchartNodeShape::Decision) => {
+                        label_height / (1.0 - 90.0 / GRAPH_NODE_SIZE.x)
+                    }
+                    _ => label_height + 24.0,
+                };
+                size.y = GRAPH_NODE_SIZE.y.max(content_height);
+            }
+            size
+        })
+        .collect()
 }
 
 /// Incoming and outgoing link counts of every node as `(incoming, outgoing)`, counted the way the
@@ -76,6 +169,23 @@ mod tests {
         assert_eq!(
             graph_node_size(57),
             Vec2::new(480.0, GRAPH_NODE_SIZE.y + GRAPH_CARD_INFO_HEIGHT),
+        );
+    }
+
+    #[test]
+    fn flowchart_node_sizes_allow_multiline_labels() {
+        let root = struct_view_core::parser::parse_json(
+            r#"{"graph":{"type":"flowchart"},"nodes":[{"id":"short","label":"Start","shape":"terminator"},{"id":"long","label":"A very long label that needs multiple lines to fit","shape":"process"}],"edges":[]}"#,
+        )
+        .unwrap();
+        let graph = build_relationship_graph(&root);
+        let sizes = graph_node_sizes(&graph);
+
+        assert_eq!(sizes[0], GRAPH_NODE_SIZE);
+        assert!(sizes[1].y > GRAPH_NODE_SIZE.y);
+        assert!(
+            flowchart_label_lines(&graph.nodes[1].label, graph.nodes[1].flowchart_shape()).len()
+                > 2
         );
     }
 

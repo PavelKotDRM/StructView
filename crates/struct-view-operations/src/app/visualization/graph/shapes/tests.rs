@@ -7,6 +7,70 @@ fn graph(source: &str) -> RelationshipGraph {
 }
 
 #[test]
+fn flowchart_nodes_are_recognized_in_json_yaml_and_toml() {
+    let inputs = [
+        (
+            DataFormat::Json,
+            r#"{"graph":{"type":"flowchart"},"nodes":[{"id":"start","label":"Start","shape":"terminator"},{"id":"decision","label":"Decide","shape":"diamond"}],"edges":[{"source":"start","target":"decision","label":"next"}]}"#,
+        ),
+        (
+            DataFormat::Yaml,
+            "graph:\n  type: flowchart\nnodes:\n  - id: start\n    label: Start\n    shape: terminator\n  - id: decision\n    label: Decide\n    shape: diamond\nedges:\n  - source: start\n    target: decision\n    label: next\n",
+        ),
+        (
+            DataFormat::Toml,
+            "[graph]\ntype = 'flowchart'\n[nodes.start]\nlabel = 'Start'\nshape = 'terminator'\n[nodes.decision]\nlabel = 'Decide'\nshape = 'diamond'\n[[edges]]\nsource = 'start'\ntarget = 'decision'\nlabel = 'next'\n",
+        ),
+    ];
+
+    for (format, input) in inputs {
+        let root = parse_data(input, Some(format)).unwrap().0;
+        let graph = super::super::try_build_relationship_graph(&root).unwrap();
+        assert_eq!(graph.nodes.len(), 2, "{format}");
+        assert_eq!(graph.edges.len(), 1, "{format}");
+        for (id, expected) in [
+            ("start", FlowchartNodeShape::Terminator),
+            ("decision", FlowchartNodeShape::Decision),
+        ] {
+            assert_eq!(
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == id)
+                    .unwrap()
+                    .flowchart_shape(),
+                Some(expected),
+                "{format}"
+            );
+        }
+    }
+}
+
+#[test]
+fn mermaid_import_preserves_flowchart_shapes_and_edge_labels() {
+    let root = parse_data(
+        "flowchart TD\n  start([Start]) --> decision{Continue?}\n  decision -->|yes| finish([Finish])\n",
+        None,
+    )
+    .unwrap()
+    .0;
+    let graph = super::super::try_build_relationship_graph(&root).unwrap();
+
+    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.edges.len(), 2);
+    assert_eq!(graph.nodes[0].label, "Start");
+    assert_eq!(
+        graph.nodes[0].flowchart_shape(),
+        Some(FlowchartNodeShape::Terminator)
+    );
+    assert_eq!(
+        graph.nodes[1].flowchart_shape(),
+        Some(FlowchartNodeShape::Decision)
+    );
+    assert_eq!(graph.edges[1].label, "yes");
+}
+
+#[test]
 fn adapters_work_in_every_writable_format() {
     let cases = [
         (

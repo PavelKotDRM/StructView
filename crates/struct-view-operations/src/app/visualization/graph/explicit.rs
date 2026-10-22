@@ -105,9 +105,11 @@ fn apply_default_direction(
 pub(super) fn graph_format(kind: &str) -> Option<(EdgeDirection, bool)> {
     match kind {
         "directed" | "weighted_directed" | "mixed" => Some((EdgeDirection::Directed, false)),
+        "flowchart" => Some((EdgeDirection::Directed, false)),
         "undirected" | "weighted_undirected" => Some((EdgeDirection::Undirected, false)),
         "bidirectional" | "weighted_bidirectional" => Some((EdgeDirection::Bidirectional, false)),
         "directed_multigraph" | "mixed_multigraph" => Some((EdgeDirection::Directed, true)),
+        "flowchart_multigraph" => Some((EdgeDirection::Directed, true)),
         "undirected_multigraph" => Some((EdgeDirection::Undirected, true)),
         "bidirectional_multigraph" => Some((EdgeDirection::Bidirectional, true)),
         _ => None,

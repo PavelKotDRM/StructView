@@ -22,24 +22,33 @@ def fixture(path=demo.FIXTURE):
         return tomllib.load(source)
 
 
-def descriptor():
-    value = fixture()
+def descriptor(path=demo.FIXTURE):
+    value = fixture(path)
+    if "nodes" in value:
+        nodes, edges, graph_type = value["nodes"], value["edges"], "flowchart"
+    else:
+        nodes = [{"id": node["id"], "label": node["name"]} for node in value["entities"]]
+        edges, graph_type = value["relations"], "graph"
     return {
         "graph_id": "demo-graph",
-        "nodes": [{"id": node["id"], "label": node["name"]} for node in value["entities"]],
-        "edges": [{"index": 10 + index, "source": relation["source"], "target": relation["target"]}
-                  for index, relation in enumerate(reversed(value["relations"]))],
+        "type": graph_type,
+        "nodes": [{"id": node["id"], "label": node.get("label", node.get("name", node["id"]))}
+                  for node in nodes],
+        "edges": [{"index": 10 + index, "source": edge["source"], "target": edge["target"],
+                   "direction": "directed"}
+                  for index, edge in enumerate(reversed(edges))],
     }
 
 
 class FakeApi:
-    def __init__(self):
+    def __init__(self, graph_descriptor=None):
         self.calls = []
+        self.graph_descriptor = graph_descriptor or descriptor()
 
     def request(self, path, body=None, *, method=None):
         self.calls.append((path, body, method))
         if path == "/v1/graph":
-            return descriptor()
+            return self.graph_descriptor
         if path == "/v1/capabilities":
             return {"features": ["jobs", "scheduled", "realtime"]}
         if path == "/v1/animation" and body is None:
@@ -91,38 +100,66 @@ class DemoTests(unittest.TestCase):
                 remaining.extend(neighbors[node] - reached)
         self.assertEqual(reached, ids)
 
-    def test_demo_fixture_is_compact_connected_and_preserves_retry_routes(self):
+    def test_demo_fixture_contains_large_flowchart_and_every_supported_shape(self):
         value = fixture()
-        ids = {node["id"] for node in value["entities"]}
-        self.assertEqual(len(ids), 8)
-        self.assertEqual(len(value["relations"]), 9)
-        self.assertIn("order_payments", {link["id"] for link in value["relations"]})
-        self.assertEqual({link["source"] for link in value["relations"]} |
-                         {link["target"] for link in value["relations"]}, ids)
-        neighbors = {id_: set() for id_ in ids}
-        for relation in value["relations"]:
-            neighbors[relation["source"]].add(relation["target"])
-            neighbors[relation["target"]].add(relation["source"])
-        reached, remaining = set(), ["customer"]
-        while remaining:
-            node = remaining.pop()
-            if node not in reached:
-                reached.add(node)
-                remaining.extend(neighbors[node] - reached)
-        self.assertEqual(reached, ids)
+        ids = {node["id"] for node in value["nodes"]}
+        self.assertEqual(len(ids), 16)
+        self.assertEqual(len(value["edges"]), 17)
+        self.assertIn("reserve-payment", {edge["id"] for edge in value["edges"]})
+        self.assertEqual({edge["source"] for edge in value["edges"]} |
+                         {edge["target"] for edge in value["edges"]}, ids)
+        self.assertEqual({node["shape"] for node in value["nodes"]},
+                         {"terminator", "process", "decision", "input_output",
+                          "preparation", "subprocess", "database", "connector"})
 
     def test_fixture_mapping_uses_api_indexes_and_rejects_wrong_graph(self):
         mapped = demo.map_graph(fixture(), descriptor())
-        self.assertEqual(mapped[0]["id"], "customer_orders")
-        self.assertEqual(mapped[0]["index"], len(fixture()["relations"]) + 9)
+        self.assertEqual(mapped[0]["id"], "start-receive")
+        self.assertEqual(mapped[0]["index"], len(fixture()["edges"]) + 9)
         invalid = descriptor()
         invalid["nodes"][0]["id"] = "wrong"
-        with self.assertRaisesRegex(ValueError, "entity IDs"):
+        with self.assertRaisesRegex(ValueError, "node IDs"):
             demo.map_graph(fixture(), invalid)
         invalid = descriptor()
         invalid["edges"][0]["target"] = "wrong"
-        with self.assertRaisesRegex(ValueError, "relationships"):
+        with self.assertRaisesRegex(ValueError, "links"):
             demo.map_graph(fixture(), invalid)
+
+    def test_shop_fixture_remains_supported_by_the_controller(self):
+        shop_path = demo.FIXTURE.parent / "GraphAnimationDemo.toml"
+        shop_fixture = fixture(shop_path)
+        nodes = {node["id"] for node in shop_fixture["entities"]}
+        outgoing = {node: set() for node in nodes}
+        indegree = dict.fromkeys(nodes, 0)
+        for relation in shop_fixture["relations"]:
+            source, target = relation["source"], relation["target"]
+            if target not in outgoing[source]:
+                outgoing[source].add(target)
+                indegree[target] += 1
+        ready = [node for node, count in indegree.items() if count == 0]
+        ordered = 0
+        while ready:
+            node = ready.pop()
+            ordered += 1
+            for target in outgoing[node]:
+                indegree[target] -= 1
+                if indegree[target] == 0:
+                    ready.append(target)
+        self.assertEqual(ordered, len(nodes), "The shop example should lay out as a readable DAG")
+        support = next(link for link in shop_fixture["relations"] if link["id"] == "support_order")
+        self.assertEqual((support["source"], support["target"]), ("order", "support_ticket"))
+        api = FakeApi(descriptor(shop_path))
+        mapped = demo.map_graph(shop_fixture, api.graph_descriptor)
+        self.assertEqual(len(mapped), len(shop_fixture["relations"]))
+        self.assertEqual(mapped[0]["id"], shop_fixture["relations"][0]["id"])
+        runner = demo.Demo(api, shop_fixture)
+        with patch.object(runner, "wait"), patch("builtins.print"):
+            runner.execute("both")
+        self.assertIn(("order-42", "success"), {
+            (command.get("id"), command.get("status"))
+            for path, body, _ in api.calls if path == "/v1/jobs" and body
+            for command in body["commands"] if command["type"] == "upsert"
+        })
 
     def test_guided_scenarios_respect_protocol_limits_at_all_speeds(self):
         for speed in (0.1, 1.0, 10):
@@ -138,6 +175,145 @@ class DemoTests(unittest.TestCase):
                                     for step in scenario["steps"] if step["command"]["type"] != "clear"))
                 self.assertTrue(all(step.get("at_ms", 0) + step["command"].get("duration_ms", 0) <= 600000
                                     for step in scenario["steps"]))
+
+    def test_full_routes_cover_all_fixtures_and_reach_exits_without_teleporting(self):
+        for name in ("FlowchartAnimationDemo.toml", "GraphAnimationDemo.toml", "Graph.toml"):
+            with self.subTest(fixture=name):
+                path = demo.FIXTURE.parent / name
+                value = fixture(path)
+                nodes = demo.fixture_nodes(value)
+                links = demo.map_graph(value, descriptor(path))
+                routes = demo.walkthrough.traversal_routes(nodes, links)
+                covered_nodes, covered_edges = set(), set()
+                exits = {node["id"] for node in nodes} - {link["source"] for link in links}
+                for start, hops in routes:
+                    current = start
+                    covered_nodes.add(current)
+                    self.assertLessEqual(len(hops), 2 * len(nodes))
+                    for hop in hops:
+                        self.assertEqual(hop["source"], current)
+                        self.assertFalse(hop["reverse"])
+                        current = hop["target"]
+                        covered_nodes.add(current)
+                        covered_edges.add(hop["index"])
+                    if exits:
+                        self.assertIn(current, exits)
+                self.assertEqual(covered_nodes, {node["id"] for node in nodes})
+                self.assertEqual(covered_edges, {link["index"] for link in links})
+
+    def test_full_routes_handle_cycles_reverse_links_and_disconnected_nodes(self):
+        nodes = [{"id": node} for node in ("a", "b", "c", "d", "e", "f", "isolated")]
+        links = [
+            {"index": 17, "source": "b", "target": "a", "direction": "reverse"},
+            {"index": 4, "source": "b", "target": "c", "direction": "directed"},
+            {"index": 8, "source": "b", "target": "b", "direction": "directed"},
+            {"index": 20, "source": "d", "target": "e", "direction": "undirected"},
+            {"index": 21, "source": "e", "target": "f", "direction": "bidirectional"},
+        ]
+        routes = demo.walkthrough.traversal_routes(nodes, links)
+        self.assertEqual({hop["index"] for _, hops in routes for hop in hops},
+                         {link["index"] for link in links})
+        self.assertIn(("isolated", []), routes)
+        self.assertTrue(any(hop["reverse"] for _, hops in routes for hop in hops))
+        for start, hops in routes:
+            current = start
+            for hop in hops:
+                self.assertEqual(current, hop["source"])
+                current = hop["target"]
+            self.assertLessEqual(len(hops), 2 * len(nodes))
+
+    def test_single_and_parallel_executions_each_cover_every_node_and_edge(self):
+        for name in ("FlowchartAnimationDemo.toml", "GraphAnimationDemo.toml", "Graph.toml"):
+            with self.subTest(fixture=name):
+                path = demo.FIXTURE.parent / name
+                value = fixture(path)
+                api = FakeApi(descriptor(path))
+                links = demo.map_graph(value, api.graph_descriptor)
+                runner = demo.Demo(api, value)
+                with patch.object(runner, "wait"), patch("builtins.print"):
+                    demo.walkthrough.full_job_traversal(runner, "demo-graph", links)
+                phases = []
+                for endpoint, body, _ in api.calls:
+                    self.assertEqual(endpoint, "/v1/jobs")
+                    self.assertEqual(body["graph_id"], "demo-graph")
+                    commands = body["commands"]
+                    if commands == [{"type": "clear"}]:
+                        phases.append([])
+                    else:
+                        phases[-1].extend(commands)
+                self.assertEqual(len(phases), 2)
+                if len(links) > 1:
+                    parallel_batches = [body["commands"] for _, body, _ in api.calls
+                                        if len(body["commands"]) == 2]
+                    self.assertTrue(any(
+                        batch[0].get("edge") is not None and batch[1].get("edge") is not None
+                        and batch[0]["edge"] != batch[1]["edge"]
+                        for batch in parallel_batches
+                    ), "Concurrent executions should also demonstrate different branches")
+                expected_nodes = {node["id"] for node in demo.fixture_nodes(value)}
+                expected_edges = {link["index"] for link in links}
+                for commands, ids in zip(phases, ({"order-42"}, {"order-42", "risk-42"})):
+                    self.assertEqual({command["id"] for command in commands}, ids)
+                    for id_ in ids:
+                        task = [command for command in commands if command["id"] == id_]
+                        self.assertEqual({node for command in task for node in command["nodes"]},
+                                         expected_nodes)
+                        self.assertEqual({command["edge"] for command in task
+                                          if command["edge"] is not None}, expected_edges)
+                        self.assertEqual(task[-1]["status"], "success")
+                        self.assertIsNone(task[-1]["edge"])
+                        position = None
+                        for command in task:
+                            if command["status"] == "waiting":
+                                position = command["nodes"][0]
+                            if command["edge"] is not None:
+                                link = next(link for link in links if link["index"] == command["edge"])
+                                self.assertEqual(command["nodes"], [link["source"]])
+                                self.assertEqual(position, link["source"])
+                            elif command["status"] == "success":
+                                position = command["nodes"][0]
+
+    def test_scheduled_full_traversal_splits_large_routes_within_api_limits(self):
+        value = {
+            "nodes": [{"id": str(index)} for index in range(151)],
+            "edges": [{"id": str(index), "source": str(index), "target": str(index + 1),
+                       "index": 500 + index, "direction": "directed"} for index in range(150)],
+        }
+        api = FakeApi()
+        runner = demo.Demo(api, value, speed=0.1)
+        with patch.object(runner, "wait"), patch("builtins.print"):
+            demo.walkthrough.scheduled_traversal(runner, "demo-graph", value["edges"])
+        flows = set()
+        for path, body, _ in api.calls:
+            if path != "/v1/animation" or body is None:
+                continue
+            self.assertLessEqual(len(body["steps"]), 256)
+            self.assertLessEqual(len(json.dumps(body).encode()), 65536)
+            for step in body["steps"]:
+                command = step["command"]
+                self.assertLessEqual(step.get("at_ms", 0) + command["duration_ms"], 600000)
+                if command["type"] == "flow":
+                    flows.add(command["edge"])
+        self.assertEqual(flows, {edge["index"] for edge in value["edges"]})
+
+    def test_node_only_graph_completes_in_both_modes_without_a_route(self):
+        value = {"graph": {"type": "directed"}, "nodes": [{"id": "alone"}], "edges": []}
+        graph_descriptor = {
+            "type": "graph", "graph_id": "demo-graph",
+            "nodes": [{"id": "alone", "label": "Alone"}], "edges": [],
+        }
+        self.assertEqual(demo.map_graph(value, graph_descriptor), [])
+        api = FakeApi(graph_descriptor)
+        runner = demo.Demo(api, value)
+        with patch.object(runner, "wait"), patch("builtins.print"):
+            runner.execute("both")
+        self.assertEqual(runner.snapshot()["phase"], "finished")
+        jobs = [command for path, body, _ in api.calls if path == "/v1/jobs"
+                for command in body["commands"] if command["type"] == "upsert"]
+        self.assertTrue(jobs)
+        self.assertTrue(all(command["nodes"] == ["alone"] and command["edge"] is None
+                            for command in jobs))
+        self.assertEqual(jobs[-1]["status"], "success")
 
     def test_both_modes_show_progress_late_updates_statuses_and_retry(self):
         api = FakeApi()
@@ -184,8 +360,9 @@ class DemoTests(unittest.TestCase):
                            values[0]["edge"] == values[1]["edge"] and
                            values[0]["nodes"] == values[1]["nodes"])
         self.assertTrue(shared)
-        self.assertEqual(set(jobs), {"order-42"})
+        self.assertEqual(set(jobs), {"order-42", "risk-42"})
         self.assertEqual(jobs["order-42"]["status"], "success")
+        self.assertEqual(jobs["risk-42"]["status"], "success")
         self.assertIn("finished", runner.snapshot()["phase"])
 
     def test_step_by_step_waits_and_can_be_advanced_or_cancelled(self):
@@ -255,7 +432,7 @@ class DemoTests(unittest.TestCase):
             if action in ("flow", "flow_percent", "marker"):
                 self.assertTrue(command["reverse"])
             if action == "camera_focus":
-                self.assertEqual(command["node"], "customer")
+                self.assertEqual(command["node"], "start")
                 self.assertEqual(command["zoom"], 2)
         for status in ("waiting", "running", "success", "error"):
             runner.control({"action": "element", "status": status})
@@ -442,7 +619,7 @@ class DemoTests(unittest.TestCase):
                 sys.executable, "-B", str(demo.Path(demo.__file__)), "--once", "--mode", "both",
                 "--speed", "10", "--api", f"http://127.0.0.1:{server.server_port}",
             ], env={**os.environ, "STRUCTVIEW_API_TOKEN": "test-token"}, capture_output=True,
-                text=True, timeout=45)
+                text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("payment failed; retrying", result.stdout)
         self.assertTrue(any(path == "/v1/animation" for path, _ in calls))

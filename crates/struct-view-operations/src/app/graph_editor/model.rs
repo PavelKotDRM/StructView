@@ -27,6 +27,13 @@ impl GraphDocument {
         }
     }
 
+    pub fn is_flowchart(&self) -> bool {
+        matches!(
+            self.metadata.get("type").and_then(Value::as_str),
+            Some("flowchart" | "flowchart_multigraph")
+        )
+    }
+
     pub fn read(root: &JsonNode) -> Result<Option<Self>, String> {
         if !root.children.iter().any(|child| {
             child.key.as_deref() == Some("graph")
@@ -78,10 +85,19 @@ impl GraphDocument {
             return Ok(document);
         }
         let mut document = Self::empty();
+        let source_document = node_to_value(root)?;
+        if matches!(
+            source_document["graph"]["type"].as_str(),
+            Some("flowchart" | "flowchart_multigraph")
+        ) {
+            document
+                .metadata
+                .insert("type".into(), json!("flowchart_multigraph"));
+        }
         // Keep the typed source intact: inferred links and tooltip attributes can be lossy.
         document
             .metadata
-            .insert("source_document".into(), node_to_value(root)?);
+            .insert("source_document".into(), source_document);
         let unit = document.metadata["source_document"]["graph"]["weight_unit"]
             .as_str()
             .unwrap_or_default()
@@ -100,11 +116,49 @@ impl GraphDocument {
                 id = unique_id(base, &used);
                 used.insert(id.clone());
             }
-            let attributes = crate::app::edit::find_node(root, &node.path)
+            let source_node = crate::app::edit::find_node(root, &node.path)
                 .map(node_to_value)
                 .transpose()?
-                .filter(Value::is_object)
-                .unwrap_or_else(|| attributes_value(&node.attributes));
+                .filter(Value::is_object);
+            let attributes = if document.is_flowchart() {
+                let mut attributes = source_node
+                    .as_ref()
+                    .and_then(|source| source.get("attributes"))
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(source) = source_node.as_ref().and_then(Value::as_object) {
+                    for (key, value) in source {
+                        if !matches!(
+                            key.as_str(),
+                            "id" | "_id"
+                                | "$id"
+                                | "label"
+                                | "name"
+                                | "title"
+                                | "shape"
+                                | "attributes"
+                                | "partition"
+                        ) {
+                            attributes
+                                .entry(key.clone())
+                                .or_insert_with(|| value.clone());
+                        }
+                    }
+                    if let Some(shape) = source.get("shape") {
+                        attributes.insert("shape".into(), shape.clone());
+                    }
+                }
+                if attributes.is_empty() {
+                    attributes = attributes_value(&node.attributes)
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default();
+                }
+                Value::Object(attributes)
+            } else {
+                source_node.unwrap_or_else(|| attributes_value(&node.attributes))
+            };
             let mut record = json!({
                 "id": id, "label": node.label,
                 "attributes": attributes
@@ -170,8 +224,13 @@ impl GraphDocument {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.metadata.get("type").and_then(Value::as_str) != Some("mixed_multigraph") {
-            return Err("Editor graph.type must be mixed_multigraph".into());
+        if !matches!(
+            self.metadata.get("type").and_then(Value::as_str),
+            Some("mixed_multigraph" | "flowchart_multigraph")
+        ) {
+            return Err(
+                "Editor graph.type must be mixed_multigraph or flowchart_multigraph".into(),
+            );
         }
         direction(&Value::Object(self.metadata.clone()))?;
         for key in ["name", "weight_unit"] {

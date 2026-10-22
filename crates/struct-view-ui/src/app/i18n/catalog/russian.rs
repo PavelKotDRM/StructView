@@ -22,6 +22,11 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::ExitUnsavedMessage => {
             "В приложении есть несохранённые изменения. При выходе они будут потеряны."
         }
+        TextKey::ExitGraphCopyTitle => "Несохранённая копия графа",
+        TextKey::ExitGraphCopyMessage => {
+            "Созданная для редактирования копия графа не сохранена. При выходе она и все её изменения будут потеряны."
+        }
+        TextKey::GraphCopyFingerprintError => "Не удалось проверить созданную копию графа.",
         TextKey::ExitWithoutSaving => "Выйти",
         TextKey::SaveChanges => "Сохранить изменения",
         TextKey::SaveViewsSeparately => {
@@ -38,13 +43,12 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::TreeActions => "Действия с деревом",
         TextKey::Visualization => "Представление",
         TextKey::TreeView => "Интерактивное дерево",
-        TextKey::GraphView => "Граф связей",
+        TextKey::GraphView => "Граф и блок-схема",
         TextKey::GraphNew => "Создать граф",
-        TextKey::GraphEditableCopy => "Создать редактируемую копию графа",
         TextKey::GraphAutomaticLayout => "Размещение узлов и маршруты связей — автоматические.",
         TextKey::GraphEditor => "Редактор графа",
         TextKey::GraphEditorHint => {
-            "Нажмите элемент списка или дважды нажмите узел / подпись связи для редактирования. Поддерживаются петли и параллельные связи."
+            "Нажмите элемент списка или дважды нажмите узел / подпись связи для редактирования. Поддерживаются фигуры блок-схем, петли и параллельные связи."
         }
         TextKey::GraphEditOnly => "Изменение графа доступно в режиме редактирования.",
         TextKey::GraphAddNode => "Добавить сущность",
@@ -56,6 +60,15 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphSettingsHint => "Правка -> Свойства графа",
         TextKey::GraphId => "Уникальный ID",
         TextKey::GraphLabel => "Имя / подпись",
+        TextKey::GraphFlowchartShape => "Фигура блок-схемы",
+        TextKey::GraphShapeProcess => "Процесс",
+        TextKey::GraphShapeTerminator => "Начало / завершение",
+        TextKey::GraphShapeDecision => "Решение",
+        TextKey::GraphShapeInputOutput => "Ввод / вывод",
+        TextKey::GraphShapePreparation => "Подготовка",
+        TextKey::GraphShapeSubprocess => "Подпроцесс",
+        TextKey::GraphShapeDatabase => "База данных",
+        TextKey::GraphShapeConnector => "Соединитель",
         TextKey::GraphSource => "Исходная сущность",
         TextKey::GraphTarget => "Целевая сущность",
         TextKey::GraphDirection => "Направление (в свойствах графа — для новых связей)",
@@ -65,6 +78,7 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphReverse => "Обратная",
         TextKey::GraphWeight => "Вес (число JSON, необязательно)",
         TextKey::GraphWeightUnit => "Единица веса",
+        TextKey::GraphAdvancedAttributes => "Дополнительные параметры",
         TextKey::GraphAttributes => "Атрибуты (объект JSON)",
         TextKey::ColorFormat => "Формат цвета",
         TextKey::ColorFormatOriginal => "Как исходный",
@@ -104,7 +118,7 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphStatusProgress => "Прогресс",
         TextKey::GraphStatusTargetProgress => "Цель",
         TextKey::GraphStatusStage => "Этап",
-        TextKey::GraphJobs => "Задания графа",
+        TextKey::GraphJobs => "Задачи схемы",
         TextKey::GraphJobFocus => "Перейти к месту выполнения задания",
         TextKey::GraphAnimationStop => "Остановить анимацию",
         TextKey::GraphApiHint => {
@@ -356,13 +370,13 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::SchemaConstraintNote => "Описание",
         TextKey::SchemaConstraintsMore => "ещё",
         TextKey::SchemaConstraintObserved => "Наблюдалось в примерах",
-        TextKey::GraphNodes => "Сущности",
+        TextKey::GraphNodes => "Узлы",
         TextKey::GraphIncomingLinks => "входящих",
         TextKey::GraphOutgoingLinks => "исходящих",
-        TextKey::GraphEdges => "Связи",
-        TextKey::GraphNoEntities => "Сущности с идентификаторами не найдены.",
-        TextKey::GraphCalculating => "Вычисление графа связей…",
-        TextKey::GraphStageEntities => "Извлечение сущностей и связей",
+        TextKey::GraphEdges => "Рёбра",
+        TextKey::GraphNoEntities => "Узлы не найдены.",
+        TextKey::GraphCalculating => "Построение графа…",
+        TextKey::GraphStageEntities => "Подготовка узлов и рёбер",
         TextKey::GraphStageLayout => "Подготовка расположения и точек подключения",
         TextKey::GraphStagePreliminary => "Вычисление предварительных маршрутов",
         TextKey::GraphStageConflicts => "Проверка и разрешение конфликтов маршрутов",
@@ -389,9 +403,7 @@ pub(in crate::app) fn russian_text(key: TextKey) -> &'static str {
         TextKey::GraphReverseLink => "Обратная связь (от цели к источнику)",
         TextKey::GraphLinkSource => "Узел A / источник",
         TextKey::GraphLinkTarget => "Узел B / цель",
-        TextKey::GraphNoRelationships => {
-            "Узлы есть, но распознаваемые ссылки между ними не найдены."
-        }
+        TextKey::GraphNoRelationships => "Узлы есть, но рёбер между ними нет.",
         TextKey::DiffLeft => "Версия A:",
         TextKey::DiffRight => "Версия B:",
         TextKey::DiffNoDifferences => "Эти две версии не отличаются.",

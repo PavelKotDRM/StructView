@@ -18,7 +18,8 @@ pub(in crate::app) use canvas::show_graph;
 use canvas::{GraphInteractionState, graph_edges_at_pointer};
 use cards::{
     GRAPH_CARD_COUNTS_OFFSET, GRAPH_CARD_ID_OFFSET, GRAPH_CARD_LABEL_OFFSET,
-    GRAPH_CARD_PATH_OFFSET, graph_link_counts, graph_node_sizes,
+    GRAPH_CARD_PATH_OFFSET, flowchart_label_lines, graph_has_flowchart_nodes, graph_link_counts,
+    graph_node_sizes,
 };
 pub(in crate::app) use export::render_graph_image;
 pub(in crate::app) use export::{GraphExportFormat, GraphExportStyle, export_graph_image};

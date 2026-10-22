@@ -36,7 +36,7 @@ pub use source::Source;
 pub const HELP: &str = concat!(
     "StructView ",
     env!("CARGO_PKG_VERSION"),
-    " — view JSON, YAML, TOML, JSON5, Graphviz DOT, GraphML, and GEXF\n",
+    " — view JSON, YAML, TOML, JSON5, Mermaid, Graphviz DOT, GraphML, and GEXF\n",
     "\n",
     "USAGE:\n",
     "    struct_view [FILE]                      start the GUI (optionally with a file)\n",
@@ -106,7 +106,7 @@ pub const HELP: &str = concat!(
     "\n",
     "The file format is detected from the extension; stdin is detected from its content.\n",
     "Supported extensions: .json, .yaml, .yml, .toml, .json5, .dot, .gv, .graphml, .gexf, and .xml (auto-detected).\n",
-    "Graphviz DOT, GraphML, and GEXF inputs are read-only; format them to JSON, YAML, or TOML to convert.\n",
+    "Mermaid, Graphviz DOT, GraphML, and GEXF inputs are read-only; format them to JSON, YAML, or TOML to convert.\n",
     "Use `-` instead of FILE to read data from stdin.\n",
     "Use `--` to end options before a query or file path starting with a dash.\n",
     "\n",

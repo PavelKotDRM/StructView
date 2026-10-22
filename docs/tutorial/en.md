@@ -9,9 +9,9 @@ select it in `Settings -> Language` (`Настройки -> Язык`) if needed
 ## 1. Install and open a document
 
 StructView reads and writes JSON (`.json`), YAML (`.yaml`, `.yml`), TOML
-(`.toml`), and JSON5 (`.json5`). It also imports Graphviz DOT (`.dot`, `.gv`),
-GraphML (`.graphml`), and GEXF (`.gexf`) as read-only graph documents that can
-be converted to those structured-data formats. For files, it uses the
+(`.toml`), and JSON5 (`.json5`). It also imports Mermaid (`.mmd`, `.mermaid`),
+Graphviz DOT (`.dot`, `.gv`), GraphML (`.graphml`), and GEXF (`.gexf`) as
+read-only graph documents that can be converted to those structured-data formats. For files, it uses the
 extension when recognized and tries automatic format detection for unknown
 extensions. Data read from standard input is detected from its contents.
 
@@ -71,7 +71,7 @@ document. Select a node to work with it or open its context menu.
 Use the view selector to switch between:
 
 - **Tree** — browse the nested document.
-- **Graph** — inspect inferred or explicitly described relationships. The
+- **Graph** — inspect inferred relationships, explicit graphs, and flowcharts. The
   supported graph shapes and examples are listed in [Graph input formats](#graph-input-formats).
   Hover a shortened edge label to see its full text. Layout is calculated in
   the background, with a progress indicator while it is being built.
@@ -84,11 +84,42 @@ Use the view selector to switch between:
 ### Graph input formats
 
 The graph view recognizes graph-shaped data inside JSON, JSON5, YAML, and TOML
-documents and imports standalone DOT, GraphML, and GEXF files. GraphML and GEXF
+documents and imports standalone Mermaid, DOT, GraphML, and GEXF files. Mermaid
+files use `.mmd` or `.mermaid`; GraphML and GEXF
 content with an `.xml` extension is detected by its root element. Select
 **View → Graph** after opening a document.
 
-Imported DOT, GraphML, and GEXF files are read-only. The importer converts them
+Flowchart data in JSON, YAML, or TOML uses `graph.type: flowchart`, a `nodes`
+list (or keyed table) with `id`, `label`, and optional `shape`, and an `edges`
+list with `source`, `target`, and optional `label`. Supported shape names are
+`process`, `terminator`, `decision`, `input_output`, `preparation`,
+`subprocess`, `database`, and `connector`. For example:
+
+```yaml
+graph:
+  type: flowchart
+nodes:
+  - id: start
+    label: Start
+    shape: terminator
+  - id: valid
+    label: Is the input valid?
+    shape: decision
+  - id: done
+    label: Continue
+    shape: process
+edges:
+  - source: start
+    target: valid
+  - source: valid
+    target: done
+    label: yes
+```
+
+Mermaid flowcharts support common `flowchart`/`graph` directions, node
+definitions and shapes, directed or undirected edges, and pipe-delimited edge
+labels. Their structure is converted to the same normalized graph format.
+Imported Mermaid, DOT, GraphML, and GEXF files are read-only. The importer converts them
 to a normalized `graph`/`nodes`/`edges` document while retaining graph
 direction, node IDs and labels, parallel edges, weights, and supported
 attributes. Imported graphs use `directed_multigraph`,

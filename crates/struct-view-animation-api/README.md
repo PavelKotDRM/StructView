@@ -20,6 +20,11 @@ domain-specific validation and commands outside the transport crate.
   job endpoints. `GET /v1/jobs` requests job state and `POST /v1/jobs` carries
   atomic job commands; the embedding application owns job schema validation.
 
+The application graph descriptor supports both relationship graphs and
+flowcharts. Flowchart responses identify their `type` and can include a
+canonical node `shape`; animation commands continue to address nodes by ID and
+edges by the returned zero-based index.
+
 The server defaults to loopback, requires a valid authorization token and
 matching `Host` header, rejects browser-origin requests, and limits request
 size, execution time, queued requests, and concurrent clients. Dropping the

@@ -46,8 +46,8 @@ mod save;
 pub(super) use dialog_helpers::{default_field_value, field_value_types};
 pub(super) use models::{
     AppMode, ComparisonDocument, ComparisonState, DocumentReplacement, FieldDialog,
-    FieldDialogTarget, FileState, LoadedDocument, PairDifferenceCache, PendingInlineEdit,
-    PreviousDocumentState, Toast, ToastKind,
+    FieldDialogTarget, FileState, GeneratedGraphCopy, LoadedDocument, PairDifferenceCache,
+    PendingInlineEdit, PreviousDocumentState, Toast, ToastKind,
 };
 
 const HISTORY_LIMIT: usize = 100;
@@ -113,6 +113,7 @@ pub struct StructViewApp {
     pub(super) pending_document_replacement: Option<DocumentReplacement>,
     /// Мета-информация о загруженном файле.
     pub(super) file_state: FileState,
+    pub(super) generated_graph_copy: Option<GeneratedGraphCopy>,
     /// Результат фонового чтения и разбора файла.
     pub(super) file_load_receiver: Option<Receiver<Result<LoadedDocument, ParseError>>>,
     file_load_fingerprint: u64,
@@ -189,6 +190,7 @@ impl Default for StructViewApp {
             exit_after_close_confirmation: false,
             pending_document_replacement: None,
             file_state: FileState::default(),
+            generated_graph_copy: None,
             file_load_receiver: None,
             file_load_fingerprint: 0,
             comparison: None,

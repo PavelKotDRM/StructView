@@ -156,13 +156,17 @@ impl StructViewApp {
             .add_filter(
                 "Supported files",
                 &[
-                    "json", "yaml", "yml", "toml", "json5", "dot", "gv", "graphml", "gexf", "xml",
+                    "json", "yaml", "yml", "toml", "json5", "mmd", "mermaid", "dot", "gv",
+                    "graphml", "gexf", "xml",
                 ],
             )
             .add_filter("JSON", &["json", "json5"])
             .add_filter("YAML", &["yaml", "yml"])
             .add_filter("TOML", &["toml"])
-            .add_filter("Graph files", &["dot", "gv", "graphml", "gexf", "xml"])
+            .add_filter(
+                "Graph files",
+                &["mmd", "mermaid", "dot", "gv", "graphml", "gexf", "xml"],
+            )
             .add_filter("All files", &["*"])
             .pick_file()
         {

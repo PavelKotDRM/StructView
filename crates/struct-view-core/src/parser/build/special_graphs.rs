@@ -1,4 +1,5 @@
 mod dot;
+mod mermaid;
 mod xml;
 
 use crate::graph::EdgeDirection;
@@ -15,6 +16,7 @@ pub(super) type JsonObject = Map<String, Value>;
 pub(super) fn parse_special_graph(input: &str, format: DataFormat) -> Result<Value, String> {
     match format {
         DataFormat::Dot => dot::parse(input),
+        DataFormat::Mermaid => mermaid::parse(input),
         DataFormat::GraphMl => xml::parse_graphml(input),
         DataFormat::Gexf => xml::parse_gexf(input),
         _ => Err(format!("{format} is not a special graph format")),

@@ -67,10 +67,35 @@ pub(super) fn show_graph_realtime_status(
     edge: Option<usize>,
     locale: Locale,
 ) {
-    let (statuses, mut markers) = if let Some(node) = node {
+    show_graph_realtime_information(ui, realtime, node, edge, None, locale);
+}
+
+pub(super) fn show_graph_realtime_item(
+    ui: &mut egui::Ui,
+    realtime: &crate::app::graph_animation::realtime::RealtimeState,
+    id: &str,
+    locale: Locale,
+) {
+    show_graph_realtime_information(ui, Some(realtime), None, None, Some(id), locale);
+}
+
+fn show_graph_realtime_information(
+    ui: &mut egui::Ui,
+    realtime: Option<&crate::app::graph_animation::realtime::RealtimeState>,
+    node: Option<usize>,
+    edge: Option<usize>,
+    item: Option<&str>,
+    locale: Locale,
+) {
+    let (statuses, mut markers) = if let Some(id) = item {
+        realtime.map_or_else(
+            || (Vec::new(), Vec::new()),
+            |state| state.information_for_item(id),
+        )
+    } else if let Some(node) = node {
         (
             realtime.map_or_else(Vec::new, |state| state.statuses_for_node(node)),
-            Vec::new(),
+            realtime.map_or_else(Vec::new, |state| state.markers_for_node(node)),
         )
     } else if let Some(edge) = edge {
         realtime.map_or_else(
@@ -267,6 +292,72 @@ mod tests {
         assert!(text.contains("Progress: 0%"));
         assert!(text.contains("Target: 80%"));
         assert!(text.contains("No status assigned"));
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn node_tooltip_includes_progress_only_for_its_assigned_jobs() {
+        let graph = crate::app::visualization::build_relationship_graph(
+            &struct_view_core::parser::parse_json(
+                r#"{"nodes":[{"id":"a"},{"id":"b"}],"edges":[{"source":"a","target":"b"}]}"#,
+            )
+            .unwrap(),
+        );
+        let state = RealtimeState::apply(
+            None,
+            RealtimeUpdate {
+                graph_id: "graph".into(),
+                commands: vec![
+                    RealtimeCommand::Element {
+                        id: "order".into(),
+                        nodes: vec!["b".into()],
+                        edges: vec![0],
+                        status: Some(ElementStatus::Running),
+                        color: None,
+                        pulse: None,
+                        label: Some("Order #42".into()),
+                        stage: Some("Payment".into()),
+                    },
+                    RealtimeCommand::Marker {
+                        id: "order".into(),
+                        edge: 0,
+                        percent: 80.0,
+                        smoothing_ms: 300,
+                        color: [40, 160, 255],
+                        reverse: false,
+                        label: Some("Order #42".into()),
+                        stage: Some("Payment".into()),
+                    },
+                ],
+            },
+            &graph,
+            0.0,
+        )
+        .unwrap();
+        assert!(state.markers_for_node(0).is_empty());
+        assert_eq!(state.markers_for_node(1).len(), 1);
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show_graph_realtime_status(ui, Some(&state), Some(1), None, Locale::English);
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        for expected in [
+            "Order #42",
+            "Payment",
+            "Running",
+            "Progress: 0%",
+            "Target: 80%",
+        ] {
+            assert!(text.contains(expected), "{text}");
+        }
         output.drop_without_applying_deltas();
     }
 }

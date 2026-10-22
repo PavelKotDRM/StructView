@@ -178,6 +178,21 @@ fn node_only_job_has_progress_and_list_exposes_label_stage_location_and_id() {
     assert!(text.contains("Validating"));
     assert!(text.contains("45%"));
     assert!(text.contains("Running"));
+    assert!(text.contains("Diagram tasks"));
+    assert!(!text.contains('●'));
+    let job_color = state.jobs["one"].color;
+    let job_color = egui::Color32::from_rgb(job_color[0], job_color[1], job_color[2]);
+    assert!(
+        output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Circle(circle)
+            if circle.fill == job_color && circle.radius == 4.0)
+        }),
+        "The job color indicator must be drawn without a font glyph"
+    );
+    assert_eq!(
+        Locale::Russian.text(crate::app::i18n::TextKey::GraphJobs),
+        "Задачи схемы"
+    );
     let target = output
         .shapes
         .iter()
@@ -248,4 +263,67 @@ fn jobs_and_legacy_visual_ids_cannot_overwrite_each_other_in_display_state() {
     .unwrap();
     let display = legacy.with_jobs(&state.visuals);
     assert_eq!(display.statuses_for_edge(0).1.len(), 2);
+}
+
+#[test]
+fn flowchart_jobs_can_complete_every_route_and_move_to_destination_nodes() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("fixtures")
+        .join("FlowchartAnimationDemo.toml");
+    let (root, _) = struct_view_core::parser::parse_data(
+        &std::fs::read_to_string(path).unwrap(),
+        Some(struct_view_core::parser::DataFormat::Toml),
+    )
+    .unwrap();
+    let graph = crate::app::visualization::try_build_relationship_graph(&root).unwrap();
+    for ids in [vec!["order-42"], vec!["order-42", "risk-42"]] {
+        let mut state = None;
+        for (index, edge) in graph.edges.iter().enumerate() {
+            let stage = format!("Step {index}: {}", graph.nodes[edge.target].label);
+            for percent in [0.0, 55.0, 100.0] {
+                let commands = ids
+                    .iter()
+                    .map(|id| {
+                        json!({
+                            "type":"upsert", "id":id, "label":format!("Task {id}"),
+                            "stage":stage, "status":"running",
+                            "nodes":[graph.nodes[edge.source].id],
+                            "edge":index, "percent":percent, "smoothing_ms":70
+                        })
+                    })
+                    .collect();
+                state =
+                    Some(JobsState::apply(state, update(commands), &graph, index as f64).unwrap());
+            }
+            let commands = ids
+                .iter()
+                .map(|id| {
+                    json!({
+                        "type":"upsert", "id":id, "label":format!("Task {id}"),
+                        "stage":stage, "status":"success",
+                        "nodes":[graph.nodes[edge.target].id], "edge":null, "percent":100
+                    })
+                })
+                .collect();
+            let arrived =
+                JobsState::apply(state, update(commands), &graph, index as f64 + 0.9).unwrap();
+            assert!(arrived.visuals.statuses_for_edge(index).1.is_empty());
+            assert_eq!(
+                arrived.visuals.statuses_for_node(edge.target).len(),
+                ids.len()
+            );
+            for id in &ids {
+                assert_eq!(
+                    arrived.jobs[*id].nodes,
+                    [graph.nodes[edge.target].id.clone()]
+                );
+                assert_eq!(arrived.jobs[*id].percent, 100.0);
+                assert!(arrived.jobs[*id].edge.is_none());
+            }
+            state = Some(arrived);
+        }
+    }
 }

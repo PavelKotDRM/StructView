@@ -26,6 +26,8 @@ struct Draft {
     label: String,
     source: String,
     target_id: String,
+    flowchart: bool,
+    shape: String,
     direction: String,
     weight: String,
     partition: String,
@@ -93,6 +95,13 @@ impl GraphEditorState {
             }),
         };
         let string = |key: &str| record[key].as_str().unwrap_or_default().to_string();
+        let shape = record
+            .get("attributes")
+            .and_then(|attributes| attributes.get("shape"))
+            .and_then(Value::as_str)
+            .or_else(|| record.get("shape").and_then(Value::as_str))
+            .unwrap_or("process")
+            .to_string();
         self.draft = Some(Draft {
             id: string("id"),
             label: string(if matches!(target, Target::Settings) {
@@ -102,6 +111,8 @@ impl GraphEditorState {
             }),
             source: string("source"),
             target_id: string("target"),
+            flowchart: document.is_flowchart(),
+            shape,
             direction: string("direction"),
             weight: if matches!(target, Target::Settings) {
                 string("weight_unit")

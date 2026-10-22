@@ -1,0 +1,177 @@
+[graph]
+type = "flowchart"
+name = "Обработка заказа"
+weight_unit = "мин"
+
+[[nodes]]
+id = "start"
+label = "Начало обработки заказа"
+shape = "terminator"
+
+[[nodes]]
+id = "receive_order"
+label = "Получить заказ и контакты клиента"
+shape = "input_output"
+
+[[nodes]]
+id = "validate_order"
+label = "Проверить состав и данные заказа"
+shape = "process"
+
+[[nodes]]
+id = "order_valid"
+label = "Заказ заполнен корректно?"
+shape = "decision"
+
+[[nodes]]
+id = "request_details"
+label = "Запросить уточнения у клиента"
+shape = "input_output"
+
+[[nodes]]
+id = "update_order"
+label = "Обновить данные заказа"
+shape = "subprocess"
+
+[[nodes]]
+id = "check_stock"
+label = "Проверить остатки на складе"
+shape = "preparation"
+
+[[nodes]]
+id = "stock_available"
+label = "Все товары в наличии?"
+shape = "decision"
+
+[[nodes]]
+id = "reserve_stock"
+label = "Зарезервировать товары"
+shape = "process"
+
+[[nodes]]
+id = "payment"
+label = "Провести оплату"
+shape = "process"
+
+[[nodes]]
+id = "payment_record"
+label = "Записать платёж"
+shape = "database"
+
+[[nodes]]
+id = "prepare_delivery"
+label = "Подготовить доставку"
+shape = "subprocess"
+
+[[nodes]]
+id = "notify_customer"
+label = "Отправить статус заказа"
+shape = "input_output"
+
+[[nodes]]
+id = "completed"
+label = "Заказ обработан"
+shape = "terminator"
+
+[[nodes]]
+id = "cancelled"
+label = "Заказ отменён"
+shape = "terminator"
+
+[[nodes]]
+id = "retry_connector"
+label = "A"
+shape = "connector"
+
+[[edges]]
+id = "start-receive"
+source = "start"
+target = "receive_order"
+
+[[edges]]
+id = "receive-validate"
+source = "receive_order"
+target = "validate_order"
+
+[[edges]]
+id = "validate-decision"
+source = "validate_order"
+target = "order_valid"
+
+[[edges]]
+id = "invalid-request-details"
+source = "order_valid"
+target = "request_details"
+label = "Нет"
+
+[[edges]]
+id = "details-update"
+source = "request_details"
+target = "update_order"
+
+[[edges]]
+id = "update-retry"
+source = "update_order"
+target = "retry_connector"
+
+[[edges]]
+id = "retry-validate"
+source = "retry_connector"
+target = "validate_order"
+label = "Повторная проверка"
+
+[[edges]]
+id = "valid-stock"
+source = "order_valid"
+target = "check_stock"
+label = "Да"
+
+[[edges]]
+id = "stock-decision"
+source = "check_stock"
+target = "stock_available"
+weight = 2
+
+[[edges]]
+id = "stock-reserve"
+source = "stock_available"
+target = "reserve_stock"
+label = "Да"
+
+[[edges]]
+id = "reserve-payment"
+source = "reserve_stock"
+target = "payment"
+weight = 1
+
+[[edges]]
+id = "payment-record"
+source = "payment"
+target = "payment_record"
+
+[[edges]]
+id = "record-delivery"
+source = "payment_record"
+target = "prepare_delivery"
+
+[[edges]]
+id = "delivery-notify"
+source = "prepare_delivery"
+target = "notify_customer"
+
+[[edges]]
+id = "notify-complete"
+source = "notify_customer"
+target = "completed"
+
+[[edges]]
+id = "stock-unavailable"
+source = "stock_available"
+target = "cancelled"
+label = "Нет"
+
+[[edges]]
+id = "details-notify"
+source = "request_details"
+target = "notify_customer"
+label = "Клиент не ответил"

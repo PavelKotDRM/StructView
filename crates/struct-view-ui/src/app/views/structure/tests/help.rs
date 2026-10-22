@@ -307,7 +307,7 @@ fn controls_help_draws_keycaps_and_accessible_action_rows_without_old_paragraphs
         for old_paragraph in [
             "Drag canvas to pan;",
             "Перетаскивание холста:",
-            "Relationship graph: drag to pan;",
+            "Graph and flowchart: drag to pan;",
         ] {
             assert!(!update.nodes.iter().any(|(_, node)| {
                 node.value()

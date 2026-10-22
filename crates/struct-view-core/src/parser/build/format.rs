@@ -12,6 +12,8 @@ pub enum DataFormat {
     Toml,
     /// Расширенный синтаксис JSON с комментариями и trailing commas.
     Json5,
+    /// Блок-схемы Mermaid, доступные только для чтения.
+    Mermaid,
     /// Граф Graphviz DOT, доступный только для чтения.
     Dot,
     /// Граф GraphML, доступный только для чтения.
@@ -31,6 +33,7 @@ impl DataFormat {
             "yaml" | "yml" => Some(Self::Yaml),
             "toml" => Some(Self::Toml),
             "json5" => Some(Self::Json5),
+            "mmd" | "mermaid" => Some(Self::Mermaid),
             "dot" | "gv" => Some(Self::Dot),
             "graphml" => Some(Self::GraphMl),
             "gexf" => Some(Self::Gexf),
@@ -60,6 +63,7 @@ impl DataFormat {
             Self::Dot => "dot",
             Self::GraphMl => "graphml",
             Self::Gexf => "gexf",
+            Self::Mermaid => "mmd",
         }
     }
 
@@ -73,6 +77,7 @@ impl DataFormat {
             Self::Dot => &["dot", "gv"],
             Self::GraphMl => &["graphml"],
             Self::Gexf => &["gexf"],
+            Self::Mermaid => &["mmd", "mermaid"],
         }
     }
 }
@@ -87,6 +92,7 @@ impl fmt::Display for DataFormat {
             Self::Dot => "Graphviz DOT",
             Self::GraphMl => "GraphML",
             Self::Gexf => "GEXF",
+            Self::Mermaid => "Mermaid flowchart",
         })
     }
 }

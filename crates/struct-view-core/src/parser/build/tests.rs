@@ -10,6 +10,26 @@ fn malformed_dot_is_not_reinterpreted_as_yaml() {
 }
 
 #[test]
+fn detects_and_normalizes_mermaid_flowcharts() {
+    let input = "flowchart TD\n  start([Start]) --> check{Valid?}\n  check -->|yes| done((Done))\n";
+    let (root, format) = parse_data(input, None).unwrap();
+
+    assert_eq!(format, DataFormat::Mermaid);
+    let value = node_to_value(&root).unwrap();
+    assert_eq!(value["graph"]["type"], "flowchart_multigraph");
+    assert_eq!(value["graph"]["source_format"], "mermaid");
+    assert_eq!(value["graph"]["attributes"]["orientation"], "TD");
+    assert_eq!(value["nodes"][0]["attributes"]["shape"], "terminator");
+    assert_eq!(value["nodes"][1]["attributes"]["shape"], "decision");
+    assert_eq!(value["edges"][1]["label"], "yes");
+    assert_eq!(value["edges"][1]["target"], "done");
+    assert_eq!(
+        DataFormat::from_path(std::path::Path::new("flow.mmd")),
+        Some(DataFormat::Mermaid)
+    );
+}
+
+#[test]
 fn parses_yaml_array() {
     let (root, format) = parse_data("- one\n- two\n", Some(DataFormat::Yaml)).unwrap();
     assert_eq!(format, DataFormat::Yaml);

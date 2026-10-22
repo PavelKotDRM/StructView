@@ -17,7 +17,16 @@ impl StructViewApp {
 
         let locale = self.locale;
         let exiting = self.exit_after_close_confirmation;
-        let message = if exiting {
+        let generated_copy_warning =
+            exiting && self.generated_graph_copy.is_some() && self.file_state.path.is_none();
+        let title = if generated_copy_warning {
+            TextKey::ExitGraphCopyTitle
+        } else {
+            TextKey::CloseFileUnsavedTitle
+        };
+        let message = if generated_copy_warning {
+            TextKey::ExitGraphCopyMessage
+        } else if exiting {
             TextKey::ExitUnsavedMessage
         } else if self.pending_document_replacement.is_some() {
             TextKey::ReplaceFileUnsavedMessage
@@ -37,7 +46,7 @@ impl StructViewApp {
                 let warning_color = ui.visuals().warn_fg_color;
                 ui.label(egui::RichText::new("⚠").size(32.0).color(warning_color));
                 ui.vertical(|ui| {
-                    ui.heading(locale.text(TextKey::CloseFileUnsavedTitle));
+                    ui.heading(locale.text(title));
                     ui.label(locale.text(message));
                 });
             });

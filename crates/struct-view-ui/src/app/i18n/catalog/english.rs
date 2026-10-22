@@ -22,6 +22,11 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::ExitUnsavedMessage => {
             "There are unsaved changes in the application. They will be lost if you exit."
         }
+        TextKey::ExitGraphCopyTitle => "Unsaved graph copy",
+        TextKey::ExitGraphCopyMessage => {
+            "The editable graph copy has not been saved. It and all its changes will be lost if you exit."
+        }
+        TextKey::GraphCopyFingerprintError => "Could not verify the generated graph copy.",
         TextKey::ExitWithoutSaving => "Exit",
         TextKey::SaveChanges => "Save changes",
         TextKey::SaveViewsSeparately => {
@@ -38,13 +43,12 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::TreeActions => "Tree actions",
         TextKey::Visualization => "Visualization",
         TextKey::TreeView => "Interactive tree",
-        TextKey::GraphView => "Relationship graph",
+        TextKey::GraphView => "Graph and flowchart",
         TextKey::GraphNew => "New graph",
-        TextKey::GraphEditableCopy => "Create editable graph copy",
         TextKey::GraphAutomaticLayout => "Node layout and link routing are automatic.",
         TextKey::GraphEditor => "Graph editor",
         TextKey::GraphEditorHint => {
-            "Click a list item or double-click a node / link label to edit. Loops and parallel links are supported."
+            "Click a list item or double-click a node / link label to edit. Flowchart node shapes, loops, and parallel links are supported."
         }
         TextKey::GraphEditOnly => "Graph changes require edit mode.",
         TextKey::GraphAddNode => "Add entity",
@@ -56,6 +60,15 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphSettingsHint => "Edit -> Graph properties",
         TextKey::GraphId => "Unique ID",
         TextKey::GraphLabel => "Name / label",
+        TextKey::GraphFlowchartShape => "Flowchart shape",
+        TextKey::GraphShapeProcess => "Process",
+        TextKey::GraphShapeTerminator => "Start / end",
+        TextKey::GraphShapeDecision => "Decision",
+        TextKey::GraphShapeInputOutput => "Input / output",
+        TextKey::GraphShapePreparation => "Preparation",
+        TextKey::GraphShapeSubprocess => "Subprocess",
+        TextKey::GraphShapeDatabase => "Database",
+        TextKey::GraphShapeConnector => "Connector",
         TextKey::GraphSource => "Source entity",
         TextKey::GraphTarget => "Target entity",
         TextKey::GraphDirection => "Direction (graph default for new links)",
@@ -65,6 +78,7 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphReverse => "Reverse",
         TextKey::GraphWeight => "Weight (JSON number, optional)",
         TextKey::GraphWeightUnit => "Weight unit",
+        TextKey::GraphAdvancedAttributes => "Advanced options",
         TextKey::GraphAttributes => "Attributes (JSON object)",
         TextKey::ColorFormat => "Color format",
         TextKey::ColorFormatOriginal => "Same as original",
@@ -104,7 +118,7 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphStatusProgress => "Progress",
         TextKey::GraphStatusTargetProgress => "Target",
         TextKey::GraphStatusStage => "Stage",
-        TextKey::GraphJobs => "Graph jobs",
+        TextKey::GraphJobs => "Diagram tasks",
         TextKey::GraphJobFocus => "Focus this job's location",
         TextKey::GraphAnimationStop => "Stop animation",
         TextKey::GraphApiHint => {
@@ -354,13 +368,13 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::SchemaConstraintNote => "Description",
         TextKey::SchemaConstraintsMore => "more",
         TextKey::SchemaConstraintObserved => "Observed in samples",
-        TextKey::GraphNodes => "Entities",
+        TextKey::GraphNodes => "Nodes",
         TextKey::GraphIncomingLinks => "incoming",
         TextKey::GraphOutgoingLinks => "outgoing",
-        TextKey::GraphEdges => "Links",
-        TextKey::GraphNoEntities => "No entities with identifiers were found.",
-        TextKey::GraphCalculating => "Building relationship graph…",
-        TextKey::GraphStageEntities => "Extracting entities and links",
+        TextKey::GraphEdges => "Edges",
+        TextKey::GraphNoEntities => "No nodes were found.",
+        TextKey::GraphCalculating => "Building graph…",
+        TextKey::GraphStageEntities => "Preparing nodes and edges",
         TextKey::GraphStageLayout => "Preparing layout and connection ports",
         TextKey::GraphStagePreliminary => "Calculating preliminary routes",
         TextKey::GraphStageConflicts => "Checking and resolving route conflicts",
@@ -387,9 +401,7 @@ pub(in crate::app) fn english_text(key: TextKey) -> &'static str {
         TextKey::GraphReverseLink => "Reverse link (target to source)",
         TextKey::GraphLinkSource => "Endpoint A / source",
         TextKey::GraphLinkTarget => "Endpoint B / target",
-        TextKey::GraphNoRelationships => {
-            "Entities were found, but no supported references connect them."
-        }
+        TextKey::GraphNoRelationships => "Nodes were found, but no edges connect them.",
         TextKey::DiffLeft => "Version A:",
         TextKey::DiffRight => "Version B:",
         TextKey::DiffNoDifferences => "These two versions are identical.",

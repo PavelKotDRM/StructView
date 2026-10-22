@@ -27,7 +27,9 @@ pub(in crate::app) fn show_jobs(
                     ui.horizontal_wrapped(|ui| {
                         let color =
                             egui::Color32::from_rgb(job.color[0], job.color[1], job.color[2]);
-                        ui.colored_label(color, "●");
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::Vec2::splat(12.0), egui::Sense::hover());
+                        ui.painter().circle_filled(rect.center(), 4.0, color);
                         ui.strong(&job.label);
                         ui.monospace(&job.id);
                         ui.colored_label(job.status.color(), locale.text(job.status.text_key()));

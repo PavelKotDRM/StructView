@@ -103,6 +103,34 @@ fn graph_editor_settings_and_edge_forms_use_numeric_weights() {
     assert!(document.edges[0].get("weight").is_none());
 }
 
+#[test]
+fn flowchart_node_editor_changes_the_shape_attribute() {
+    let mut document = sample();
+    document
+        .metadata
+        .insert("type".into(), json!("flowchart_multigraph"));
+    document.nodes[0]["attributes"]["shape"] = json!("decision");
+    let mut editor = GraphEditorState::default();
+    editor.open(&document, Target::Node(Some(0)));
+    let draft = editor.draft.as_mut().unwrap();
+
+    assert!(draft.flowchart);
+    assert_eq!(draft.shape, "decision");
+    draft.shape = "terminator".into();
+    draft.label = "Finished successfully".into();
+    let preview = draft.build_record().unwrap();
+    assert_eq!(preview["attributes"]["shape"], "terminator");
+    draft.apply(&mut document).unwrap();
+
+    let root = document.to_root().unwrap();
+    let graph = crate::app::visualization::try_build_relationship_graph(&root).unwrap();
+    assert_eq!(
+        graph.nodes[0].flowchart_shape(),
+        Some(crate::app::visualization::FlowchartNodeShape::Terminator)
+    );
+    assert_eq!(graph.nodes[0].label, "Finished successfully");
+}
+
 fn render(
     ctx: &egui::Context,
     app: &mut StructViewApp,
@@ -142,6 +170,41 @@ fn click(output: &egui::FullOutput, label: &str) -> Vec<egui::Event> {
         .unwrap()
         .nodes
         .iter()
+        .find(|(_, node)| node.label() == Some(label))
+        .unwrap()
+        .1
+        .bounds()
+        .unwrap();
+    let point = egui::pos2(
+        (bounds.x0 + bounds.x1) as f32 / 2.0,
+        (bounds.y0 + bounds.y1) as f32 / 2.0,
+    );
+    vec![
+        egui::Event::PointerMoved(point),
+        egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
+
+fn click_last(output: &egui::FullOutput, label: &str) -> Vec<egui::Event> {
+    let bounds = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .rev()
         .find(|(_, node)| node.label() == Some(label))
         .unwrap()
         .1
@@ -287,7 +350,7 @@ fn graph_editor_commands_are_in_menus_and_hidden_in_other_modes() {
             match key {
                 TextKey::FileMenu => {
                     assert_eq!(has_label(&output, "New graph"), graph);
-                    assert_eq!(has_label(&output, "Create editable graph copy"), graph);
+                    assert!(!has_label(&output, "Create editable graph copy"));
                 }
                 TextKey::EditMenu => {
                     assert_eq!(has_label(&output, "Add entity"), graph);
@@ -321,6 +384,66 @@ fn graph_editor_commands_are_in_menus_and_hidden_in_other_modes() {
             output.drop_without_applying_deltas();
         }
     }
+}
+
+#[test]
+fn edit_mode_creates_an_editable_copy_for_imported_flowcharts() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut app = StructViewApp::default();
+    app.locale = Locale::English;
+    let root = struct_view_core::parser::parse_data(
+        "flowchart TD\n  start([Start]) --> check{Valid?}\n",
+        Some(DataFormat::Mermaid),
+    )
+    .unwrap()
+    .0;
+    app.root = Some(root.clone());
+    app.file_state.format = Some(DataFormat::Mermaid);
+    app.visualization = VisualizationMode::Graph;
+    app.mode = AppMode::View;
+
+    let output = open_menu(&ctx, &mut app, TextKey::EditMenu);
+    let events = click(&output, "Mode");
+    output.drop_without_applying_deltas();
+    render(&ctx, &mut app, events).drop_without_applying_deltas();
+    let output = render(&ctx, &mut app, Vec::new());
+    let events = click_last(&output, "Edit");
+    output.drop_without_applying_deltas();
+    render(&ctx, &mut app, events).drop_without_applying_deltas();
+
+    assert_eq!(app.mode, AppMode::Edit);
+    let document = GraphDocument::read(app.root.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert!(document.is_flowchart());
+    assert_eq!(document.nodes[0]["attributes"]["shape"], "terminator");
+    assert_eq!(
+        app.file_state.format,
+        Some(DataFormat::Json),
+        "The imported Mermaid source remains read-only; the editable copy uses JSON"
+    );
+
+    let output = open_menu(&ctx, &mut app, TextKey::EditMenu);
+    let events = click(&output, "Mode");
+    output.drop_without_applying_deltas();
+    render(&ctx, &mut app, events).drop_without_applying_deltas();
+    let output = render(&ctx, &mut app, Vec::new());
+    let events = click_last(&output, "View");
+    output.drop_without_applying_deltas();
+    render(&ctx, &mut app, events).drop_without_applying_deltas();
+
+    assert_eq!(app.mode, AppMode::View);
+    assert_eq!(app.file_state.format, Some(DataFormat::Mermaid));
+    assert!(
+        GraphDocument::read(app.root.as_ref().unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        struct_view_core::parser::node_to_value(app.root.as_ref().unwrap()).unwrap(),
+        struct_view_core::parser::node_to_value(&root).unwrap()
+    );
 }
 
 #[test]

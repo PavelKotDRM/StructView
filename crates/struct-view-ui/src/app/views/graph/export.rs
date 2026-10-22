@@ -148,6 +148,39 @@ fn text(
     ).expect("writing SVG to a string cannot fail");
 }
 
+fn multiline_text(
+    svg: &mut String,
+    center: Pos2,
+    lines: &[String],
+    size: f32,
+    fill: Color32,
+    family: &str,
+) {
+    let line_height = size * 1.2;
+    let first_baseline =
+        center.y - (lines.len().saturating_sub(1) as f32 * line_height) / 2.0 + size * 0.35;
+    write!(
+        svg,
+        r#"<text x="{}" y="{}" font-size="{size}" fill="{}" text-anchor="middle" font-family="{family}">"#,
+        center.x,
+        first_baseline,
+        color(fill),
+    )
+    .expect("writing SVG to a string cannot fail");
+    for (index, line) in lines.iter().enumerate() {
+        let dy = if index == 0 { 0.0 } else { line_height };
+        write!(
+            svg,
+            r#"<tspan x="{}" dy="{}">{}</tspan>"#,
+            center.x,
+            dy,
+            xml_text(line),
+        )
+        .expect("writing SVG to a string cannot fail");
+    }
+    svg.push_str("</text>\n");
+}
+
 fn shortened_label(
     painter: &egui::Painter,
     value: &str,
@@ -340,6 +373,7 @@ fn graph_svg_localized(
                 }
             }
         }
+        let flowchart = graph_has_flowchart_nodes(graph);
         for (index, (node, &center)) in graph.nodes.iter().zip(&routing.node_positions).enumerate() {
             let size = routing.node_sizes[index];
             let rect = egui::Rect::from_center_size(center, size);
@@ -353,11 +387,22 @@ fn graph_svg_localized(
                 opaque_color(node_fill, visuals.panel_fill),
                 opaque_color(node_stroke, visuals.panel_fill),
                 visuals.widgets.noninteractive.bg_stroke.width).unwrap();
-            let label = shortened_label(painter, &node.label, 24, 15.0, egui::FontFamily::Proportional, colors.key, size.x);
-            text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_LABEL_OFFSET), &label, 15.0, colors.key, "middle", "sans-serif");
-            let id = shortened_label(painter, &node.id, 26, 11.0, egui::FontFamily::Monospace, visuals.weak_text_color(), size.x);
-            text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_ID_OFFSET), &id, 11.0, visuals.weak_text_color(), "middle", "monospace");
-            if size.y > GRAPH_NODE_SIZE.y {
+            if flowchart {
+                multiline_text(
+                    &mut svg,
+                    center,
+                    &flowchart_label_lines(&node.label, node.flowchart_shape()),
+                    15.0,
+                    colors.key,
+                    "sans-serif",
+                );
+            } else {
+                let label = shortened_label(painter, &node.label, 24, 15.0, egui::FontFamily::Proportional, colors.key, size.x);
+                text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_LABEL_OFFSET), &label, 15.0, colors.key, "middle", "sans-serif");
+                let id = shortened_label(painter, &node.id, 26, 11.0, egui::FontFamily::Monospace, visuals.weak_text_color(), size.x);
+                text(&mut svg, Pos2::new(center.x, rect.top() + GRAPH_CARD_ID_OFFSET), &id, 11.0, visuals.weak_text_color(), "middle", "monospace");
+            }
+            if !flowchart && size.y > GRAPH_NODE_SIZE.y {
                 let (incoming, outgoing) = routing.link_counts[index];
                 let counts = format!(
                     "{} {incoming} · {} {outgoing}",
@@ -381,6 +426,30 @@ const GRAPH_PNG_MAX_PIXELS: u64 = 16_000_000;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flowchart_exports_complete_wrapped_labels_without_node_ids() {
+        let label = "A very long label that needs multiple lines to fit";
+        let root = struct_view_core::parser::parse_json(&format!(
+            r#"{{"graph":{{"type":"flowchart"}},"nodes":[{{"id":"internal-id","label":{}}}],"edges":[]}}"#,
+            serde_json::to_string(label).unwrap()
+        ))
+        .unwrap();
+        let graph = build_relationship_graph(&root);
+        let routing = build_graph_routing_layout(&graph);
+        let svg = graph_svg(&graph, &routing, &egui::Visuals::light());
+        let lines = flowchart_label_lines(label, graph.nodes[0].flowchart_shape());
+
+        assert!(lines.len() > 1);
+        for line in lines {
+            assert!(svg.contains("<tspan x="), "{svg}");
+            assert!(
+                svg.contains(&format!(">{}</tspan>", xml_text(&line))),
+                "{svg}"
+            );
+        }
+        assert!(!svg.contains(">internal-id</text>"));
+    }
 
     #[test]
     fn big_card_exports_its_link_counts_and_path() {

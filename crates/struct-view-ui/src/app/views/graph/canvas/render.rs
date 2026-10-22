@@ -2,11 +2,51 @@ use super::super::*;
 use super::interaction::{GraphInteractionState, graph_keyboard};
 use super::tooltip::{
     graph_edges_at_pointer, show_graph_attributes, show_graph_edge_information,
-    show_graph_realtime_status, show_graph_tooltip,
+    show_graph_realtime_item, show_graph_realtime_status, show_graph_tooltip,
 };
 use crate::app::colors::attribute_color;
 use crate::app::views::diagram::DiagramAction;
 use std::collections::HashSet;
+
+pub(super) fn graph_selection_marker_center(
+    rect: egui::Rect,
+    shape: Option<crate::app::visualization::FlowchartNodeShape>,
+    zoom: f32,
+) -> Pos2 {
+    use crate::app::visualization::FlowchartNodeShape as Shape;
+
+    let outward_offset = 3.0 * zoom;
+    match shape {
+        Some(Shape::Decision) => {
+            let normal = Vec2::new(1.0, -1.0).normalized();
+            rect.center()
+                + Vec2::new(rect.width() * 0.25, -rect.height() * 0.25)
+                + normal * outward_offset
+        }
+        Some(Shape::InputOutput) => Pos2::new(
+            rect.right() - rect.width() * 0.2,
+            rect.top() - outward_offset,
+        ),
+        Some(Shape::Preparation) => Pos2::new(
+            rect.right() - rect.width() * 0.12,
+            rect.top() - outward_offset,
+        ),
+        Some(Shape::Terminator | Shape::Connector) => {
+            rounded_corner_marker(rect, (rect.height() * 0.5).min(255.0), outward_offset)
+        }
+        Some(Shape::Database) => rounded_corner_marker(rect, 14.0, outward_offset),
+        _ => rounded_corner_marker(rect, 6.0, outward_offset),
+    }
+}
+
+fn rounded_corner_marker(rect: egui::Rect, radius: f32, outward_offset: f32) -> Pos2 {
+    let radius = radius.min(rect.width() * 0.5).min(rect.height() * 0.5);
+    let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+    Pos2::new(
+        rect.right() - radius + radius * diagonal + outward_offset * diagonal,
+        rect.top() + radius - radius * diagonal - outward_offset * diagonal,
+    )
+}
 
 /// Отрисовать граф идентификаторов и зависимостей.
 pub(in crate::app) fn show_graph(
@@ -525,6 +565,7 @@ pub(in crate::app) fn show_graph(
             }
         }
 
+        let flowchart = graph_has_flowchart_nodes(graph);
         for (index, node) in graph.nodes.iter().enumerate() {
             let center = positions[index];
             let rect = egui::Rect::from_center_size(center, routing.node_sizes[index] * zoom);
@@ -585,46 +626,60 @@ pub(in crate::app) fn show_graph(
             } else {
                 ui.visuals().faint_bg_color
             };
-            painter.rect_filled(rect, egui::CornerRadius::same(6), node_fill);
-            painter.rect_stroke(
+            draw_flowchart_node(
+                &painter,
                 rect,
-                egui::CornerRadius::same(6),
+                node.flowchart_shape(),
+                node_fill,
                 Stroke::new(node_stroke.width * zoom, node_stroke.color),
-                egui::StrokeKind::Inside,
             );
             if is_selected {
-                let marker = Pos2::new(rect.right() - 11.0 * zoom, rect.top() + 11.0 * zoom);
+                let marker = graph_selection_marker_center(rect, node.flowchart_shape(), zoom);
+                painter.circle_filled(marker, 6.0 * zoom, ui.visuals().panel_fill);
                 painter.circle_stroke(
                     marker,
-                    6.0 * zoom,
-                    Stroke::new(1.5 * zoom, ui.visuals().panel_fill),
+                    5.0 * zoom,
+                    Stroke::new(1.5 * zoom, colors.active_match),
                 );
-                painter.circle_filled(marker, 4.0 * zoom, colors.active_match);
+                painter.circle_filled(marker, 2.5 * zoom, colors.active_match);
             }
+
             let label_font = FontId::proportional(15.0 * zoom);
-            let label = shorten_to_width(
-                &painter,
-                &node.label,
-                24,
-                &label_font,
-                (routing.node_sizes[index].x - 16.0) * zoom,
-                if is_dimmed {
-                    colors.key.gamma_multiply(GRAPH_DIM_FACTOR)
-                } else {
-                    colors.key
-                },
-            );
-            painter.text(
-                Pos2::new(center.x, rect.top() + GRAPH_CARD_LABEL_OFFSET * zoom),
-                Align2::CENTER_CENTER,
-                label,
-                label_font,
-                if is_dimmed {
-                    colors.key.gamma_multiply(GRAPH_DIM_FACTOR)
-                } else {
-                    colors.key
-                },
-            );
+            let label_color = if is_dimmed {
+                colors.key.gamma_multiply(GRAPH_DIM_FACTOR)
+            } else {
+                colors.key
+            };
+            if flowchart {
+                let shape = node.flowchart_shape();
+                let label_width =
+                    if shape == Some(crate::app::visualization::FlowchartNodeShape::Decision) {
+                        rect.width() * 0.44
+                    } else {
+                        rect.width() - 32.0 * zoom
+                    };
+                let label = flowchart_label_lines(&node.label, shape).join("\n");
+                let galley = painter.layout(label, label_font, label_color, label_width);
+                let label_area = rect.shrink2(Vec2::new(8.0 * zoom, 4.0 * zoom));
+                let label_position = label_area.center() - galley.size() * 0.5;
+                painter.galley(label_position, galley, label_color);
+            } else {
+                let label = shorten_to_width(
+                    &painter,
+                    &node.label,
+                    24,
+                    &label_font,
+                    (routing.node_sizes[index].x - 16.0) * zoom,
+                    label_color,
+                );
+                painter.text(
+                    Pos2::new(center.x, rect.top() + GRAPH_CARD_LABEL_OFFSET * zoom),
+                    Align2::CENTER_CENTER,
+                    label,
+                    label_font,
+                    label_color,
+                );
+            }
             let id_color = if is_dimmed {
                 ui.visuals()
                     .weak_text_color()
@@ -632,23 +687,25 @@ pub(in crate::app) fn show_graph(
             } else {
                 ui.visuals().weak_text_color()
             };
-            let id_font = FontId::monospace(11.0 * zoom);
-            let id = shorten_to_width(
-                &painter,
-                &node.id,
-                26,
-                &id_font,
-                (routing.node_sizes[index].x - 16.0) * zoom,
-                id_color,
-            );
-            painter.text(
-                Pos2::new(center.x, rect.top() + GRAPH_CARD_ID_OFFSET * zoom),
-                Align2::CENTER_CENTER,
-                id,
-                id_font,
-                id_color,
-            );
-            if routing.node_sizes[index].y > GRAPH_NODE_SIZE.y {
+            if !flowchart {
+                let id_font = FontId::monospace(11.0 * zoom);
+                let id = shorten_to_width(
+                    &painter,
+                    &node.id,
+                    26,
+                    &id_font,
+                    (routing.node_sizes[index].x - 16.0) * zoom,
+                    id_color,
+                );
+                painter.text(
+                    Pos2::new(center.x, rect.top() + GRAPH_CARD_ID_OFFSET * zoom),
+                    Align2::CENTER_CENTER,
+                    id,
+                    id_font,
+                    id_color,
+                );
+            }
+            if !flowchart && routing.node_sizes[index].y > GRAPH_NODE_SIZE.y {
                 let (incoming, outgoing) = routing.link_counts[index];
                 let counts = format!(
                     "{} {incoming} · {} {outgoing}",
@@ -690,8 +747,27 @@ pub(in crate::app) fn show_graph(
         if let Some(player) = &animation {
             player.paint(&painter, now, animation_canvas);
         }
+        let mut realtime_hovered = false;
         if let Some(state) = &realtime {
-            state.paint(&painter, now, animation_canvas, locale);
+            for (index, (id, rect)) in state
+                .paint(&painter, now, animation_canvas, locale)
+                .into_iter()
+                .enumerate()
+            {
+                if !rect.intersects(viewport) {
+                    continue;
+                }
+                let response = ui.interact(
+                    rect.intersect(viewport),
+                    ui.make_persistent_id(("graph-animation-item", &id, index)),
+                    Sense::hover(),
+                );
+                realtime_hovered |= response.contains_pointer();
+                show_graph_tooltip(&response, false, |ui| {
+                    ui.set_max_width(480.0);
+                    show_graph_realtime_item(ui, state, &id, locale);
+                });
+            }
         }
         let pin_route_tooltip = ui.input(|input| input.modifiers.ctrl || input.modifiers.command);
         if !pin_route_tooltip {
@@ -699,6 +775,7 @@ pub(in crate::app) fn show_graph(
         }
         let mut edge_hit = false;
         if !interaction.edge_hover_pinned
+            && !realtime_hovered
             && interaction.marquee_start.is_none()
             && !ui.input(|input| input.pointer.any_down())
             && let Some(pointer) = ui.input(|input| input.pointer.hover_pos())
@@ -726,7 +803,7 @@ pub(in crate::app) fn show_graph(
                 interaction.edge_hover = Some((pointer, edges));
             }
         }
-        if let Some((pointer, edges)) = &interaction.edge_hover {
+        if !realtime_hovered && let Some((pointer, edges)) = &interaction.edge_hover {
             let response = ui.interact(
                 egui::Rect::from_center_size(*pointer, Vec2::splat(2.0)),
                 ui.make_persistent_id(("graph-edge-hover", routing.graph_fingerprint)),
@@ -770,6 +847,74 @@ pub(in crate::app) fn show_graph(
             crate::app::graph_animation::store_player(ui.ctx(), player);
         } else {
             crate::app::graph_animation::stop_scenario(ui.ctx());
+        }
+    }
+
+    fn draw_flowchart_node(
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        shape: Option<crate::app::visualization::FlowchartNodeShape>,
+        fill: Color32,
+        stroke: Stroke,
+    ) {
+        use crate::app::visualization::FlowchartNodeShape as Shape;
+
+        let polygon = match shape {
+            Some(Shape::Decision) => Some(vec![
+                rect.center_top(),
+                rect.right_center(),
+                rect.center_bottom(),
+                rect.left_center(),
+            ]),
+            Some(Shape::InputOutput) => {
+                let inset = rect.width() * 0.14;
+                Some(vec![
+                    Pos2::new(rect.left() + inset, rect.top()),
+                    Pos2::new(rect.right(), rect.top()),
+                    Pos2::new(rect.right() - inset, rect.bottom()),
+                    Pos2::new(rect.left(), rect.bottom()),
+                ])
+            }
+            Some(Shape::Preparation) => {
+                let inset = rect.width() * 0.12;
+                Some(vec![
+                    Pos2::new(rect.left() + inset, rect.top()),
+                    Pos2::new(rect.right() - inset, rect.top()),
+                    Pos2::new(rect.right(), rect.center().y),
+                    Pos2::new(rect.right() - inset, rect.bottom()),
+                    Pos2::new(rect.left() + inset, rect.bottom()),
+                    Pos2::new(rect.left(), rect.center().y),
+                ])
+            }
+            _ => None,
+        };
+        if let Some(points) = polygon {
+            painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+            return;
+        }
+
+        let rounding = match shape {
+            Some(Shape::Terminator) | Some(Shape::Connector) => {
+                (rect.height() / 2.0).min(f32::from(u8::MAX)).round() as u8
+            }
+            Some(Shape::Database) => 14,
+            _ => 6,
+        };
+        painter.rect_filled(rect, egui::CornerRadius::same(rounding), fill);
+        painter.rect_stroke(
+            rect,
+            egui::CornerRadius::same(rounding),
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        if shape == Some(Shape::Subprocess) {
+            let inset = 10.0;
+            for x in [rect.left() + inset, rect.right() - inset] {
+                painter.line_segment(
+                    [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                    stroke,
+                );
+            }
         }
     }
 }

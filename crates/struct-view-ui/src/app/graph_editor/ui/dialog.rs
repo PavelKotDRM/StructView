@@ -40,8 +40,10 @@ impl StructViewApp {
                 .show(ui, |ui| {
                     match draft.target {
                         Target::Node(_) => {
-                            field(ui, locale.text(TextKey::GraphId), &mut draft.id);
                             field(ui, locale.text(TextKey::GraphLabel), &mut draft.label);
+                            if draft.flowchart {
+                                flowchart_shape_choice(ui, &mut draft.shape, locale);
+                            }
                             let choices = std::iter::once(String::new())
                                 .chain(document.partitions.iter().cloned())
                                 .collect::<Vec<_>>();
@@ -65,7 +67,6 @@ impl StructViewApp {
                             }
                         }
                         Target::Edge(_) => {
-                            field(ui, locale.text(TextKey::GraphId), &mut draft.id);
                             field(ui, locale.text(TextKey::GraphLabel), &mut draft.label);
                             let ids = document
                                 .nodes
@@ -106,37 +107,38 @@ impl StructViewApp {
                             field(ui, locale.text(TextKey::GraphWeightUnit), &mut draft.weight);
                         }
                     }
-                    if !matches!(draft.target, Target::Partition(_)) {
-                        ui.label(locale.text(TextKey::GraphAttributes));
-                        ui.weak(locale.text(TextKey::GraphAttributesHint));
-                        ui.add(
-                            egui::TextEdit::multiline(&mut draft.attributes)
-                                .code_editor()
-                                .desired_rows(6)
-                                .desired_width(f32::INFINITY),
-                        );
-                        if matches!(draft.target, Target::Node(_) | Target::Edge(_)) {
-                            if let Err(error) =
-                                color_attribute_editor(ui, &mut draft.attributes, "color", locale)
-                            {
-                                draft.error = Some(error);
-                            }
-                            if matches!(draft.target, Target::Node(_))
-                                && let Err(error) = color_attribute_editor(
-                                    ui,
-                                    &mut draft.attributes,
-                                    "fillcolor",
-                                    locale,
-                                )
-                            {
-                                draft.error = Some(error);
-                            }
+                    if matches!(draft.target, Target::Node(_) | Target::Edge(_)) {
+                        if let Err(error) =
+                            color_attribute_editor(ui, &mut draft.attributes, "color", locale)
+                        {
+                            draft.error = Some(error);
                         }
-                        ui.collapsing(locale.text(TextKey::GraphElementJson), |ui| {
-                            match draft.build_record().and_then(|record| {
-                                serde_json::to_string_pretty(&record)
-                                    .map_err(|error| error.to_string())
-                            }) {
+                        if matches!(draft.target, Target::Node(_))
+                            && let Err(error) = color_attribute_editor(
+                                ui,
+                                &mut draft.attributes,
+                                "fillcolor",
+                                locale,
+                            )
+                        {
+                            draft.error = Some(error);
+                        }
+                        ui.collapsing(locale.text(TextKey::GraphAdvancedAttributes), |ui| {
+                            field(ui, locale.text(TextKey::GraphId), &mut draft.id);
+                            ui.label(locale.text(TextKey::GraphAttributes));
+                            ui.weak(locale.text(TextKey::GraphAttributesHint));
+                            ui.add(
+                                egui::TextEdit::multiline(&mut draft.attributes)
+                                    .code_editor()
+                                    .desired_rows(4)
+                                    .desired_width(f32::INFINITY),
+                            );
+                            ui.collapsing(locale.text(TextKey::GraphElementJson), |ui| match draft
+                                .build_record()
+                                .and_then(|record| {
+                                    serde_json::to_string_pretty(&record)
+                                        .map_err(|error| error.to_string())
+                                }) {
                                 Ok(preview) => {
                                     let mut preview = preview.as_str();
                                     ui.add(
@@ -148,7 +150,7 @@ impl StructViewApp {
                                 Err(error) => {
                                     ui.colored_label(ui.visuals().error_fg_color, error);
                                 }
-                            }
+                            });
                         });
                     }
                 });
@@ -237,6 +239,9 @@ impl Draft {
             Target::Node(_) => {
                 record["id"] = json!(self.id);
                 record["label"] = json!(self.label);
+                if self.flowchart {
+                    record["attributes"]["shape"] = json!(self.shape);
+                }
                 if self.partition.is_empty() {
                     record
                         .as_object_mut()
@@ -388,6 +393,31 @@ fn direction_choice(ui: &mut egui::Ui, value: &mut String, locale: Locale) {
                 (EdgeDirection::Reverse, TextKey::GraphReverse),
             ] {
                 ui.selectable_value(value, direction.as_str().to_string(), locale.text(key));
+            }
+        });
+}
+
+fn flowchart_shape_choice(ui: &mut egui::Ui, value: &mut String, locale: Locale) {
+    let choices = [
+        ("process", TextKey::GraphShapeProcess),
+        ("terminator", TextKey::GraphShapeTerminator),
+        ("decision", TextKey::GraphShapeDecision),
+        ("input_output", TextKey::GraphShapeInputOutput),
+        ("preparation", TextKey::GraphShapePreparation),
+        ("subprocess", TextKey::GraphShapeSubprocess),
+        ("database", TextKey::GraphShapeDatabase),
+        ("connector", TextKey::GraphShapeConnector),
+    ];
+    let selected = choices
+        .iter()
+        .find(|(shape, _)| *shape == value)
+        .map_or(value.as_str(), |(_, key)| locale.text(*key));
+    ui.label(locale.text(TextKey::GraphFlowchartShape));
+    egui::ComboBox::from_id_salt("graph-flowchart-shape")
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (shape, key) in choices {
+                ui.selectable_value(value, shape.to_string(), locale.text(key));
             }
         });
 }

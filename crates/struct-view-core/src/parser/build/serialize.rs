@@ -28,7 +28,7 @@ pub fn serialize_data(value: &Value, format: DataFormat, compact: bool) -> Resul
             format,
             compact,
         ),
-        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => {
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf | DataFormat::Mermaid => {
             Err(read_only_format_error(format))
         }
     }
@@ -70,7 +70,7 @@ pub fn serialize_node(
         DataFormat::Json | DataFormat::Json5 => {
             serialize_data(&node_to_value(node)?, format, compact)?
         }
-        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => {
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf | DataFormat::Mermaid => {
             return Err(read_only_format_error(format));
         }
     };

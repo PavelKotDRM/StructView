@@ -67,6 +67,7 @@ impl StructViewApp {
                 match self.graph_editor.tab {
                     0 => {
                         egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
                             .max_height(360.0)
                             .id_salt("graph-editor-nodes")
                             .show(ui, |ui| {
@@ -87,6 +88,7 @@ impl StructViewApp {
                     }
                     1 => {
                         egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
                             .max_height(360.0)
                             .id_salt("graph-editor-edges")
                             .show(ui, |ui| {
@@ -109,6 +111,7 @@ impl StructViewApp {
                     }
                     2 => {
                         egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
                             .max_height(360.0)
                             .id_salt("graph-editor-groups")
                             .show(ui, |ui| {

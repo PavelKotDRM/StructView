@@ -6,7 +6,8 @@ application and command-line interface.
 ## Responsibilities
 
 - Parse and serialize JSON, YAML, TOML, and JSON5 documents;
-- import Graphviz DOT, GraphML, and GEXF graphs as normalized data;
+- import Mermaid flowcharts and Graphviz DOT, GraphML, and GEXF graphs as
+  normalized data;
 - represent parsed documents as editable trees;
 - search keys, values, and paths with literal or regular-expression queries;
 - compare structured documents and report changes;
@@ -55,6 +56,7 @@ struct-view-core/
             ├── paths.rs        path utilities
             ├── special_graphs.rs graph importer module declarations
             ├── special_graphs/
+            │   ├── mermaid.rs import Mermaid flowcharts
             │   ├── dot.rs      Graphviz DOT import
             │   └── xml.rs      GraphML and GEXF import
             │       └── xml/

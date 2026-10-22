@@ -95,6 +95,6 @@ name = "обращается"
 
 [[relations]]
 id = "support_order"
-source = "support_ticket"
-target = "order"
-name = "по заказу"
+source = "order"
+target = "support_ticket"
+name = "поддержка по заказу"

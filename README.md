@@ -1,8 +1,9 @@
 # StructView
 
 A fast, cross-platform viewer and editor for structured data. The application
-displays JSON, YAML, TOML, and JSON5 as an interactive tree, imports Graphviz
-DOT, GraphML, and GEXF graphs for inspection and conversion, and provides
+displays JSON, YAML, TOML, and JSON5 as an interactive tree, builds flowcharts
+from structured graph data or Mermaid, imports Graphviz DOT, GraphML, and GEXF
+graphs for inspection and conversion, and provides
 headless commands for formatting, validation, search, comparison, editing,
 and table, schema, and graph export.
 
@@ -13,15 +14,18 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 ## Features
 
 - JSON, YAML, TOML, and JSON5 support;
-- read-only Graphviz DOT, GraphML, and GEXF import with conversion to JSON,
-  YAML, TOML, or JSON5;
+- flowchart and graph views for explicit JSON/YAML/TOML node-and-edge data,
+  including process, terminator, decision, input/output, and other common node
+  shapes;
+- read-only Mermaid flowchart, Graphviz DOT, GraphML, and GEXF import with
+  conversion to JSON, YAML, TOML, or JSON5;
 - automatic format detection for stdin and files with unknown extensions;
 - interactive object and array tree with expandable and collapsible nodes;
 - full-text search across keys, values, and JSON paths;
 - search filters for key/value/path scope, case sensitivity, exact and
   whole-word matching, and regular expressions;
 - a regex builder for escaped literal text and common pattern fragments;
-- switchable tree, relationship graph, flattened table, and schema views;
+- switchable tree, graph/flowchart, flattened table, and schema views;
 - CSS color recognition and swatches in value views, including named colors,
   hexadecimal, RGB/HSL/HWB, Lab/LCH, OKLab/OKLCH, and CSS `color()` formats;
 - a separate JSON/JSON5/YAML/TOML data-structure diagram with source-ordered
@@ -70,6 +74,7 @@ Step-by-step tutorials: [English](docs/tutorial/en.md) | [Русский](docs/t
 | YAML | `.yaml`, `.yml` | Read and write |
 | TOML | `.toml` | Read and write |
 | JSON5 | `.json5` | Read and write |
+| Mermaid flowchart | `.mmd`, `.mermaid` | Read-only import |
 | Graphviz DOT | `.dot`, `.gv` | Read-only import |
 | GraphML | `.graphml` | Read-only import |
 | GEXF | `.gexf` | Read-only import |
@@ -80,8 +85,14 @@ the format is detected from the content.
 GraphML or GEXF documents with an `.xml` extension are identified by their root
 element.
 
-DOT, GraphML, and GEXF are normalized to a graph with `graph`, `nodes`, and
-`edges`. Use `File -> Convert to` in the GUI or, for example,
+Mermaid flowcharts, DOT, GraphML, and GEXF are normalized to a graph with
+`graph`, `nodes`, and `edges`. JSON, YAML, and TOML can also describe a graph
+directly with `graph.type` set to `flowchart` (or another supported graph
+type), node `id`, `label` and optional `shape` fields, and edge `source`,
+`target`, and optional `label` fields. Common shapes include `process`,
+`terminator`, `decision`, `input_output`, `preparation`, `subprocess`,
+`database`, and `connector`. Mermaid imports map its common node delimiters
+and edge labels into these fields. Use `File -> Convert to` in the GUI or, for example,
 `struct_view format network.graphml --output network.json`, to save that
 normalized data as JSON, YAML, TOML, or JSON5. Imported graph files are
 read-only and are never overwritten. See the
@@ -183,7 +194,7 @@ The interface provides:
   groups that collapse into one `Menu` on narrow windows;
 - a `File` menu for creating, opening, saving, converting to another format,
   saving to a new file, and closing a document;
-- a view selector for the interactive tree, relationship graph, flattened
+- a view selector for the interactive tree, graph/flowchart, flattened
   table, and schema diagram;
 - `View -> Visualization -> Data structure diagram`, also available without an open document.
   This independent mode draws the file hierarchy as boxes and parent-child
@@ -256,7 +267,7 @@ The interface provides:
   scaled down if necessary to stay within 16 million pixels. Export runs in
   the background. Both diagrams offer the same light/transparent and
   dark/opaque export styles, independently of the application theme.
-- a relationship graph inferred from IDs and references, plus explicit
+- a graph inferred from IDs and references, plus explicit
   directed, undirected, weighted, and multi-edge graph schemas; undirected
   adjacency lists and weighted matrices; TOML entity-relation, bipartite, and
   multipartite graphs; read-only Graphviz DOT, GraphML, and GEXF imports.
@@ -304,7 +315,7 @@ The interface provides:
   Ctrl/Cmd to add to the selection. Both diagrams use ordinary dragging to pan,
   wheel/pinch to zoom about the pointer, +/- to zoom, and Home to fit.
   With the canvas or a node focused, Up/Down select the previous/next node.
-  In the relationship graph, Left/Right visit incoming/outgoing neighbors
+  In the graph view, Left/Right visit incoming/outgoing neighbors
   (or another connected neighbor when none exists in that direction);
   Enter/Space select the current node. Selected nodes highlight their connections.
   Hover a connection line or its label to see its full label, direction, and
@@ -374,12 +385,13 @@ The interface provides:
 - adding fields and elements in edit mode;
 - light and dark theme switching.
 
-### Relationship graph editor
+### Graph and flowchart editor
 
-In the relationship view, use **File -> New graph** to start an empty, unsaved
-graph in Edit mode. For any existing graph, including inferred relationships
-and DOT/GraphML/GEXF imports, **File -> Create editable graph copy** opens a
-separate document without writing to the source file.
+In the graph view, use **File -> New graph** to start an empty, unsaved
+graph in Edit mode. Switch to **Edit -> Mode -> Edit** on any existing graph
+to create an editable copy if needed. This works for inferred relationships and
+read-only DOT/GraphML/GEXF/Mermaid imports without writing to the source file.
+Flowchart copies retain their node shapes and remain editable as flowcharts.
 Unsaved changes are confirmed before replacing the current document.
 
 **View -> Graph editor** opens a resizable window with entity, link, group,
@@ -389,11 +401,13 @@ Its three-dot menu offers **Detach window**, and the separate window
 offers **Dock window** to return. Reopen a closed editor through **View**.
 **Add entity**, **Add link**, **Add group**, and **Graph properties** are in
 **Edit**, with duplicate buttons at the top of the editor window, including
-when detached. Graph commands are hidden outside the relationship view; the editor
+when detached. Graph commands are hidden outside the graph view; the editor
 window and mutation commands require an editable graph in Edit mode.
 The editor supports:
 
 - add, rename, duplicate, and delete entities and links;
+- select a flowchart node's shape, including process, terminator, decision,
+  input/output, preparation, subprocess, database, and connector;
 - choose source and target entities, including self-links and parallel links;
 - set directed, undirected, bidirectional, or reverse directions, optional
   numeric weights, weight units, labels, and typed JSON-object attributes;
@@ -430,7 +444,7 @@ show an error instead of an outdated preview.
 
 ### Graph animation API
 
-Open a graph in the relationship view and wait for its layout to finish.
+Open a graph or flowchart in the graph view and wait for its layout to finish.
 Choose **Settings -> Graph animation API** to open the API settings window.
 The window can be detached and docked back into the main window. Port `0`
 selects an available port; alternatively set an explicit port before enabling.
@@ -472,8 +486,8 @@ required. It cannot move individual nodes or edit a document.
 
 | Method | Endpoint | JSON response / behavior |
 | --- | --- | --- |
-| GET | `/v1/capabilities` | API version, features, job commands, statuses, and limits; also works without an active graph |
-| GET | `/v1/graph` | `{graph_id, nodes:[{id,label}], edges:[{index,source,target,label,direction}]}` |
+| GET | `/v1/capabilities` | API version, features (including `flowchart_shapes`), job commands, statuses, and limits; also works without an active graph |
+| GET | `/v1/graph` | `{graph_id,type,nodes:[{id,label,shape?}],edges:[{index,source,target,label,direction}]}` |
 | GET | `/v1/animation` | `{graph_id,running}` |
 | POST | `/v1/animation` | Accept a scenario, replacing playback; `{accepted:true,duration_ms}` |
 | POST | `/v1/animation/stop` | Empty body; stop the scenario and clear realtime effects and jobs; `{stopped:true}`, also outside the graph view |
@@ -486,6 +500,11 @@ For JSON POST requests, send `Content-Type: application/json` and a
 `Content-Length` (standard Python/PowerShell clients do this automatically).
 Read `/v1/graph` first. Node targets use its string IDs; links use its zero-based
 **indexes**, not the document's link IDs, so parallel links are distinguishable.
+The descriptor's `type` is `graph` or `flowchart`. Flowchart descriptors include a canonical `shape`
+for nodes whose source data specifies one; ordinary graph nodes omit `shape`.
+Supported shape names are `process`, `terminator`, `decision`, `input_output`,
+`preparation`, `subprocess`, `database`, and `connector`. Flow animations still
+target nodes by ID and edges by the descriptor's zero-based index.
 Send the returned `graph_id` unchanged; after graph changes fetch the descriptor
 again. Unknown or ambiguous node IDs and unknown link indexes are rejected.
 Hover over an entity or link to inspect each execution's label, current stage,
@@ -495,7 +514,7 @@ markers are drawn in separate lanes. Node badges include a short label, ID,
 status, and stage; marker labels show the job and visible progress. Long badge
 text is shortened, and nodes show at most three badges with a remaining-count
 indicator. Full details remain in tooltips. For the jobs API, the expandable
-**Graph jobs** list shows all jobs; click a location button to focus its node.
+**Diagram tasks** list shows all jobs; click a location button to focus its node.
 
 Scenario shape:
 
@@ -822,12 +841,14 @@ One slow client no longer blocks others. Excess HTTP clients receive `503`;
 excess TLS clients are disconnected before handshake. Disabling joins client
 workers and releases the listener; it may briefly wait for their I/O deadlines.
 
-#### Compact graph animation demo (Python)
+#### Graph and flowchart animation demo (Python)
 
 The standard-library controller [tests/demo_graph_animation.py](tests/demo_graph_animation.py)
-demonstrates the compact, connected
+defaults to [FlowchartAnimationDemo.toml](tests/fixtures/FlowchartAnimationDemo.toml).
+The compact, connected
 [tests/fixtures/GraphAnimationDemo.toml](tests/fixtures/GraphAnimationDemo.toml):
-8 entities and 9 relationships along a concise order/payment/delivery workflow.
+8 entities and 9 relationships along an order/payment/delivery workflow is also
+available with `--graph tests\fixtures\GraphAnimationDemo.toml`.
 It requires **Python 3.11+**, no pip packages. StructView recognizes the fixture's
 `[[entities]]` and `[[relations]]` arrays as an explicit node/link graph.
 See the [Russian](tests/README.md) or
@@ -838,7 +859,7 @@ For the larger 100-entity, 250-relationship layout demo, open
 `--graph tests\fixtures\Graph.toml`; regenerate that stress fixture with
 `python tests\generate_shop_graph.py`.
 
-1. Open the fixture in StructView, select the relationship graph, and wait for
+1. Open the fixture in StructView, select Graph and flowchart, and wait for
    layout/routing to finish.
 2. Enable the animation API and copy its URL and Bearer token.
 3. From the repository root, run (replace the API address with the displayed one):
@@ -870,11 +891,14 @@ for inspection.
 
 - **Scheduled (chapters 1–9):** camera fit/focus/zoom, static and pulsing
   highlights, full flow, percentage segments, reverse flow, and scheduled clear.
-  Each feature is isolated instead of animating every link at once.
-- **Realtime/jobs (chapters 10–19):** one waiting job, smooth progress and a late
+  Chapter 9a then covers every node and edge along continuous entry-to-exit
+  routes, including branches and bounded loops.
+- **Realtime/jobs (chapters 10–21):** one waiting job, smooth progress and a late
   lower update, a second job on the same route/node, changing stage/location,
   error, retry, individual stop, compatibility with legacy realtime, independent
-  clearing, and state inspection. At most two jobs run at once.
+  clearing, and state inspection. Chapters 19–20 traverse all routes first with
+  one execution, then with two independent executions, including different
+  branches. At most two jobs run at once.
 - Every chapter includes an explanation in the dashboard and console. Keep
   StructView visible beside the dashboard to inspect badges, hover details,
   and the focusable job list.
@@ -896,10 +920,10 @@ for inspection.
 
 The script resolves link indexes from `/v1/graph`, verifies entity IDs and
 relationships against the TOML fixture, and refuses a mismatched graph.
-Starting a tour stops existing animations and jobs. A completed job remains
-visible after the realtime tour for inspection; **Stop / clear** removes it.
-At speed 1 the complete guided tour takes roughly 90 seconds plus request
-overhead; manual checkpoints can be held as long as needed. Keep the graph
+Starting a tour stops existing animations and jobs. Completed executions remain
+visible after the realtime tour for inspection; **Stop / clear** removes them.
+Duration depends on route count, route lengths, speed, and request overhead;
+manual checkpoints can be held as long as needed. Keep the graph
 view active. Ctrl+C stops playback, clears all layers, and closes the dashboard.
 The tour requires jobs support; it checks capabilities and reports an explicit
 error if the running StructView API is too old.
@@ -907,12 +931,12 @@ The browser talks only to the local controller, which forwards authenticated
 requests to StructView; the StructView token is never embedded in the page.
 
 Options: `--mode scenario|realtime|both`, `--speed 0.1..10`, `--port 0` for an
-available dashboard port, `--graph PATH` for a fixture in the same shop schema,
+available dashboard port, `--graph PATH` for a graph or flowchart fixture,
 `--autoplay` for immediate timed playback, `--step-by-step` for manual
 checkpoints, and `--once` to run without a dashboard and exit after completion
 (cannot be combined with `--step-by-step`).
 
-`--once` starts immediately and leaves the final completed job visible; unlike
+`--once` starts immediately and leaves the final completed executions visible; unlike
 Ctrl+C, normal completion does not send a global stop.
 
 ```powershell

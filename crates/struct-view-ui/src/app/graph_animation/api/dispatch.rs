@@ -90,7 +90,7 @@ impl StructViewApp {
             let result = if matches!(&operation, GuiApiOperation::Capabilities) {
                 Ok(json!({
                     "version":1,
-                    "features":["scheduled","realtime","jobs","atomic_job_updates","stage_progress"],
+                    "features":["scheduled","realtime","jobs","atomic_job_updates","stage_progress","flowchart_shapes"],
                     "limits":{"body_bytes":65536,"steps":256,"realtime_items":256,
                         "jobs":jobs::MAX_JOBS,"job_commands":jobs::MAX_JOBS,
                         "id_bytes":128,"label_bytes":256,"stage_bytes":256},
@@ -101,7 +101,7 @@ impl StructViewApp {
                 stop(ctx);
                 Ok(json!({"stopped":true}))
             } else if self.visualization != VisualizationMode::Graph || self.comparison.is_some() {
-                Err((409, "Relationship graph view must be active".to_string()))
+                Err((409, "Graph or flowchart view must be active".to_string()))
             } else if let Some(calculation) = self.graph_calculation.result() {
                 let graph_id = graph_id.as_ref().expect("ready graph ID");
                 match operation {

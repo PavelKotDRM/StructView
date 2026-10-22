@@ -1,4 +1,4 @@
-"""Local demonstration controller for StructView and a compact graph fixture (Python 3.11+)."""
+"""Local demonstration controller for StructView graph and flowchart animation (Python 3.11+)."""
 
 import argparse
 from collections import Counter
@@ -18,7 +18,7 @@ import urllib.request
 import demo_graph_walkthrough as walkthrough
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "GraphAnimationDemo.toml"
+FIXTURE = Path(__file__).parent / "fixtures" / "FlowchartAnimationDemo.toml"
 COLORS = ([40, 200, 255], [255, 180, 40], [170, 120, 255], [70, 210, 110])
 
 
@@ -69,24 +69,41 @@ class Api:
 
 
 def map_graph(fixture, descriptor):
-    """Resolve fixture relations using API indexes, never assumed file-order indexes."""
+    """Resolve fixture links using API indexes, never assumed file-order indexes."""
+    nodes, links = fixture_nodes(fixture), fixture_links(fixture)
+    is_flowchart = (fixture.get("graph", {}).get("type", "").startswith("flowchart")
+                    or any("shape" in node for node in nodes))
+    expected_type = "flowchart" if is_flowchart else "graph"
     ids = [node["id"] for node in descriptor["nodes"]]
-    expected = [node["id"] for node in fixture["entities"]]
+    expected = [node["id"] for node in nodes]
     if Counter(ids) != Counter(expected) or len(set(ids)) != len(ids):
-        raise ValueError("Open the supplied demo fixture in StructView: entity IDs do not match")
-    relations = fixture["relations"]
+        raise ValueError("Open the supplied demo fixture in StructView: node IDs do not match")
+    if descriptor.get("type") != expected_type:
+        raise ValueError(f"Open the supplied {expected_type} demo fixture in StructView")
     actual = descriptor["edges"]
     pairs = lambda edges: Counter((edge["source"], edge["target"]) for edge in edges)
-    if pairs(actual) != pairs(relations):
-        raise ValueError("Open the supplied demo fixture: relationships do not match")
+    if pairs(actual) != pairs(links):
+        raise ValueError("Open the supplied demo fixture: links do not match")
     mapped = []
-    for relation in relations:
+    for fixture_edge in links:
         candidates = [edge for edge in actual
-                      if (edge["source"], edge["target"]) == (relation["source"], relation["target"])]
+                      if (edge["source"], edge["target"]) ==
+                      (fixture_edge["source"], fixture_edge["target"])]
         if len(candidates) != 1:
-            raise ValueError(f"Ambiguous relation: {relation['id']}")
-        mapped.append({**relation, "index": candidates[0]["index"]})
+            raise ValueError(f"Ambiguous link: {fixture_edge['id']}")
+        mapped.append({**fixture_edge, "index": candidates[0]["index"],
+                       "direction": candidates[0]["direction"]})
     return mapped
+
+
+def fixture_nodes(fixture):
+    if "nodes" in fixture:
+        return fixture["nodes"]
+    return [{"id": item["id"], "label": item["name"]} for item in fixture["entities"]]
+
+
+def fixture_links(fixture):
+    return fixture["edges"] if "edges" in fixture else fixture["relations"]
 
 
 class Cancelled(Exception):
@@ -183,7 +200,7 @@ class Demo:
             walkthrough.scheduled(self, graph_id, relations)
         if mode in ("both", "realtime"):
             self.realtime(graph_id, relations)
-        self.report("finished", "The completed job remains visible after a realtime tour. Use Stop / clear to remove all layers.")
+        self.report("finished", "Completed executions remain visible after a realtime tour. Use Stop / clear to remove all layers.")
 
     def run(self, mode):
         error = None
@@ -251,11 +268,12 @@ class Demo:
                 if not isinstance(body, dict):
                     raise ValueError("Console body must be a JSON object")
                 return self.api.request(path, {**body, "graph_id": graph_id})
-            node = values.get("node", "customer")
-            if not isinstance(node, str) or node not in {item["id"] for item in self.fixture["entities"]}:
+            nodes = fixture_nodes(self.fixture)
+            node = values.get("node", nodes[0]["id"])
+            if not isinstance(node, str) or node not in {item["id"] for item in nodes}:
                 raise ValueError("Unknown node")
             relation = next((link for link in relations if link["id"] == values.get(
-                "relation", "customer_orders")), None)
+                "relation", relations[0]["id"])), None)
             if relation is None:
                 raise ValueError("Unknown relationship")
             process_id = values.get("process_id", "manual")
@@ -372,7 +390,7 @@ class Dashboard(BaseHTTPRequestHandler):
             self.respond(200, json.dumps(self.server.demo.snapshot()))
         elif self.path == "/":
             page = """<!doctype html><meta charset="utf-8"><title>StructView animation demo</title>
-<h1>Compact graph animation demo</h1>
+<h1>Graph and flowchart animation demo</h1>
 <p>Keep the selected fixture open in StructView and the graph view active.</p>
 <button onclick="send('/run?mode=both')">Both</button>
 <button onclick="send('/run?mode=scenario')">Scheduled</button>
@@ -384,11 +402,13 @@ class Dashboard(BaseHTTPRequestHandler):
 Use --step-by-step to wait for Next chapter at each checkpoint.</p>
 <p>Stop the guided demo before manual commands. Camera commands replace only the scheduled
 layer; live effects and jobs remain. Realtime introduces two labeled jobs on shared routes and entities.
+The full traversal then covers every node and link with one execution and with two independent
+executions on branching routes. Cycles are bounded so the walkthrough can finish.
 Give manual executions distinct IDs to show concurrent work; remove a marker before changing its
 link or direction.</p>
 <fieldset><legend>Targets and appearance</legend>
-<label>Entity <select id="node">NODE_OPTIONS</select></label>
-<label>Link <select id="relation">RELATION_OPTIONS</select></label><br>
+<label>Node <select id="node">NODE_OPTIONS</select></label>
+<label>Edge <select id="relation">RELATION_OPTIONS</select></label><br>
 <label>Color <input id="color" type="color" value="#28c8ff"></label>
 <label>Duration, ms <input id="duration" type="number" min="1" max="60000" value="1500"></label>
 <label><input id="pulse" type="checkbox">Pulse</label>
@@ -479,10 +499,11 @@ async function refresh() {
 }
 setInterval(refresh,500); refresh();
 </script>""".replace("TOKEN", json.dumps(self.server.control_token))
-            for placeholder, records in (("NODE_OPTIONS", self.server.demo.fixture["entities"]),
-                                         ("RELATION_OPTIONS", self.server.demo.fixture["relations"])):
+            for placeholder, records in (("NODE_OPTIONS", fixture_nodes(self.server.demo.fixture)),
+                                         ("RELATION_OPTIONS", fixture_links(self.server.demo.fixture))):
                 options = "".join(f'<option value="{html.escape(record["id"], quote=True)}">'
-                                  f'{html.escape(record["id"])} — {html.escape(record["name"])}</option>'
+                                  f'{html.escape(record["id"])} — '
+                                  f'{html.escape(record.get("label", record.get("name", record["id"])))}</option>'
                                   for record in records)
                 page = page.replace(placeholder, options)
             self.respond(200, page, "text/html; charset=utf-8")
@@ -538,7 +559,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api", required=True, help="HTTP/HTTPS URL displayed by StructView")
     parser.add_argument("--ca", help="PEM CA certificate for internal HTTPS; verification stays enabled")
-    parser.add_argument("--graph", type=Path, default=FIXTURE, help="TOML fixture to verify against the API")
+    parser.add_argument("--graph", type=Path, default=FIXTURE,
+                        help="TOML graph or flowchart fixture to verify against the API")
     parser.add_argument("--port", type=int, default=8765, help="Local dashboard port; 0 chooses a free port")
     parser.add_argument("--mode", choices=("both", "scenario", "realtime"), default="both")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback multiplier, 0.1..10")

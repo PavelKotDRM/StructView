@@ -9,6 +9,103 @@ fn graph() -> (RelationshipGraph, GraphRoutingLayout) {
 }
 
 #[test]
+fn flowchart_job_labels_and_markers_show_full_job_information_on_hover() {
+    use crate::app::graph_animation::{ElementStatus, RealtimeCommand, RealtimeUpdate, realtime};
+
+    let root = struct_view_core::parser::parse_json(
+        r#"{"graph":{"type":"flowchart"},"nodes":[{"id":"a","label":"Receive","shape":"input_output"},{"id":"b","label":"Pay","shape":"process"}],"edges":[{"source":"a","target":"b"}]}"#,
+    )
+    .unwrap();
+    let graph = build_relationship_graph(&root);
+    let routing = build_graph_routing_layout(&graph);
+    let label = "Order processing with complete customer information";
+    let stage = "Checking all payment details before approval";
+    for marker_label in [false, true] {
+        let ctx = egui::Context::default();
+        ctx.style_mut_of(ctx.theme(), |style| style.interaction.tooltip_delay = 0.0);
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::unique(("graph-interaction", routing.graph_fingerprint)),
+                interaction::GraphInteractionState {
+                    pan: Vec2::new(100.0, 140.0),
+                    ..Default::default()
+                },
+            );
+        });
+        let state = realtime::RealtimeState::apply(
+            None,
+            RealtimeUpdate {
+                graph_id: format!("{:016x}", routing.graph_fingerprint),
+                commands: vec![
+                    RealtimeCommand::Element {
+                        id: "order-42".into(),
+                        nodes: vec!["b".into()],
+                        edges: vec![0],
+                        status: Some(ElementStatus::Running),
+                        color: None,
+                        pulse: None,
+                        label: Some(label.into()),
+                        stage: Some(stage.into()),
+                    },
+                    RealtimeCommand::Marker {
+                        id: "order-42".into(),
+                        edge: 0,
+                        percent: 80.0,
+                        smoothing_ms: 300,
+                        color: [40, 160, 255],
+                        reverse: false,
+                        label: Some(label.into()),
+                        stage: Some(stage.into()),
+                    },
+                ],
+            },
+            &graph,
+            0.0,
+        )
+        .unwrap();
+        realtime::store(&ctx, state);
+        let output = render(&ctx, &graph, &routing, vec![]);
+        let point = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text)
+                    if text.galley.text().starts_with("Order processing")
+                        && text.galley.text().contains('%') == marker_label =>
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .expect("painted job label");
+        output.drop_without_applying_deltas();
+        for _ in 0..3 {
+            render(
+                &ctx,
+                &graph,
+                &routing,
+                vec![egui::Event::PointerMoved(point)],
+            )
+            .drop_without_applying_deltas();
+        }
+        let output = render(&ctx, &graph, &routing, vec![]);
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains(label), "missing full job label: {text}");
+        assert!(text.contains(stage), "missing full job stage: {text}");
+        assert!(text.contains("Target: 80%"), "missing job progress: {text}");
+        output.drop_without_applying_deltas();
+    }
+}
+
+#[test]
 fn graph_paths_and_arrowheads_are_drawn_with_panel_fill_casing() {
     let (graph, routing) = graph();
     let ctx = egui::Context::default();
@@ -88,6 +185,54 @@ fn render(
     )
 }
 
+#[test]
+fn flowchart_canvas_keeps_long_labels_and_wraps_them_into_the_node() {
+    let label = "A very long label that needs multiple lines to fit";
+    let input = serde_json::json!({
+        "graph": {"type": "flowchart"},
+        "nodes": [{"id": "node-id", "label": label}],
+        "edges": []
+    });
+    let root = struct_view_core::parser::parse_json(&input.to_string()).unwrap();
+    let graph = build_relationship_graph(&root);
+    let routing = build_graph_routing_layout(&graph);
+    let output = render(&egui::Context::default(), &graph, &routing, Vec::new());
+    let expected = flowchart_label_lines(label, graph.nodes[0].flowchart_shape()).join("\n");
+    let rendered_label = output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text() == expected => Some(text.galley.text()),
+            _ => None,
+        });
+
+    assert_eq!(rendered_label, Some(expected.as_str()));
+    assert!(expected.contains('\n'));
+    output.drop_without_applying_deltas();
+}
+
+#[test]
+fn selection_markers_follow_flowchart_node_contours() {
+    use crate::app::visualization::FlowchartNodeShape as Shape;
+
+    let rect = egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(200.0, 80.0));
+    let decision = super::render::graph_selection_marker_center(rect, Some(Shape::Decision), 1.0);
+    let input_output =
+        super::render::graph_selection_marker_center(rect, Some(Shape::InputOutput), 1.0);
+    let preparation =
+        super::render::graph_selection_marker_center(rect, Some(Shape::Preparation), 1.0);
+    let terminator =
+        super::render::graph_selection_marker_center(rect, Some(Shape::Terminator), 1.0);
+    let process = super::render::graph_selection_marker_center(rect, Some(Shape::Process), 1.0);
+
+    assert!(decision.x > rect.center().x && decision.y < rect.center().y);
+    assert!(decision.x < rect.right() && decision.y > rect.top());
+    assert_eq!(input_output, Pos2::new(160.0, -3.0));
+    assert_eq!(preparation, Pos2::new(176.0, -3.0));
+    assert!(terminator.x < process.x);
+    assert!(terminator.y > process.y);
+}
+
 fn state(ctx: &egui::Context, routing: &GraphRoutingLayout) -> GraphInteractionState {
     ctx.data(|data| {
         data.get_temp(egui::Id::unique((
@@ -137,7 +282,7 @@ fn graph_canvas_keyboard_uses_shared_zoom_fit_and_connected_node_navigation() {
     let bounds = update
         .nodes
         .iter()
-        .find(|(_, node)| node.label() == Some("Relationship graph"))
+        .find(|(_, node)| node.label() == Some("Graph and flowchart"))
         .unwrap()
         .1
         .bounds()
@@ -205,7 +350,7 @@ fn wheel_zooms_about_pointer_and_unmodified_drag_pans_without_marquee() {
         .unwrap()
         .nodes
         .iter()
-        .find(|(_, node)| node.label() == Some("Relationship graph"))
+        .find(|(_, node)| node.label() == Some("Graph and flowchart"))
         .unwrap()
         .1
         .bounds()

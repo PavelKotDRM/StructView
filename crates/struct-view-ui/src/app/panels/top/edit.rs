@@ -75,33 +75,62 @@ impl StructViewApp {
                 return;
             }
             if self.root.is_some() {
-                ui.menu_button(locale.text(TextKey::Mode), |ui| {
-                    let can_edit = self
-                        .file_state
-                        .format
-                        .is_none_or(DataFormat::is_serializable);
-                    if ui
-                        .selectable_value(
-                            &mut self.mode,
-                            AppMode::View,
-                            locale.text(TextKey::ViewMode),
-                        )
-                        .changed()
-                    {
-                        ui.close();
-                    }
-                    if can_edit
-                        && ui
-                            .selectable_value(
-                                &mut self.mode,
-                                AppMode::Edit,
+                if self.visualization == VisualizationMode::Graph && !self.is_comparing() {
+                    ui.menu_button(locale.text(TextKey::Mode), |ui| {
+                        if ui
+                            .selectable_label(
+                                self.mode == AppMode::View,
+                                locale.text(TextKey::ViewMode),
+                            )
+                            .clicked()
+                        {
+                            self.switch_graph_to_view_mode();
+                            ui.close();
+                        }
+                        if ui
+                            .selectable_label(
+                                self.mode == AppMode::Edit,
                                 locale.text(TextKey::EditMode),
                             )
+                            .clicked()
+                        {
+                            if self.has_editable_graph_document() {
+                                self.mode = AppMode::Edit;
+                            } else {
+                                self.request_graph_copy();
+                            }
+                            ui.close();
+                        }
+                    });
+                } else {
+                    ui.menu_button(locale.text(TextKey::Mode), |ui| {
+                        let can_edit = self
+                            .file_state
+                            .format
+                            .is_none_or(DataFormat::is_serializable);
+                        if ui
+                            .selectable_value(
+                                &mut self.mode,
+                                AppMode::View,
+                                locale.text(TextKey::ViewMode),
+                            )
                             .changed()
-                    {
-                        ui.close();
-                    }
-                });
+                        {
+                            ui.close();
+                        }
+                        if can_edit
+                            && ui
+                                .selectable_value(
+                                    &mut self.mode,
+                                    AppMode::Edit,
+                                    locale.text(TextKey::EditMode),
+                                )
+                                .changed()
+                        {
+                            ui.close();
+                        }
+                    });
+                }
                 ui.separator();
             }
 

@@ -1,0 +1,191 @@
+[graph]
+type = "flowchart"
+name = "Обработка заявки"
+weight_unit = "мин"
+
+[[nodes]]
+id = "start"
+label = "Начало"
+shape = "terminator"
+attributes = { fillcolor = "#DDF4E4" }
+
+[[nodes]]
+id = "receive"
+label = "Получить заявку от клиента"
+shape = "input_output"
+
+[[nodes]]
+id = "validate"
+label = "Проверить обязательные поля"
+shape = "process"
+
+[[nodes]]
+id = "complete"
+label = "Все данные заполнены?"
+shape = "decision"
+
+[[nodes]]
+id = "request_data"
+label = "Запросить недостающие данные"
+shape = "input_output"
+
+[[nodes]]
+id = "connector_a"
+label = "A"
+shape = "connector"
+
+[[nodes]]
+id = "correct_data"
+label = "Дополнить и исправить заявку"
+shape = "subprocess"
+
+[[nodes]]
+id = "connector_b"
+label = "A"
+shape = "connector"
+
+[[nodes]]
+id = "check_account"
+label = "Проверить статус счёта"
+shape = "preparation"
+
+[[nodes]]
+id = "balance"
+label = "Средств достаточно?"
+shape = "decision"
+
+[[nodes]]
+id = "decline"
+label = "Подготовить отказ с причиной"
+shape = "process"
+attributes = { color = "#B42318", fillcolor = "#FEE4E2" }
+
+[[nodes]]
+id = "calculate"
+label = "Рассчитать сумму и комиссию"
+shape = "process"
+
+[[nodes]]
+id = "approve"
+label = "Подготовить платёжное поручение"
+shape = "subprocess"
+
+[[nodes]]
+id = "ledger"
+label = "Сохранить операцию в реестре"
+shape = "database"
+
+[[nodes]]
+id = "notify"
+label = "Отправить уведомление клиенту"
+shape = "input_output"
+
+[[nodes]]
+id = "success"
+label = "Заявка обработана"
+shape = "terminator"
+attributes = { fillcolor = "#DDF4E4" }
+
+[[nodes]]
+id = "rejected"
+label = "Заявка отклонена"
+shape = "terminator"
+attributes = { fillcolor = "#FEE4E2" }
+
+[[edges]]
+id = "e-start-receive"
+source = "start"
+target = "receive"
+
+[[edges]]
+id = "e-receive-validate"
+source = "receive"
+target = "validate"
+
+[[edges]]
+id = "e-validate-complete"
+source = "validate"
+target = "complete"
+
+[[edges]]
+id = "e-complete-no"
+source = "complete"
+target = "request_data"
+label = "Нет"
+
+[[edges]]
+id = "e-request-connector"
+source = "request_data"
+target = "connector_a"
+
+[[edges]]
+id = "e-connector-correct"
+source = "connector_a"
+target = "correct_data"
+
+[[edges]]
+id = "e-correct-connector"
+source = "correct_data"
+target = "connector_b"
+
+[[edges]]
+id = "e-connector-validate"
+source = "connector_b"
+target = "validate"
+label = "Повторная проверка"
+
+[[edges]]
+id = "e-complete-yes"
+source = "complete"
+target = "check_account"
+label = "Да"
+
+[[edges]]
+id = "e-account-balance"
+source = "check_account"
+target = "balance"
+weight = 2
+
+[[edges]]
+id = "e-balance-no"
+source = "balance"
+target = "decline"
+label = "Нет"
+
+[[edges]]
+id = "e-balance-yes"
+source = "balance"
+target = "calculate"
+label = "Да"
+
+[[edges]]
+id = "e-calculate-approve"
+source = "calculate"
+target = "approve"
+weight = 1
+
+[[edges]]
+id = "e-approve-ledger"
+source = "approve"
+target = "ledger"
+
+[[edges]]
+id = "e-ledger-notify"
+source = "ledger"
+target = "notify"
+
+[[edges]]
+id = "e-notify-success"
+source = "notify"
+target = "success"
+
+[[edges]]
+id = "e-decline-notify"
+source = "decline"
+target = "notify"
+label = "Уведомить об отказе"
+
+[[edges]]
+id = "e-decline-rejected"
+source = "decline"
+target = "rejected"

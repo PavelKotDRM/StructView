@@ -71,9 +71,9 @@ routing, and
 `struct-view-build-info` for build metadata. The
 [main README](../../README.md) documents the interface and its features.
 
-## Relationship graph editing and animation
+## Graph, flowchart editing, and animation
 
-The relationship view also provides a semantic graph editor. It creates
+The graph view also provides a semantic graph editor. It creates
 untitled graphs or independent editable copies of any supported graph, with
 entity/link/group CRUD, directions, weights, typed attributes, and shared
 document undo/redo and saving. `struct-view-operations::app::graph_editor`
@@ -84,7 +84,7 @@ Edit, and the editor-window toggle in View; graph-specific commands are
 hidden in unrelated views. `graph.editor_version: 1` distinguishes its mixed-multigraph
 documents. Node positions and routes are never editable and continue to use
 the layout and routing pipeline below. See the
-[graph editor guide](../../README.md#relationship-graph-editor).
+[graph editor guide](../../README.md#graph-and-flowchart-editor).
 
 Element forms show a live read-only complete JSON record; `id` and `label`
 remain separate from additional `attributes`. The optional

@@ -30,6 +30,10 @@ pub fn parse_data(
         let root = build_document(input, DataFormat::Dot)?;
         return Ok((root, DataFormat::Dot));
     }
+    if looks_like_mermaid(input) {
+        let root = build_document(input, DataFormat::Mermaid)?;
+        return Ok((root, DataFormat::Mermaid));
+    }
 
     let mut errors = Vec::new();
     for candidate in [
@@ -39,6 +43,7 @@ pub fn parse_data(
         DataFormat::Dot,
         DataFormat::GraphMl,
         DataFormat::Gexf,
+        DataFormat::Mermaid,
         DataFormat::Yaml,
     ] {
         match build_document(input, candidate) {
@@ -49,7 +54,7 @@ pub fn parse_data(
 
     Err(ParseError {
         message: format!(
-            "Не удалось определить формат. Поддерживаются JSON, YAML, TOML и JSON5.\n{}",
+            "Не удалось определить формат. Поддерживаются JSON, YAML, TOML, JSON5, Mermaid, Graphviz DOT, GraphML и GEXF.\n{}",
             errors.join("\n")
         ),
         line: None,
@@ -71,6 +76,23 @@ fn looks_like_dot(input: &str) -> bool {
                 .next()
                 .is_some_and(|character| character.is_whitespace() || character == '{')
                 && rest.contains('{')
+        })
+    })
+}
+
+fn looks_like_mermaid(input: &str) -> bool {
+    let first = input
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("%%"));
+    first.is_some_and(|line| {
+        ["flowchart", "graph"].iter().any(|keyword| {
+            line.strip_prefix(keyword).is_some_and(|rest| {
+                rest.chars().next().is_some_and(char::is_whitespace)
+                    && ["TB", "TD", "BT", "RL", "LR"]
+                        .iter()
+                        .any(|direction| rest.split_whitespace().any(|item| item == *direction))
+            })
         })
     })
 }
@@ -115,7 +137,7 @@ fn parse_document(input: &str, format: DataFormat) -> Result<ParsedDocument, Par
                 line: None,
                 column: None,
             }),
-        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf => {
+        DataFormat::Dot | DataFormat::GraphMl | DataFormat::Gexf | DataFormat::Mermaid => {
             parse_special_graph(input, format)
                 .map(ParsedDocument::Json)
                 .map_err(|message| ParseError {

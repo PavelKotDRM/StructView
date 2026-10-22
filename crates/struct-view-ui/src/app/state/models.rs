@@ -48,6 +48,7 @@ pub(in crate::app) struct LoadedDocument {
 
 pub(in crate::app) enum DocumentReplacement {
     Graph(Box<JsonNode>),
+    GraphCopy(Box<JsonNode>),
     Open(PathBuf),
     Loaded(Box<LoadedDocument>),
     Create(PathBuf, DataFormat),
@@ -82,6 +83,11 @@ pub(in crate::app) struct PreviousDocumentState {
     pub(in crate::app) selected_paths: BTreeSet<String>,
     pub(in crate::app) undo_history: Vec<JsonNode>,
     pub(in crate::app) redo_history: Vec<JsonNode>,
+}
+
+pub(in crate::app) struct GeneratedGraphCopy {
+    pub(in crate::app) source: PreviousDocumentState,
+    pub(in crate::app) initial_fingerprint: u64,
 }
 
 /// Состояние отображения отличий нескольких документов.

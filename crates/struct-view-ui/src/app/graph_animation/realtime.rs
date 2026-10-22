@@ -444,6 +444,58 @@ impl RealtimeState {
         (statuses, markers)
     }
 
+    pub(in crate::app) fn markers_for_node(&self, index: usize) -> MarkerProgress {
+        self.elements
+            .iter()
+            .filter(|(_, element)| element.nodes.contains(&index))
+            .filter_map(|(id, _)| {
+                self.markers.get(id).map(|marker| {
+                    (
+                        id.clone(),
+                        marker.label.clone(),
+                        marker.stage.clone(),
+                        marker.current,
+                        marker.target,
+                    )
+                })
+            })
+            .collect()
+    }
+
+    pub(in crate::app) fn information_for_item(
+        &self,
+        id: &str,
+    ) -> (StatusAssignments, MarkerProgress) {
+        let statuses = self
+            .elements
+            .get(id)
+            .map(|element| {
+                (
+                    id.to_owned(),
+                    element.label.clone(),
+                    element.stage.clone(),
+                    element.status,
+                )
+            })
+            .into_iter()
+            .collect();
+        let markers = self
+            .markers
+            .get(id)
+            .map(|marker| {
+                (
+                    id.to_owned(),
+                    marker.label.clone(),
+                    marker.stage.clone(),
+                    marker.current,
+                    marker.target,
+                )
+            })
+            .into_iter()
+            .collect();
+        (statuses, markers)
+    }
+
     pub(super) fn descriptor(&mut self, now: f64, graph: &RelationshipGraph) -> Value {
         self.advance(now);
         json!({"graph_id":self.graph_id,
@@ -467,7 +519,8 @@ impl RealtimeState {
         now: f64,
         canvas: AnimationCanvas<'_>,
         locale: Locale,
-    ) {
+    ) -> Vec<(String, egui::Rect)> {
+        let mut hover_targets = Vec::new();
         let zoom = canvas.zoom;
         let mut status_badge_heights = vec![0.0; canvas.positions.len()];
         let mut status_badge_counts = vec![0usize; canvas.positions.len()];
@@ -537,6 +590,7 @@ impl RealtimeState {
                         egui::StrokeKind::Outside,
                     );
                     painter.galley(rect.min + Vec2::splat(2.0 * zoom), galley, Color32::WHITE);
+                    hover_targets.push((id.clone(), rect));
                 }
             }
         }
@@ -565,6 +619,10 @@ impl RealtimeState {
                     zoom,
                     Color32::from_rgb(marker.color[0], marker.color[1], marker.color[2]),
                 );
+                hover_targets.push((
+                    id.clone(),
+                    egui::Rect::from_center_size(canvas.transform(point), Vec2::splat(16.0 * zoom)),
+                ));
                 if let Some(label) = &marker.label {
                     let text = format!(
                         "{} [{}] · {:.0}%",
@@ -595,6 +653,7 @@ impl RealtimeState {
                         egui::StrokeKind::Outside,
                     );
                     painter.galley(anchor, galley, color);
+                    hover_targets.push((id.clone(), rect));
                 }
             }
 
@@ -624,6 +683,7 @@ impl RealtimeState {
                 path.last().copied()
             }
         }
+        hover_targets
     }
 }
 

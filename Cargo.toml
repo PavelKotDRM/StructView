@@ -12,7 +12,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.2.8"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 
@@ -41,7 +41,7 @@ vergen = { version = "10", features = ["build", "cargo", "rustc"] }
 name = "struct_view"
 version.workspace = true
 edition.workspace = true
-description = "A fast structured data explorer for JSON, YAML, TOML, JSON5, Graphviz DOT, GraphML, and GEXF"
+description = "A fast structured data explorer and flowchart viewer for JSON, YAML, TOML, JSON5, Mermaid, Graphviz DOT, GraphML, and GEXF"
 
 [[bin]]
 name = "struct_view"

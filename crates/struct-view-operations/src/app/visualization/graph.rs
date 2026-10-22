@@ -17,6 +17,33 @@ pub struct GraphNode {
     pub attributes: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlowchartNodeShape {
+    Process,
+    Terminator,
+    Decision,
+    InputOutput,
+    Preparation,
+    Subprocess,
+    Database,
+    Connector,
+}
+
+impl FlowchartNodeShape {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Process => "process",
+            Self::Terminator => "terminator",
+            Self::Decision => "decision",
+            Self::InputOutput => "input_output",
+            Self::Preparation => "preparation",
+            Self::Subprocess => "subprocess",
+            Self::Database => "database",
+            Self::Connector => "connector",
+        }
+    }
+}
+
 impl GraphNode {
     pub fn hover_text(&self) -> String {
         let mut text = format!("{}\n{}\n{}", self.label, self.id, self.path);
@@ -24,6 +51,45 @@ impl GraphNode {
             text.push_str(&format!("\n{key}: {value}"));
         }
         text
+    }
+
+    pub fn flowchart_shape(&self) -> Option<FlowchartNodeShape> {
+        ["shape", "node_type", "kind", "type"]
+            .iter()
+            .find_map(|key| {
+                self.attributes
+                    .iter()
+                    .find(|(attribute, _)| {
+                        attribute
+                            .rsplit('.')
+                            .next()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(key))
+                    })
+                    .and_then(|(_, value)| {
+                        let value = value.trim();
+                        let value = value
+                            .strip_prefix('"')
+                            .and_then(|value| value.strip_suffix('"'))
+                            .unwrap_or(value);
+                        match value.to_ascii_lowercase().as_str() {
+                            "process" | "rect" | "rectangle" | "box" | "square" => {
+                                Some(FlowchartNodeShape::Process)
+                            }
+                            "terminator" | "terminal" | "start" | "end" | "ellipse" | "stadium"
+                            | "round" | "rounded" => Some(FlowchartNodeShape::Terminator),
+                            "decision" | "diamond" | "rhombus" => {
+                                Some(FlowchartNodeShape::Decision)
+                            }
+                            "input_output" | "input-output" | "input" | "output" | "io"
+                            | "parallelogram" => Some(FlowchartNodeShape::InputOutput),
+                            "preparation" | "hexagon" => Some(FlowchartNodeShape::Preparation),
+                            "subprocess" | "subroutine" => Some(FlowchartNodeShape::Subprocess),
+                            "database" | "cylinder" => Some(FlowchartNodeShape::Database),
+                            "connector" | "circle" => Some(FlowchartNodeShape::Connector),
+                            _ => None,
+                        }
+                    })
+            })
     }
 }
 
@@ -118,6 +184,36 @@ pub fn try_build_relationship_graph(root: &JsonNode) -> Result<RelationshipGraph
         None => explicit::build_supported_graph(root)?,
     };
     if let Some(mut graph) = explicit_graph {
+        if object_child(root, "graph")
+            .and_then(|metadata| object_scalar(metadata, &["type"]))
+            .is_some_and(|kind| {
+                matches!(
+                    kind.to_ascii_lowercase().as_str(),
+                    "flowchart" | "flowchart_multigraph"
+                )
+            })
+        {
+            for node in &mut graph.nodes {
+                if node.flowchart_shape().is_some() {
+                    continue;
+                }
+                let has_shape_attribute = node.attributes.iter().any(|(key, _)| {
+                    matches!(
+                        key.rsplit('.')
+                            .next()
+                            .unwrap_or(key)
+                            .to_ascii_lowercase()
+                            .as_str(),
+                        "shape" | "node_type" | "kind" | "type"
+                    )
+                });
+                if has_shape_attribute {
+                    return Err(format!("Unsupported flowchart node shape in {}", node.path));
+                }
+                node.attributes
+                    .push(("shape".to_string(), "process".to_string()));
+            }
+        }
         if let Some(document) = editable {
             let edge_records = object_child(root, "edges").ok_or("Missing editor edges")?;
             let unit = document
