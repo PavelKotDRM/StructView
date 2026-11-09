@@ -8,6 +8,11 @@ structured documents, comparing files, and visualizing tables, schemas, and
 graphs. It also handles localization, themes, file dialogs, and clipboard
 integration.
 
+On non-Windows platforms, screen color picking uses `xcap`, pinned to `0.9.8`.
+Version `0.9.9` fails to compile on Linux because its Wayland recorder uses
+`SourceType::Monitor` and `SourceType::Window`, which were renamed in `ashpd 0.14`.
+Keep the exact pin until an upstream release fixes this incompatibility.
+
 ## Public API
 
 - `run_native_gui(files)` starts the native application, optionally opening
