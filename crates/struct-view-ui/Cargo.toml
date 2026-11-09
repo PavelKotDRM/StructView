@@ -47,7 +47,7 @@ eframe = { workspace = true, features = [
 ] }
 
 [target.'cfg(not(windows))'.dependencies]
-xcap = "0.9.8"
+xcap = "0.9.9"
 eframe = { workspace = true, features = [
     "accesskit",
     "clipboard",
